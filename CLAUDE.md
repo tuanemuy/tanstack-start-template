@@ -9,6 +9,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Development Commands
 
+- `pnpm dev` - Start the Vite dev server (TanStack Start)
+- `pnpm build` - Build for production (`vite build`)
+- `pnpm start` - Run the production server (`node .output/server/index.mjs`)
 - `pnpm lint` - Lint code with Biome
 - `pnpm lint:fix` - Lint code with Biome and fix issues
 - `pnpm format` - Format code with Biome
@@ -24,7 +27,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Tech Stack
 
 - **Runtime**: Node.js 22.x
-- **Frontend**: React Router v7 Framework mode, Tailwind CSS, Conform
+- **Frontend**: TanStack Start (React Server Components enabled), TanStack Router, Tailwind CSS, Conform
 - **Database**: Turso with Drizzle ORM
 
 ## Core Architecture
@@ -61,12 +64,13 @@ Uses Outbox pattern to ensure consistency between entity changes and event publi
 
 ## Frontend Architecture
 
-React Router v7 application code using:
+TanStack Start application code using:
 
 - TypeScript
 - Vite
 - React 19
-- Reacdt Router v7 Framework mode
+- TanStack Start with React Server Components (`@vitejs/plugin-rsc`)
+- TanStack Router (file-based routing)
 - Tailwind CSS v4
 - Conform
 
@@ -74,10 +78,19 @@ React Router v7 application code using:
     - `app/components/${domain}/`: Domain-specific components
     - `app/components/**/*`: Other reusable components
 - Pages and Routes
-    - `app/routes/`: Route components using React Router v7 Framework mode
+    - `app/routes/`: File-based route components for TanStack Router
+    - `app/routes/__root.tsx`: Root document layout
+    - `app/routeTree.gen.ts`: Auto-generated route tree (do not edit manually)
+    - `app/router.tsx`: Router instance factory (`getRouter`)
 - Styles
     - `app/styles/index.css`: Entry point for global styles
-- Server Actions
+- Server Components
+    - Default to async server components for data fetching, authorization, and use case invocation
+    - Use `cache()` (from `react`) to dedupe per-request fetches
+    - Throw `redirect({ to })` / `notFound()` from `@tanstack/react-router` to drive navigation
+- Server Functions (mutations)
+    - Use `createServerFn` from `@tanstack/react-start` for state-changing operations called from the client
+    - Loaders should remain a thin proxy: call `renderServerComponent` from `@tanstack/react-start/rsc` to stream the RSC payload of a server component into the route
 
 ## Error Handling
 

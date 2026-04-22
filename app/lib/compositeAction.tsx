@@ -1,7 +1,14 @@
 import type { SubmissionResult } from "@conform-to/react";
 import { parseWithZod } from "@conform-to/zod/v4";
-import { useCallback, useEffect, useRef } from "react";
-import { type ActionFunctionArgs, useFetcher } from "react-router";
+import {
+  type FormHTMLAttributes,
+  type ReactNode,
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+} from "react";
 import type { z } from "zod";
 
 // ============================================================
@@ -45,6 +52,9 @@ export function error(errors: Record<string, string[]>): ActionResult<never> {
  * スキーマ付きハンドラー定義。
  * バリデーションは dispatcher が自動で行うため、
  * handler には成功時の値だけが渡される。
+ *
+ * リクエストヘッダー・認証ユーザーが必要な場合は、
+ * handler 内で `getRequestHeaders()` や `requireCurrentUser()` を直接呼ぶ。
  */
 export type ValidatedActionHandler<
   TSchema extends z.ZodTypeAny = z.ZodTypeAny,
@@ -53,7 +63,6 @@ export type ValidatedActionHandler<
   schema: TSchema;
   handler: (
     value: z.output<TSchema>,
-    args: ActionFunctionArgs,
   ) => Promise<ActionResult<TData>> | ActionResult<TData>;
 };
 
@@ -65,7 +74,6 @@ export type RawActionHandler<TData = undefined> = {
   schema?: undefined;
   handler: (
     formData: FormData,
-    args: ActionFunctionArgs,
   ) => Promise<ActionResult<TData>> | ActionResult<TData>;
 };
 
@@ -96,21 +104,11 @@ export type ActionHandler =
  *
  * @example
  * ```ts
- * // スキーマ付き — value, TData ともに推論される
  * defineHandler({
  *   schema: z.object({ name: z.string() }),
- *   handler: async (value, args) => {
- *     const user = await db.user.update({ data: value });
- *     return success({ user }); // TData = { user: User }
- *   },
- * });
- *
- * // スキーマなし — formData が渡される
- * defineHandler({
- *   handler: async (formData, args) => {
- *     const file = formData.get("avatar") as File;
- *     const url = await uploadFile(file);
- *     return success({ url }); // TData = { url: string }
+ *   handler: async (value) => {
+ *     const user = await updateUser(value);
+ *     return success({ user });
  *   },
  * });
  * ```
@@ -122,14 +120,12 @@ export function defineHandler<
   schema: TSchema;
   handler: (
     value: z.output<TSchema>,
-    args: ActionFunctionArgs,
   ) => Promise<ActionResult<TData>> | ActionResult<TData>;
 }): ValidatedActionHandler<TSchema, TData>;
 
 export function defineHandler<TData = undefined>(def: {
   handler: (
     formData: FormData,
-    args: ActionFunctionArgs,
   ) => Promise<ActionResult<TData>> | ActionResult<TData>;
 }): RawActionHandler<TData>;
 
@@ -141,17 +137,8 @@ export function defineHandler(def: ActionHandler): ActionHandler {
 // Result types — エラーの出処を型レベルで判別可能にする
 // ============================================================
 
-/**
- * エラーの発生源を示す discriminant。
- *
- * - `"validation"` — Zod スキーマによるバリデーション失敗。
- *   フィールドごとのエラーメッセージが `error` に含まれる。
- * - `"handler"` — ハンドラー内のビジネスロジックエラー。
- *   DB 制約違反、権限エラーなど。
- */
 export type ErrorSource = "validation" | "handler";
 
-/** intent + source を付与した共通の結果型 */
 export type CompositeResult<
   TIntent extends string = string,
   TData = unknown,
@@ -160,7 +147,6 @@ export type CompositeResult<
   source: ErrorSource | "handler";
 };
 
-/** 成功 */
 export type CompositeSuccess<
   TIntent extends string = string,
   TData = undefined,
@@ -170,26 +156,22 @@ export type CompositeSuccess<
   data: TData;
 };
 
-/** バリデーションエラー（Zod / Conform 由来） */
 export type CompositeValidationError<TIntent extends string = string> =
   CompositeResult<TIntent, never> & {
     status: "error";
     source: "validation";
   };
 
-/** ハンドラーエラー（ビジネスロジック由来） */
 export type CompositeHandlerError<TIntent extends string = string> =
   CompositeResult<TIntent, never> & {
     status: "error";
     source: "handler";
   };
 
-/** すべてのエラー型のユニオン */
 export type CompositeError<TIntent extends string = string> =
   | CompositeValidationError<TIntent>
   | CompositeHandlerError<TIntent>;
 
-/** ハンドラーから TData を抽出する */
 type InferHandlerData<T extends ActionHandler> =
   T extends ValidatedActionHandler<any, infer D>
     ? D
@@ -217,60 +199,36 @@ export type InferActionData<T extends Record<string, ActionHandler>> = {
  * フォームの hidden field `intent` を読み取り、
  * スキーマでバリデーション → 対応するハンドラーに振り分ける。
  *
- * - バリデーション失敗時は handler を呼ばず `submission.reply()` を返す
- * - 返却値には `intent` と `source` フィールドが付与される
+ * `createServerFn` の `handler` から呼ぶことを想定している。
  *
  * @example
  * ```ts
- * import { z } from "zod";
+ * import { createServerFn } from "@tanstack/react-start";
  *
- * const handlers = {
+ * export const handlers = {
  *   updateProfile: defineHandler({
- *     schema: z.object({ name: z.string(), email: z.string().email() }),
- *     handler: async (value, args) => {
- *       const user = await db.user.update({
- *         where: { id: args.params.id },
- *         data: value,
+ *     schema: z.object({ name: z.string() }),
+ *     handler: async (value) => {
+ *       await requireCurrentUser();
+ *       const { user } = await updateProfileUseCase({
+ *         container, headers: getRequestHeaders(), input: value,
  *       });
  *       return success({ user });
  *     },
  *   }),
- *   changePassword: defineHandler({
- *     schema: z.object({
- *       current: z.string(),
- *       next: z.string().min(8),
- *     }),
- *     handler: async (value, args) => {
- *       const ok = await changePassword(args.params.id!, value.current, value.next);
- *       if (!ok) {
- *         return error({ current: ["現在のパスワードが正しくありません"] });
- *       }
- *       return success();
- *     },
- *   }),
- *   uploadAvatar: defineHandler({
- *     handler: async (formData, args) => {
- *       const file = formData.get("avatar") as File;
- *       const url = await uploadFile(file);
- *       return success({ url });
- *     },
- *   }),
+ *   changePassword: defineHandler({ ... }),
  * };
  *
- * export type ActionData = InferActionData<typeof handlers>;
- *
- * export async function action(args: ActionFunctionArgs) {
- *   return createCompositeAction(args, handlers);
- * }
+ * export const settingsAction = createServerFn({ method: "POST" })
+ *   .inputValidator((formData: FormData) => formData)
+ *   .handler(({ data }) => createCompositeAction(data, handlers));
  * ```
  */
 export async function createCompositeAction<
   T extends Record<string, ActionHandler>,
->(args: ActionFunctionArgs, handlers: T): Promise<InferActionData<T>> {
-  const formData = await args.request.formData();
+>(formData: FormData, handlers: T): Promise<InferActionData<T>> {
   const intent = formData.get("intent");
 
-  // ── intent のバリデーション ──
   if (typeof intent !== "string" || intent === "") {
     throw new Response('Missing "intent" field in form data', { status: 400 });
   }
@@ -284,19 +242,17 @@ export async function createCompositeAction<
   let source: ErrorSource | "handler";
 
   if (def.schema) {
-    // ── スキーマ付き: 自動バリデーション ──
     const submission = parseWithZod(formData, { schema: def.schema });
 
     if (submission.status !== "success") {
       result = submission.reply();
       source = "validation";
     } else {
-      result = await def.handler(submission.value, args);
+      result = await def.handler(submission.value);
       source = "handler";
     }
   } else {
-    // ── スキーマなし: formData をそのまま渡す ──
-    result = await (def as RawActionHandler<unknown>).handler(formData, args);
+    result = await (def as RawActionHandler<unknown>).handler(formData);
     source = "handler";
   }
 
@@ -304,68 +260,48 @@ export async function createCompositeAction<
 }
 
 // ============================================================
-// Hook
+// Client hook
 // ============================================================
 
+type CompositeServerFn<T extends Record<string, ActionHandler>> = (params: {
+  data: FormData;
+}) => Promise<InferActionData<T>>;
+
 /**
- * 複数の intent を持つ composite action 用の fetcher フック。
+ * 複数 intent を持つ composite action 用のクライアントフック。
  *
- * - `useFetcher` のすべてのプロパティをそのまま使える
+ * - `Form` コンポーネントを返し、サブミット時に内部で `createServerFn` を呼ぶ
  * - `register(intent, callbacks)` で intent ごとの完了コールバックを登録
- * - コールバックはエラーの種類ごとに分けて登録できる:
- *   - `onSuccess` — 成功時（data は intent ごとの型が推論される）
- *   - `onValidationError` — Zod バリデーション失敗時
- *   - `onHandlerError` — ハンドラー内のビジネスロジックエラー時
- *   - `onError` — 上記 2 つの catch-all
+ * - コールバックはエラーの種類ごとに分けて登録できる
  *
  * @example
  * ```tsx
- * function SettingsPage() {
- *   const fetcher = useCompositeAction<typeof handlers>();
+ * const composite = useCompositeAction<typeof handlers>(settingsAction, {
+ *   onSettled: () => router.invalidate(),
+ * });
  *
- *   fetcher.register("updateProfile", {
- *     onSuccess: (data) => {
- *       // data.data.user — User 型で型安全にアクセスできる
- *       toast.success(`${data.data.user.name} を更新しました`);
- *     },
- *     onValidationError: () => {
- *       // フィールドエラーは Conform が自動表示するため何もしなくてもOK
- *     },
- *     onHandlerError: () => toast.error("更新に失敗しました"),
- *   });
+ * composite.register("updateProfile", {
+ *   onSuccess: ({ data }) => toast.success(`${data.user.name} を更新しました`),
+ *   onHandlerError: ({ error }) => toast.error(error?.[""]?.[0] ?? "失敗"),
+ * });
  *
- *   fetcher.register("changePassword", {
- *     onSuccess: () => {
- *       toast.success("パスワードを変更しました");
- *       passwordForm.reset();
- *     },
- *     // onError で validation / handler 両方をまとめてハンドル
- *     onError: () => toast.error("パスワード変更に失敗しました"),
- *   });
- *
- *   fetcher.register("uploadAvatar", {
- *     onSuccess: (data) => {
- *       // data.data.url — string と推論される
- *       setAvatarUrl(data.data.url);
- *     },
- *   });
- *
- *   return (
- *     <fetcher.Form method="post">
- *       <input type="hidden" name="intent" value="updateProfile" />
- *       ...
- *     </fetcher.Form>
- *   );
- * }
+ * <composite.Form>
+ *   <input type="hidden" name="intent" value="updateProfile" />
+ *   ...
+ * </composite.Form>
  * ```
  */
 export function useCompositeAction<
   THandlers extends Record<string, ActionHandler>,
->() {
+>(
+  serverFn: CompositeServerFn<THandlers>,
+  options?: {
+    onSettled?: (data: InferActionData<THandlers>) => void | Promise<void>;
+  },
+) {
   type ActionData = InferActionData<THandlers>;
   type Intent = keyof THandlers & string;
 
-  // intent ごとの成功型を抽出（data の型が intent ごとに異なる）
   type SuccessOf<I extends Intent> = Extract<
     ActionData,
     { intent: I; status: "success" }
@@ -381,22 +317,12 @@ export function useCompositeAction<
   type ErrorOf<I extends Intent> = ValidationErrorOf<I> | HandlerErrorOf<I>;
 
   interface Callbacks<I extends Intent> {
-    /** 成功時（data は intent ごとの型が推論される） */
     onSuccess?: (data: SuccessOf<I>) => void;
-    /** Zod バリデーション失敗時。指定がなければ onError にフォールバック */
     onValidationError?: (data: ValidationErrorOf<I>) => void;
-    /** ハンドラー内ビジネスロジックエラー時。指定がなければ onError にフォールバック */
     onHandlerError?: (data: HandlerErrorOf<I>) => void;
-    /** バリデーション・ハンドラーエラー両方の catch-all */
     onError?: (data: ErrorOf<I>) => void;
   }
 
-  const fetcher = useFetcher<CompositeResult>();
-
-  //
-  // ── 内部ストレージ用の緩い型 ──
-  // 型安全性は onDone のシグネチャ（Callbacks<I>）で担保する。
-  // Map 内部では any で保持し、dispatch 時にキャストする。
   interface InternalCallbacks {
     onSuccess?: (data: any) => void;
     onValidationError?: (data: any) => void;
@@ -404,44 +330,71 @@ export function useCompositeAction<
     onError?: (data: any) => void;
   }
 
-  // ── コールバック管理 ──
-  // Map に intent → 最新コールバックを保持。
-  // register() はレンダーごとに呼ばれる想定なので、常に最新値に上書きされる。
   const callbacksRef = useRef(new Map<Intent, InternalCallbacks>());
+  const [data, setData] = useState<ActionData | undefined>(undefined);
+  const [submittingIntent, setSubmittingIntent] = useState<Intent | null>(null);
+  const [isPending, startTransition] = useTransition();
 
-  // ── 状態遷移の検出 ──
-  // 「submitting/loading → idle」の遷移を正確に検出する。
-  const prevStateRef = useRef(fetcher.state);
-
-  useEffect(() => {
-    const wasActive = prevStateRef.current !== "idle";
-    prevStateRef.current = fetcher.state;
-
-    // idle に戻った瞬間 かつ 直前にアクティブだった場合のみ発火
-    if (fetcher.state !== "idle" || !wasActive || !fetcher.data) {
-      return;
-    }
-
-    const intent = fetcher.data.intent as Intent;
-    const cbs = callbacksRef.current.get(intent);
+  const dispatchCallbacks = useCallback((result: ActionData) => {
+    const cbs = callbacksRef.current.get(result.intent as Intent);
     if (!cbs) return;
 
-    if (fetcher.data.status === "success") {
-      cbs.onSuccess?.(fetcher.data as SuccessOf<typeof intent>);
-    } else if (fetcher.data.source === "validation") {
-      // バリデーションエラー: 専用コールバック → catch-all の順で探す
+    if (result.status === "success") {
+      cbs.onSuccess?.(result);
+    } else if (result.source === "validation") {
       const handler = cbs.onValidationError ?? cbs.onError;
-      handler?.(fetcher.data as ValidationErrorOf<typeof intent>);
+      handler?.(result);
     } else {
-      // ハンドラーエラー: 専用コールバック → catch-all の順で探す
       const handler = cbs.onHandlerError ?? cbs.onError;
-      handler?.(fetcher.data as HandlerErrorOf<typeof intent>);
+      handler?.(result);
     }
-  }, [fetcher.state, fetcher.data]);
+  }, []);
 
-  // ── register ──
-  // ジェネリックパラメータ I で intent を絞り、
-  // コールバック引数の data 型が intent ごとに推論される。
+  const submit = useCallback(
+    (formData: FormData) => {
+      const intent = formData.get("intent");
+      if (typeof intent !== "string" || intent === "") return;
+
+      setSubmittingIntent(intent as Intent);
+      startTransition(async () => {
+        try {
+          const result = await serverFn({ data: formData });
+          setData(result);
+          dispatchCallbacks(result);
+          await options?.onSettled?.(result);
+        } finally {
+          setSubmittingIntent(null);
+        }
+      });
+    },
+    [serverFn, dispatchCallbacks, options],
+  );
+
+  const Form = useMemo(
+    () =>
+      function CompositeForm({
+        children,
+        onSubmit,
+        ...props
+      }: FormHTMLAttributes<HTMLFormElement> & { children?: ReactNode }) {
+        return (
+          <form
+            method="post"
+            {...props}
+            onSubmit={(event) => {
+              onSubmit?.(event);
+              if (event.defaultPrevented) return;
+              event.preventDefault();
+              submit(new FormData(event.currentTarget));
+            }}
+          >
+            {children}
+          </form>
+        );
+      },
+    [submit],
+  );
+
   const register = useCallback(
     <I extends Intent>(intent: I, callbacks: Callbacks<I>) => {
       callbacksRef.current.set(intent, callbacks);
@@ -449,18 +402,18 @@ export function useCompositeAction<
     [],
   );
 
-  const isSubmitting = (intent: Intent) => {
-    return (
-      fetcher.state === "submitting" &&
-      fetcher.formData?.get("intent") === intent
-    );
-  };
+  const isSubmitting = useCallback(
+    (intent: Intent) => isPending && submittingIntent === intent,
+    [isPending, submittingIntent],
+  );
 
-  const isPending = (intent: Intent) => {
-    return (
-      fetcher.state !== "idle" && fetcher.formData?.get("intent") === intent
-    );
+  return {
+    Form,
+    submit,
+    register,
+    data,
+    isPending: isSubmitting,
+    isSubmitting,
+    submittingIntent,
   };
-
-  return { ...fetcher, register, isSubmitting, isPending };
 }

@@ -1,4 +1,10 @@
-# Example Implementation
+# Backend Implementation Example
+
+ドメイン層・アダプタ層・アプリケーション層は TanStack Start (RSC) と
+直接結びつかない、フレームワーク非依存の純粋な TypeScript で書く。
+プレゼンテーション層（loader / `createServerFn` / コンポーネント）の例は
+`docs/frontend_implementation_example.md` を参照。
+
 
 ## Entities example
 
@@ -341,42 +347,50 @@ export type PostDetail = {
 
 ## Application Service example
 
+ユースケースは `ServiceArgs<TInput>` を取り、`{ container, headers, input }` の
+形で呼び出される。`headers` はサーバー関数や loader 側で
+`@tanstack/react-start/server` の `getRequestHeaders()` から取得して渡す。
+
 ```typescript
 // app/core/application/post/createPost.ts
 
 import { Post } from "@/core/domain/post/entity";
 import type { DraftPost } from "@/core/domain/post/entity";
-import type { Container } from "../di/server";
 import type { ServiceArgs } from "../types";
 import {
   UnauthenticatedError,
   UnauthenticatedErrorCode,
 } from "../error";
-import { PostDetail } from "./dto";
+import type { PostDetail } from "./dto";
 
 export type CreatePostInput = {
-  // Primitive types for input DTOs
   content: string;
 };
 
-// Pass arguments as an object
+export type CreatePostOutput = {
+  post: PostDetail;
+};
+
 export async function createPost({
   container,
-  input
-}: ServiceArgs<CreatePostInput>): Promise<DraftPost> {
-  const userId = container.authProvider.getUserId(); // or get current user
-
-  if (!userId) {
-    throw new UnauthenticatedError(UnauthenticatedErrorCode.AuthenticationRequired, "Authentication required");
+  headers,
+  input,
+}: ServiceArgs<CreatePostInput>): Promise<CreatePostOutput> {
+  const currentUser = await container.authProvider.getCurrentUser(headers);
+  if (!currentUser) {
+    throw new UnauthenticatedError(
+      UnauthenticatedErrorCode.AuthenticationRequired,
+      "Authentication required",
+    );
   }
 
   const { entity: post, events } = Post.create({
-    userId,
+    userId: currentUser.id,
     content: input.content,
   });
 
   // Outboxパターン: エンティティ変更とイベント保存を同一トランザクションで実行
-  await container.unitOfWork.run(async (repositories) => {
+  await container.unitOfWorkProvider.run(async (repositories) => {
     await repositories.postRepository.save(post);
     await repositories.outboxRepository.saveEvents(events);
   });
@@ -385,11 +399,11 @@ export async function createPost({
 
   return {
     post: {
-      id: result.result.post.id,
-      title: result.result.post.title,
-      content: result.result.post.content,
+      id: post.id,
+      title: post.title,
+      content: post.content,
       authorName: currentUser.name,
-      createdAt: result.result.post.createdAt,
+      createdAt: post.createdAt,
     },
   };
 }
@@ -397,31 +411,94 @@ export async function createPost({
 
 ## DI Container example
 
+サーバー側のコンテナはモジュールスコープのシングルトンとして export し、
+`createServerFn` の `handler` や loader からそのまま import して使う。
+RSC 有効化時もサーバー側のモジュールはサーバーバンドルにのみ含まれるため、
+クライアントには漏れない（`process.env` 参照を含むファイルは
+`@/core/di/server` のように `server` を含めるなど命名で明示する）。
+
 ```typescript
-// DI Container for specific environment
-// ex: app/di.ts
+// app/core/di/server.ts
 
-import type { Container } from "@/core/application/container";
 import { getDatabase } from "@/core/adapters/drizzleSqlite/client";
+import { DrizzleSqliteUnitOfWorkProvider } from "@/core/adapters/drizzleSqlite/unitOfWork";
+import type { Container } from "@/core/application/container/server";
 
-export function createContainer(): Container {
+export type ServerConfig = {
+  databaseUrl: string;
+  appUrl: string;
+};
+
+function getServerConfig(): ServerConfig {
   const databaseUrl = process.env.SQLITE_URL;
-  if (!databaseUrl) {
-    throw new Error("SQLITE_URL is not set");
-  }
+  const appUrl = process.env.APP_URL;
 
-  const db = getDatabase(databaseUrl);
+  if (!databaseUrl) throw new Error("SQLITE_URL is not set");
+  if (!appUrl) throw new Error("APP_URL is not set");
 
-  export const container = {
-    unitOfWorkProvider: DrizzleSqliteUnitOfWorkProvider(db),
-    authProvider: new BetterAuthAuthProvider(/* Config */),
-    storageManager: new S3StorageManager(/* S3 client */),
+  return { databaseUrl, appUrl };
+}
+
+export function createContainer(config: ServerConfig): Container {
+  const db = getDatabase(config.databaseUrl);
+
+  return {
+    config: { appUrl: config.appUrl },
+    unitOfWorkProvider: new DrizzleSqliteUnitOfWorkProvider(db),
+    // authProvider: new BetterAuthAuthProvider(/* Config */),
+    // storageManager: new S3StorageManager(/* S3 client */),
     // Other adapters...
   };
 }
 
-export const container = createContainer();
+export const container = createContainer(getServerConfig());
 ```
+
+```typescript
+// 使い方 (サーバーコンポーネント内 — 推奨)
+
+import { container } from "@/core/di/server";
+import { getRequestHeaders } from "@tanstack/react-start/server";
+import { listPosts } from "@/core/application/post/listPosts";
+
+export async function PostList() {
+  const { posts } = await listPosts({
+    container,
+    headers: getRequestHeaders(),
+    input: { limit: 20 },
+  });
+
+  return (
+    <ul>
+      {posts.map((post) => <li key={post.id}>{post.title}</li>)}
+    </ul>
+  );
+}
+```
+
+```typescript
+// 使い方 (mutation 用 server function 内)
+
+import { createServerFn } from "@tanstack/react-start";
+import { getRequestHeaders } from "@tanstack/react-start/server";
+import { container } from "@/core/di/server";
+import { createPost } from "@/core/application/post/createPost";
+
+export const createPostFn = createServerFn({ method: "POST" })
+  .inputValidator(createPostSchema)
+  .handler(({ data }) =>
+    createPost({
+      container,
+      headers: getRequestHeaders(),
+      input: data,
+    }),
+  );
+```
+
+サーバーコンポーネントから呼ぶ場合・mutation で呼ぶ場合のどちらでも、
+ユースケースの呼び出しシグネチャ `{ container, headers, input }` は同じ。
+データ取得は基本的にサーバーコンポーネント側、状態を変える操作は server function 側に
+配置する。
 
 ## Event Relay Worker example
 
