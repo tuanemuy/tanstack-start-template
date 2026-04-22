@@ -289,21 +289,22 @@ function NewPostPage() {
 
 ---
 
-## 複数 intent フォーム (Composite Action)
+## 同一ページに複数フォーム
 
-同一ページから複数のサーバー操作（プロフィール更新・パスワード変更など）を
-扱いたい場合は intent ごとにハンドラを定義し、`createCompositeAction` で
-ディスパッチする。フィールドエラーは `error()`、ビジネスエラーは `throw` でも
-`error()` で返してもよい。
+TanStack Start では `createServerFn` を **何個でも独立して定義** できるので、
+React Router 時代の「intent でディスパッチ」パターンは不要。フォームごとに
+専用の server function を作って、それぞれの `useTransition` で状態を管理する。
 
 ```tsx
 // app/routes/settings/index.tsx
 "use client";
 
+import { useState, useTransition } from "react";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { getRequestHeaders } from "@tanstack/react-start/server";
 import {
+  type SubmissionResult,
   getFormProps,
   getInputProps,
   useForm,
@@ -314,16 +315,9 @@ import { z } from "zod";
 
 import { container } from "@/core/di/server";
 import { changePassword, updateProfile } from "@/core/application/user";
-import { requireCurrentUser } from "@/lib/server/currentUser";
-import {
-  createCompositeAction,
-  defineHandler,
-  error,
-  success,
-  useCompositeAction,
-} from "@/lib/compositeAction";
-import { formatErrorMessage } from "@/lib/error";
 import { isBusinessRuleError } from "@/core/domain/error";
+import { formatErrorMessage } from "@/lib/error";
+import { requireCurrentUser } from "@/lib/server/currentUser";
 
 const updateProfileSchema = z.object({
   name: z.string().min(1, "名前を入力してください"),
@@ -335,44 +329,28 @@ const changePasswordSchema = z.object({
   newPassword: z.string().min(8, "8文字以上で入力してください"),
 });
 
-export const handlers = {
-  updateProfile: defineHandler({
-    schema: updateProfileSchema,
-    handler: async (value) => {
-      await requireCurrentUser();
-      const { user } = await updateProfile({
-        container,
-        headers: getRequestHeaders(),
-        input: value,
-      });
-      return success({ user });
-    },
-  }),
-  changePassword: defineHandler({
-    schema: changePasswordSchema,
-    handler: async (value) => {
-      await requireCurrentUser();
-      try {
-        await changePassword({
-          container,
-          headers: getRequestHeaders(),
-          input: value,
-        });
-        return success();
-      } catch (e) {
-        // ドメインルール違反だけはフィールドエラーに変換、それ以外は throw
-        if (isBusinessRuleError(e)) {
-          return error({ currentPassword: [formatErrorMessage(e)] });
-        }
-        throw e;
-      }
-    },
-  }),
-};
+const updateProfileFn = createServerFn({ method: "POST" })
+  .inputValidator(updateProfileSchema)
+  .handler(async ({ data }) => {
+    await requireCurrentUser();
+    const { user } = await updateProfile({
+      container,
+      headers: getRequestHeaders(),
+      input: data,
+    });
+    return { user };
+  });
 
-const settingsAction = createServerFn({ method: "POST" })
-  .inputValidator((formData: FormData) => formData)
-  .handler(({ data }) => createCompositeAction(data, handlers));
+const changePasswordFn = createServerFn({ method: "POST" })
+  .inputValidator(changePasswordSchema)
+  .handler(async ({ data }) => {
+    await requireCurrentUser();
+    await changePassword({
+      container,
+      headers: getRequestHeaders(),
+      input: data,
+    });
+  });
 
 export const Route = createFileRoute("/settings/")({
   component: SettingsPage,
@@ -380,53 +358,75 @@ export const Route = createFileRoute("/settings/")({
 
 function SettingsPage() {
   const router = useRouter();
-  const composite = useCompositeAction<typeof handlers>(settingsAction, {
-    onSettled: () => router.invalidate(),
-  });
+
+  // ── プロフィール更新 ──
+  const [profileResult, setProfileResult] = useState<SubmissionResult>();
+  const [isUpdating, startUpdate] = useTransition();
 
   const [profileForm, profileFields] = useForm({
     id: "profile-form",
-    lastResult:
-      composite.data?.intent === "updateProfile" ? composite.data : undefined,
-    constraint: getZodConstraint(handlers.updateProfile.schema),
+    lastResult: profileResult,
+    constraint: getZodConstraint(updateProfileSchema),
     shouldValidate: "onSubmit",
     shouldRevalidate: "onBlur",
     onValidate: ({ formData }) =>
-      parseWithZod(formData, { schema: handlers.updateProfile.schema }),
+      parseWithZod(formData, { schema: updateProfileSchema }),
+    onSubmit: (event, { submission }) => {
+      event.preventDefault();
+      if (submission?.status !== "success") return;
+
+      startUpdate(async () => {
+        try {
+          const { user } = await updateProfileFn({ data: submission.value });
+          toast.success(`${user.name} を更新しました`);
+          router.invalidate();
+        } catch (e) {
+          toast.error(formatErrorMessage(e));
+        }
+      });
+    },
   });
+
+  // ── パスワード変更 ──
+  const [passwordResult, setPasswordResult] = useState<SubmissionResult>();
+  const [isChanging, startChange] = useTransition();
 
   const [passwordForm, passwordFields] = useForm({
     id: "password-form",
-    lastResult:
-      composite.data?.intent === "changePassword" ? composite.data : undefined,
-    constraint: getZodConstraint(handlers.changePassword.schema),
+    lastResult: passwordResult,
+    constraint: getZodConstraint(changePasswordSchema),
     shouldValidate: "onSubmit",
     shouldRevalidate: "onBlur",
     onValidate: ({ formData }) =>
-      parseWithZod(formData, { schema: handlers.changePassword.schema }),
-  });
+      parseWithZod(formData, { schema: changePasswordSchema }),
+    onSubmit: (event, { submission }) => {
+      event.preventDefault();
+      if (submission?.status !== "success") return;
 
-  composite.register("updateProfile", {
-    onSuccess: ({ data }) => toast.success(`${data.user.name} を更新しました`),
-    onHandlerError: ({ error }) =>
-      toast.error(error?.[""]?.[0] ?? "更新に失敗しました"),
-  });
-
-  composite.register("changePassword", {
-    onSuccess: () => {
-      toast.success("パスワードを変更しました");
-      passwordForm.reset();
+      startChange(async () => {
+        try {
+          await changePasswordFn({ data: submission.value });
+          toast.success("パスワードを変更しました");
+          passwordForm.reset();
+        } catch (e) {
+          // ドメインルール違反は該当フィールドにエラーを表示
+          if (isBusinessRuleError(e)) {
+            setPasswordResult({
+              status: "error",
+              error: { currentPassword: [formatErrorMessage(e)] },
+            });
+            return;
+          }
+          toast.error(formatErrorMessage(e));
+        }
+      });
     },
-    onHandlerError: ({ error }) =>
-      toast.error(error?.currentPassword?.[0] ?? "変更に失敗しました"),
   });
 
   return (
     <div>
       <h2>プロフィール設定</h2>
-      <composite.Form {...getFormProps(profileForm)}>
-        <input type="hidden" name="intent" value="updateProfile" />
-
+      <form {...getFormProps(profileForm)}>
         <div>
           <label htmlFor={profileFields.name.id}>名前</label>
           <input {...getInputProps(profileFields.name, { type: "text" })} />
@@ -439,15 +439,13 @@ function SettingsPage() {
           <div className="text-destructive">{profileFields.email.errors}</div>
         </div>
 
-        <button type="submit" disabled={composite.isPending("updateProfile")}>
-          {composite.isPending("updateProfile") ? "更新中..." : "更新"}
+        <button type="submit" disabled={isUpdating}>
+          {isUpdating ? "更新中..." : "更新"}
         </button>
-      </composite.Form>
+      </form>
 
       <h2>パスワード変更</h2>
-      <composite.Form {...getFormProps(passwordForm)}>
-        <input type="hidden" name="intent" value="changePassword" />
-
+      <form {...getFormProps(passwordForm)}>
         <div>
           <label htmlFor={passwordFields.currentPassword.id}>現在のパスワード</label>
           <input
@@ -468,10 +466,10 @@ function SettingsPage() {
           </div>
         </div>
 
-        <button type="submit" disabled={composite.isPending("changePassword")}>
-          {composite.isPending("changePassword") ? "変更中..." : "変更"}
+        <button type="submit" disabled={isChanging}>
+          {isChanging ? "変更中..." : "変更"}
         </button>
-      </composite.Form>
+      </form>
     </div>
   );
 }
@@ -479,11 +477,12 @@ function SettingsPage() {
 
 ### ポイント
 
-- intent ごとのバリデーション + ハンドラを `handlers` オブジェクトに集約。
-  `useCompositeAction` のジェネリクス引数で型推論が効く。
-- フィールドに紐付けたいエラーだけを `error({ field: [msg] })` で返し、それ以外の
-  例外は `throw` してルートの `errorComponent` 側に任せる。
-- `router.invalidate()` を `onSettled` で呼んで loader データを再取得する。
+- フォームと server function は **1 対 1** で対応させる。intent でディスパッチする
+  必要はない（React Router の単一 `action()` 制約への対処だったもの）。
+- ペンディング状態は `useTransition` を **フォームごとに** 1 つずつ持つ。
+- フィールド単位のエラー表示が必要なときだけ `useState` + `setResult({ status: "error", error })`
+  を使い、そうでなければ `try/catch` + `toast` で十分。
+- 操作後の loader 再フェッチは `router.invalidate()` を呼ぶ。
 
 ---
 
