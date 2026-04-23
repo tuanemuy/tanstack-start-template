@@ -1,27 +1,6 @@
 import type { WithEvents } from "@/core/domain/common/event";
-import { BusinessRuleError } from "@/core/domain/error";
-import { TodoErrorCode } from "./errorCode";
 import { type TodoEvent, TodoEvents } from "./events";
 import { TodoId, TodoTitle } from "./valueObject";
-
-/**
- * Raw row shape used when rehydrating a `Todo` from persistence.
- *
- * Field types mirror what a SQL adapter typically returns — plain strings
- * and numbers without domain brands, dates either as `Date` objects or as
- * millisecond-epoch numbers / ISO strings depending on the driver. The
- * `completed` column is still a flat boolean (or 0/1 integer for SQLite)
- * at the storage layer; `fromPersistence` lifts that into the
- * `active | completed` discriminated union at the domain boundary.
- */
-export type TodoPersistenceRaw = Readonly<{
-  id: string;
-  title: string;
-  completed: boolean | number;
-  version: number;
-  createdAt: Date | string | number;
-  updatedAt: Date | string | number;
-}>;
 
 type TodoBase = Readonly<{
   id: TodoId;
@@ -62,16 +41,60 @@ export type CompletedTodo = TodoBase & Readonly<{ status: "completed" }>;
  */
 export type Todo = ActiveTodo | CompletedTodo;
 
-function toDate(value: Date | string | number): Date {
-  if (value instanceof Date) return value;
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    throw new BusinessRuleError(
-      TodoErrorCode.InvalidId,
-      "Invalid date value in persisted todo row",
-    );
+/**
+ * Mark an active todo complete. Compile-time-guarded: cannot be called on a
+ * `CompletedTodo`, so "completing something already completed" is a type
+ * error rather than a runtime no-op.
+ */
+function complete(todo: ActiveTodo): WithEvents<CompletedTodo, TodoEvent> {
+  const next: CompletedTodo = {
+    ...todo,
+    status: "completed",
+    version: todo.version + 1,
+    updatedAt: new Date(),
+  };
+  return {
+    entity: next,
+    events: [TodoEvents.toggled(next.id, true)],
+  };
+}
+
+/**
+ * Reopen a completed todo. Compile-time-guarded: cannot be called on an
+ * `ActiveTodo`.
+ */
+function reopen(todo: CompletedTodo): WithEvents<ActiveTodo, TodoEvent> {
+  const next: ActiveTodo = {
+    ...todo,
+    status: "active",
+    version: todo.version + 1,
+    updatedAt: new Date(),
+  };
+  return {
+    entity: next,
+    events: [TodoEvents.toggled(next.id, false)],
+  };
+}
+
+/**
+ * Flip between `active` and `completed`. Declared as an overloaded function
+ * so that the result type preserves the opposite variant at compile time —
+ * `toggle(ActiveTodo)` is typed as `WithEvents<CompletedTodo, …>` and vice
+ * versa. Callers that pass the union fall back to `WithEvents<Todo, …>`.
+ *
+ * The runtime implementation dispatches on `status` so the
+ * "illegal transition" invariants of `complete` / `reopen` stay intact.
+ */
+function toggle(todo: ActiveTodo): WithEvents<CompletedTodo, TodoEvent>;
+function toggle(todo: CompletedTodo): WithEvents<ActiveTodo, TodoEvent>;
+function toggle(todo: Todo): WithEvents<Todo, TodoEvent>;
+function toggle(todo: Todo): WithEvents<Todo, TodoEvent> {
+  switch (todo.status) {
+    case "active":
+      return complete(todo);
+    case "completed":
+      return reopen(todo);
   }
-  return parsed;
 }
 
 export const Todo = {
@@ -137,6 +160,10 @@ export const Todo = {
     todo: T,
     newTitle: string,
   ): WithEvents<T, TodoEvent> => {
+    // Validate before the idempotency short-circuit: an invalid input is not
+    // "the same as current", it is malformed. Comparing raw input against the
+    // current (already-normalized) title would also let unnormalized inputs
+    // slip past the short-circuit (e.g. "  foo  " vs "foo").
     const title = TodoTitle.create(newTitle);
     if (title === todo.title) {
       return { entity: todo, events: [] };
@@ -153,98 +180,22 @@ export const Todo = {
     };
   },
 
-  /**
-   * Mark an active todo complete. Compile-time-guarded: cannot be called
-   * on a `CompletedTodo`, so "completing something already completed" is a
-   * type error rather than a runtime no-op.
-   */
-  complete: (todo: ActiveTodo): WithEvents<CompletedTodo, TodoEvent> => {
-    const next: CompletedTodo = {
-      ...todo,
-      status: "completed",
-      version: todo.version + 1,
-      updatedAt: new Date(),
-    };
-    return {
-      entity: next,
-      events: [TodoEvents.toggled(next.id, true)],
-    };
-  },
+  complete,
 
-  /**
-   * Reopen a completed todo. Compile-time-guarded: cannot be called on an
-   * `ActiveTodo`.
-   */
-  reopen: (todo: CompletedTodo): WithEvents<ActiveTodo, TodoEvent> => {
-    const next: ActiveTodo = {
-      ...todo,
-      status: "active",
-      version: todo.version + 1,
-      updatedAt: new Date(),
-    };
-    return {
-      entity: next,
-      events: [TodoEvents.toggled(next.id, false)],
-    };
-  },
+  reopen,
 
-  /**
-   * Flip between `active` and `completed`. Overloaded so that the result
-   * preserves the opposite variant at the type level — `toggle(ActiveTodo)`
-   * is typed as `WithEvents<CompletedTodo, …>` and vice versa. Callers that
-   * pass the union fall back to `WithEvents<Todo, …>`.
-   */
-  toggle: ((todo: Todo): WithEvents<Todo, TodoEvent> =>
-    Todo.match<WithEvents<Todo, TodoEvent>>(todo, {
-      active: (t) => Todo.complete(t),
-      completed: (t) => Todo.reopen(t),
-    })) as {
-    (todo: ActiveTodo): WithEvents<CompletedTodo, TodoEvent>;
-    (todo: CompletedTodo): WithEvents<ActiveTodo, TodoEvent>;
-    (todo: Todo): WithEvents<Todo, TodoEvent>;
-  },
+  toggle,
 
   /**
    * Delete a todo aggregate.
    *
-   * Returns `WithEvents<null, TodoEvent>`: the `entity` is `null` because
-   * the aggregate is gone after this operation, but the emitted
-   * `todo.deleted` event must still be routed through `collectEvent` so
-   * that outbox delivery is guaranteed.
+   * Delete is terminal, so `entity` is `null` — `WithEvents<null, …>` is the
+   * documented convention for aggregate removal. Callers must still route
+   * the emitted `todo.deleted` event through `collectEvents` so that outbox
+   * delivery is guaranteed.
    */
   delete: (todo: Todo): WithEvents<null, TodoEvent> => ({
     entity: null,
     events: [TodoEvents.deleted(todo.id)],
   }),
-
-  /**
-   * Canonical rehydrator for a persisted todo row.
-   *
-   * Runs each raw field through its value-object factory so that invariants
-   * are re-checked on every read, and lifts the flat `completed` boolean
-   * into the `active | completed` discriminated union. Adapters must call
-   * this rather than casting raw rows to `Todo` directly. Throws
-   * `BusinessRuleError` when any invariant is violated (bad id format,
-   * empty/too-long title, negative or non-integer version, etc.).
-   */
-  fromPersistence: (raw: TodoPersistenceRaw): Todo => {
-    if (!Number.isInteger(raw.version) || raw.version < 0) {
-      throw new BusinessRuleError(
-        TodoErrorCode.InvalidVersion,
-        `Invalid todo version in persisted row: ${raw.version}`,
-      );
-    }
-    const completed =
-      typeof raw.completed === "number" ? raw.completed !== 0 : raw.completed;
-    const base: TodoBase = {
-      id: TodoId.create(raw.id),
-      title: TodoTitle.create(raw.title),
-      version: raw.version,
-      createdAt: toDate(raw.createdAt),
-      updatedAt: toDate(raw.updatedAt),
-    };
-    return completed
-      ? { ...base, status: "completed" }
-      : { ...base, status: "active" };
-  },
 };

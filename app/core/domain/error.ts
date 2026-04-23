@@ -15,12 +15,17 @@ export type BusinessRuleErrorCode = string;
  *
  * Represents a violation of business rules in the domain layer.
  * Thrown when domain logic determines an operation cannot proceed.
+ *
+ * `TCode extends string` lets each domain narrow `code` to its own literal
+ * union at the throw site so that `if (error.code === TodoErrorCode.TitleTooLong)`
+ * narrows correctly at the catch site. The default `<TCode extends string = string>`
+ * keeps unparameterized uses (`BusinessRuleError`) assignable to the generic type.
  */
-export class BusinessRuleError extends AnyError {
+export class BusinessRuleError<TCode extends string = string> extends AnyError {
   override readonly name = "BusinessRuleError";
 
   constructor(
-    public readonly code: string,
+    public readonly code: TCode,
     message: string,
     cause?: unknown,
   ) {

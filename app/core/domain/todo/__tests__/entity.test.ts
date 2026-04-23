@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { isBusinessRuleError } from "@/core/domain/error";
-import { Todo, type TodoPersistenceRaw } from "../entity";
+import { Todo } from "../entity";
 import { TodoErrorCode } from "../errorCode";
 import { TodoId } from "../valueObject";
 
@@ -198,77 +198,15 @@ describe("Todo.rename", () => {
     expect(renamed.status).toBe("completed");
     expect(renamed.title as unknown as string).toBe("B");
   });
-});
 
-describe("Todo.delete", () => {
-  it("returns a WithEvents<null, TodoEvent> with a single TodoDeletedEvent", () => {
-    const { entity } = Todo.create({ title: "To delete" });
-    const { entity: deletedEntity, events } = Todo.delete(entity);
-
-    expect(deletedEntity).toBeNull();
-    expect(events).toHaveLength(1);
-    const event = events[0];
-    expect(event).toBeDefined();
-    if (!event) return;
-    expect(event.type).toBe("todo.deleted");
-    if (event.type !== "todo.deleted") return;
-    expect(event.payload.todoId).toBe(entity.id);
-    expect(event.aggregateId).toBe(entity.id);
-  });
-});
-
-describe("Todo.fromPersistence", () => {
-  function buildRaw(
-    overrides: Partial<TodoPersistenceRaw> = {},
-  ): TodoPersistenceRaw {
-    const now = new Date();
-    return {
-      id: TodoId.generate(),
-      title: "Persisted",
-      completed: false,
-      version: 0,
-      createdAt: now,
-      updatedAt: now,
-      ...overrides,
-    };
-  }
-
-  it("round-trips a valid raw row into a Todo with correct types", () => {
-    const raw = buildRaw({ completed: true, version: 3 });
-    const todo = Todo.fromPersistence(raw);
-
-    expect(todo.id).toBe(raw.id);
-    expect(todo.title as unknown as string).toBe(raw.title);
-    expect(todo.status).toBe("completed");
-    expect(todo.version).toBe(3);
-    expect(todo.createdAt).toBeInstanceOf(Date);
-    expect(todo.updatedAt).toBeInstanceOf(Date);
-    expect(todo.createdAt.getTime()).toBe((raw.createdAt as Date).getTime());
-  });
-
-  it("coerces numeric completed (SQLite INTEGER mode) into the correct variant", () => {
-    const todoFalse = Todo.fromPersistence(buildRaw({ completed: 0 }));
-    expect(todoFalse.status).toBe("active");
-
-    const todoTrue = Todo.fromPersistence(buildRaw({ completed: 1 }));
-    expect(todoTrue.status).toBe("completed");
-  });
-
-  it("rejects an invalid id with BusinessRuleError(InvalidId)", () => {
+  // Locks in the "validate before idempotency" ordering: an invalid title is
+  // malformed input, not a no-op, so it must throw even when the current
+  // title is valid. Reversing the order (compare raw input first) would let
+  // malformed-but-equal inputs silently short-circuit.
+  it("throws BusinessRuleError(TitleEmpty) for invalid new title even when current title is valid", () => {
+    const { entity: original } = Todo.create({ title: "valid" });
     try {
-      Todo.fromPersistence(buildRaw({ id: "not-a-uuid" }));
-      expect.fail("should have thrown");
-    } catch (error) {
-      expect(isBusinessRuleError(error)).toBe(true);
-      if (isBusinessRuleError(error)) {
-        expect(error.code).toBe(TodoErrorCode.InvalidId);
-      }
-    }
-  });
-
-  it("rejects an empty title with BusinessRuleError(TitleEmpty)", () => {
-    try {
-      Todo.fromPersistence(buildRaw({ title: "   " }));
+      Todo.rename(original, "   ");
       expect.fail("should have thrown");
     } catch (error) {
       expect(isBusinessRuleError(error)).toBe(true);
@@ -277,27 +215,23 @@ describe("Todo.fromPersistence", () => {
       }
     }
   });
+});
 
-  it("rejects a title longer than the max with BusinessRuleError(TitleTooLong)", () => {
-    try {
-      Todo.fromPersistence(buildRaw({ title: "a".repeat(141) }));
-      expect.fail("should have thrown");
-    } catch (error) {
-      expect(isBusinessRuleError(error)).toBe(true);
-      if (isBusinessRuleError(error)) {
-        expect(error.code).toBe(TodoErrorCode.TitleTooLong);
-      }
-    }
-  });
+describe("Todo.delete", () => {
+  it("returns WithEvents<null, …> with a single TodoDeletedEvent", () => {
+    const { entity } = Todo.create({ title: "To delete" });
+    const { entity: next, events } = Todo.delete(entity);
 
-  it("rejects a negative (out-of-range) version with BusinessRuleError", () => {
-    // A valid todo is non-negative; a negative version indicates corrupt
-    // storage and should be rejected by the rehydrator's invariant check.
-    try {
-      Todo.fromPersistence(buildRaw({ version: -1 }));
-      expect.fail("should have thrown");
-    } catch (error) {
-      expect(isBusinessRuleError(error)).toBe(true);
-    }
+    // Delete is terminal — no successor entity.
+    expect(next).toBeNull();
+
+    expect(events).toHaveLength(1);
+    const event = events[0];
+    expect(event).toBeDefined();
+    if (!event) return;
+    expect(event.type).toBe("todo.deleted");
+    if (event.type !== "todo.deleted") return;
+    expect(event.payload.todoId).toBe(entity.id);
+    expect(event.aggregateId).toBe(entity.id);
   });
 });

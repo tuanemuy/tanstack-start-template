@@ -1,5 +1,9 @@
 import { v7 as uuidv7 } from "uuid";
-import type { DomainEventBase } from "@/core/domain/common/event";
+import type {
+  DomainEventBase,
+  EventDecodeMeta,
+  EventDecoder,
+} from "@/core/domain/common/event";
 import { BusinessRuleError } from "@/core/domain/error";
 import { TodoErrorCode } from "./errorCode";
 import { TodoId, TodoTitle } from "./valueObject";
@@ -56,6 +60,7 @@ export const TodoEvents = {
     type: "todo.created",
     payload: { todoId, title },
     occurredAt: new Date(),
+    schemaVersion: TODO_EVENT_SCHEMA_VERSION,
     aggregateId: todoId,
   }),
 
@@ -64,6 +69,7 @@ export const TodoEvents = {
     type: "todo.toggled",
     payload: { todoId, completed },
     occurredAt: new Date(),
+    schemaVersion: TODO_EVENT_SCHEMA_VERSION,
     aggregateId: todoId,
   }),
 
@@ -72,6 +78,7 @@ export const TodoEvents = {
     type: "todo.renamed",
     payload: { todoId, title },
     occurredAt: new Date(),
+    schemaVersion: TODO_EVENT_SCHEMA_VERSION,
     aggregateId: todoId,
   }),
 
@@ -80,20 +87,10 @@ export const TodoEvents = {
     type: "todo.deleted",
     payload: { todoId },
     occurredAt: new Date(),
+    schemaVersion: TODO_EVENT_SCHEMA_VERSION,
     aggregateId: todoId,
   }),
 };
-
-/**
- * Metadata that accompanies a wire-format event when decoding from the
- * outbox (or any other transport that stripped branded types).
- */
-export type TodoEventDecodeMeta = Readonly<{
-  id: string;
-  occurredAt: Date;
-  aggregateId?: string;
-  schemaVersion: number;
-}>;
 
 /**
  * Reconstruct a typed `TodoEvent` from its wire representation.
@@ -104,11 +101,11 @@ export type TodoEventDecodeMeta = Readonly<{
  * are rejected with `BusinessRuleError` so that downstream handlers never
  * silently consume malformed messages.
  */
-export function decodeTodoEvent(
+export const decodeTodoEvent: EventDecoder<TodoEvent> = (
   type: string,
   payload: Record<string, unknown>,
-  meta: TodoEventDecodeMeta,
-): TodoEvent {
+  meta: EventDecodeMeta,
+): TodoEvent => {
   if (meta.schemaVersion !== TODO_EVENT_SCHEMA_VERSION) {
     throw new BusinessRuleError(
       TodoErrorCode.UnsupportedEventSchema,
@@ -118,6 +115,7 @@ export function decodeTodoEvent(
   const base = {
     id: meta.id,
     occurredAt: meta.occurredAt,
+    schemaVersion: meta.schemaVersion,
     ...(meta.aggregateId !== undefined
       ? { aggregateId: meta.aggregateId }
       : {}),
@@ -150,17 +148,4 @@ export function decodeTodoEvent(
         `Unknown todo event type: ${type}`,
       );
   }
-}
-
-/**
- * Type guard for any `TodoEvent` type string. Useful when a generic event
- * dispatcher needs to branch `todo.*` events into the typed decoder.
- */
-export function isTodoEventType(type: string): boolean {
-  return (
-    type === "todo.created" ||
-    type === "todo.toggled" ||
-    type === "todo.renamed" ||
-    type === "todo.deleted"
-  );
-}
+};

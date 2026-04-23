@@ -21,8 +21,13 @@ export interface TodoReader {
 /**
  * Full read/write repository. Extends `TodoReader` so any reader call site
  * works against a write-capable repo too.
+ *
+ * `delete` is optimistic-lock-guarded by `expectedVersion` — adapters must
+ * scope the DELETE to `WHERE id = ? AND version = expectedVersion` and
+ * raise `ConflictError(OptimisticLockFailure)` on a zero-row delete so
+ * concurrent writer/deleter races cannot lose updates silently.
  */
 export interface TodoRepository extends TodoReader {
   save(todo: Todo): Promise<void>;
-  delete(id: TodoId): Promise<void>;
+  delete(id: TodoId, expectedVersion: number): Promise<void>;
 }

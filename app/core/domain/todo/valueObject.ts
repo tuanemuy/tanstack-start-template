@@ -38,14 +38,12 @@ export type TodoTitle = string & { readonly brand: "TodoTitle" };
  *
  * Exposed on `TodoTitle.schema` so that server-function validators (Conform,
  * form schemas, etc.) can share the exact same rules as the domain factory
- * without duplicating the `trim / min(1) / max(140)` truth.
+ * without duplicating the `trim / min(1) / max(140)` truth. Schema output is
+ * plain `string`; branding to `TodoTitle` happens only through the
+ * `TodoTitle.create` factory so there is a single source of truth for the
+ * nominal brand.
  */
-const todoTitleSchema = z
-  .string()
-  .trim()
-  .min(1)
-  .max(TODO_TITLE_MAX_LENGTH)
-  .brand<"TodoTitle">();
+const todoTitleSchema = z.string().trim().min(1).max(TODO_TITLE_MAX_LENGTH);
 
 export const TodoTitle = {
   schema: todoTitleSchema,
@@ -53,7 +51,7 @@ export const TodoTitle = {
   create: (raw: string): TodoTitle => {
     const result = todoTitleSchema.safeParse(raw);
     if (result.success) {
-      return result.data as unknown as TodoTitle;
+      return result.data as TodoTitle;
     }
     // Map zod's first issue to the matching domain error code. Zod emits
     // `too_small` when the trimmed value is shorter than `min(1)` and
