@@ -1,5 +1,5 @@
 {
-  "include": ["**/*", "**/.server/**/*", "**/.client/**/*"],
+  "include": ["**/*"],
   "exclude": ["node_modules", "**/*.stories.*"],
   "compilerOptions": {
     "lib": ["DOM", "DOM.Iterable", "ES2022"],
@@ -17,6 +17,10 @@
     "resolveJsonModule": true,
     "skipLibCheck": true,
     "strict": true,
-    "strictNullChecks": true
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "exactOptionalPropertyTypes": true
   }
 }
