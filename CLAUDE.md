@@ -5,7 +5,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Principles
 
 - Prioritize type safety by leveraging TypeScript's type system to the fullest extent
-- Encourage a stateless, pure functional programming style
+- Prefer a stateless, pure functional programming style for the domain and application layers. Adapter classes are acceptable when they encapsulate a single external resource (DB connection, HTTP client) and keep all mutable state internal.
+- Make illegal states unrepresentable at the type level before falling back to runtime checks.
 
 ## Development Commands
 
@@ -16,7 +17,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `pnpm lint:fix` - Lint code with Biome and fix issues
 - `pnpm format` - Format code with Biome
 - `pnpm format:check` - Check code formatting with Biome
-- `pnpm typecheck` - Type check code with tsc
+- `pnpm typecheck` - Type check code with `@typescript/native-preview` (tsgo)
 - `pnpm test` - Run tests with Vitest
 - `TEST_DOMAIN=${domain(lowercase)} pnpm test:domain` - Run tests with Vitest for a specific domain
 
@@ -46,16 +47,30 @@ Hexagonal architecture with domain-driven design principles:
     - `app/core/application/${domain}/${usecase}.ts`: Application services that orchestrate domain logic. Each service is a function that takes a context object.
     - `app/core/domain/error.ts`: Error types for business logic
     - `app/core/domain/${domain}/errorCode.ts`: Error codes for each domain
-    - `app/core/applicaion/error.ts`: Error types for application layer
+    - `app/core/application/error.ts`: Error types for application layer
     - `app/core/application/__tests__/helpers.ts`: Test helpers for application services
+
+### Unit of Work
+
+- `app/core/application/unitOfWork.ts`: Defines the `UnitOfWorkProvider` port plus the `ReadonlyContext` / `ReadWriteContext` shapes.
+- `ReadonlyContext` exposes the `*Reader` subset of every port; `save` / `delete` / `saveEvents` are not callable in `{ mode: "readonly" }` at the **type level** (no runtime traps).
+- `ReadWriteContext` adds `collectEvent(event)` for the Outbox pattern. Events collected in the callback are persisted to the outbox in the same transaction.
+- `app/core/application/retryingUnitOfWork.ts`: `RetryingUnitOfWorkProvider` decorator that retries transient contention errors. The adapter-specific `isRetryable` predicate is injected at wire time (`createContainer`).
+- Adapters (e.g. `app/core/adapters/drizzleSqlite/unitOfWork.ts`) implement the bare port; retry is composed on top via the decorator.
+
+### Domain Events
+
+- `app/core/domain/common/event.ts`: Defines `DomainEventBase` and the `WithEvents<TEntity, TEvent>` wrapper used to attach pending events to aggregate-producing operations.
+- Each domain owns its event union (e.g. `app/core/domain/todo/events.ts`) and a `decode*Event(type, payload, meta)` function that re-runs wire-format payloads through value-object factories before consumers see them.
+- Schema evolution is tracked per event via the outbox row's `schema_version` column, branching is done inside the domain's decode function.
 
 ### Event Handling (Outbox Pattern)
 
-Uses Outbox pattern to ensure consistency between entity changes and event publishing:
+Uses the Outbox pattern to ensure consistency between entity changes and event publishing. Delivery is **at-least-once** — consumers must be idempotent (typically keyed on `event.id`).
 
-- `app/core/domain/common/ports/outboxRepository.ts`: Outbox repository port
-- `app/core/adapters/drizzleSqlite/repositories/outboxRepository.ts`: Drizzle implementation
-- `app/core/application/workers/eventRelayWorker.ts`: Event relay worker
+- `app/core/domain/common/ports/outboxRepository.ts`: `OutboxReader` + `OutboxRepository` port. `claimPending` returns `ClaimedOutboxEntry` values with `leaseToken`; `markProcessed` requires `{ id, leaseToken }` pairs and scopes its update to that token so late-arriving workers cannot silently drop work re-claimed by another worker after lease expiry.
+- `app/core/adapters/drizzleSqlite/repositories/outboxRepository.ts`: Drizzle implementation (reader class + repository subclass).
+- `app/core/application/workers/eventRelayWorker.ts`: Event relay worker. Claims a batch under a fresh lease, dispatches each event, then marks the batch processed in a single round-trip.
 
 ### Example Implementation
 

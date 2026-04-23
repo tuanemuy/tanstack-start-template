@@ -4,13 +4,198 @@ TanStack Start (React Server Components 有効) を前提とした実装例。
 
 設計の基本姿勢:
 
+- **RSC は "所有者" を意識して選ぶ。** RSC は `createServerFn` から返せる
+  React Flight ペイロードに過ぎない。どこから呼ぶか = 誰がそのペイロードを
+  持つか、を最初に決める。
 - **データフェッチ・認可・ユースケース呼び出しはサーバーコンポーネント内で完結させる。**
-  loader はあくまで「サーバーコンポーネントを RSC ペイロードとして取り込むための薄いプロキシ」として扱う。
+  loader は「サーバーコンポーネントを RSC ペイロードとして取り込むための薄いプロキシ」として扱う。
 - **エラーは `throw` する。** ステータスコードに変換して `data()` で返す必要は無い。
   `redirect({ to })` / `notFound()` を `throw` するとルーターが拾い、それ以外の例外は
   ルートの `errorComponent` にフォールバックする。
 - **クライアントの状態が必要な箇所だけを `"use client"` で切り出す。** フォームや
   インタラクションを持つ部分のみクライアントコンポーネントにする。
+- **クライアントから server function を呼ぶときは `useServerFn(fn)` でラップ。**
+  これにより usecase 側で `throw redirect({ to })` した場合もルーター側が
+  自動で navigate してくれる。
+
+---
+
+## RSC の所有者パターン
+
+RSC は **Flight ペイロードを誰が保持・invalidate するか** で 4 通りの扱い方がある。
+route loader だけが正解ではない。
+
+### 1. Route loader が持つ (本テンプレのデフォルト)
+
+URL に 1:1 で紐づくフラグメント。ルーターキャッシュが所有し、
+`router.invalidate()` で再取得する。
+
+```tsx
+// app/routes/index.tsx
+import { createFileRoute } from "@tanstack/react-router";
+import { createServerFn } from "@tanstack/react-start";
+import { renderServerComponent } from "@tanstack/react-start/rsc";
+import { TodoList } from "@/components/todo/TodoList";
+
+const renderTodoList = createServerFn({ method: "GET" }).handler(async () => {
+  const Rendered = await renderServerComponent(<TodoList />);
+  return { Rendered };
+});
+
+export const Route = createFileRoute("/")({
+  loader: async () => {
+    const { Rendered } = await renderTodoList();
+    return { TodoList: Rendered };
+  },
+  component: HomePage,
+});
+
+function HomePage() {
+  const { TodoList } = Route.useLoaderData();
+  return <>{TodoList}</>;
+}
+```
+
+**選ぶ目安**: 一覧・詳細ページなど URL パラメータで一意に決まるフラグメント。
+
+### 2. TanStack Query が持つ
+
+route-shape ではないウィジェットや、独立して invalidate したい場合。
+RSC 値を Query に入れるときは `structuralSharing: false` が必須。
+
+```tsx
+// app/routes/posts/$postId.tsx
+import { createFileRoute } from "@tanstack/react-router";
+import { createServerFn } from "@tanstack/react-start";
+import {
+  CompositeComponent,
+  createCompositeComponent,
+} from "@tanstack/react-start/rsc";
+import { useQueryClient, useSuspenseQuery } from "@tanstack/react-query";
+import { z } from "zod";
+
+const getPostRsc = createServerFn({ method: "GET" })
+  .inputValidator(z.object({ postId: z.string() }))
+  .handler(async ({ data }) => {
+    const post = await loadPost(data.postId);
+    const src = await createCompositeComponent<{
+      renderActions?: (args: { postId: string }) => ReactNode;
+    }>((props) => (
+      <article>
+        <h1>{post.title}</h1>
+        <footer>{props.renderActions?.({ postId: post.id })}</footer>
+      </article>
+    ));
+    return { src };
+  });
+
+const postQueryOptions = (postId: string) => ({
+  queryKey: ["post-rsc", postId],
+  structuralSharing: false, // RSC 値を Query に入れるときは必須
+  queryFn: () => getPostRsc({ data: { postId } }),
+  staleTime: 5 * 60 * 1000,
+});
+
+export const Route = createFileRoute("/posts/$postId")({
+  loader: ({ context, params }) =>
+    context.queryClient.ensureQueryData(postQueryOptions(params.postId)),
+  component: PostPage,
+});
+
+function PostPage() {
+  const { postId } = Route.useParams();
+  const { data } = useSuspenseQuery(postQueryOptions(postId));
+  return <CompositeComponent src={data.src} />;
+}
+```
+
+**選ぶ目安**: 複数ルートで使い回したい、背景で refetch したい、route 跨いで生き続けるウィジェット。
+
+### 3. イベントハンドラで直接呼ぶ
+
+ユーザー操作をトリガーに RSC をロードして state に積む。
+
+```tsx
+"use client";
+
+import { useServerFn } from "@tanstack/react-start";
+import { useState } from "react";
+import { getActivityFragment } from "./actions";
+
+export function LoadMoreButton({ userId }: { userId: string }) {
+  const loadFragment = useServerFn(getActivityFragment);
+  const [fragment, setFragment] = useState<ReactNode>(null);
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={async () => {
+          const { Rendered } = await loadFragment({ data: { userId } });
+          setFragment(Rendered);
+        }}
+      >
+        もっと見る
+      </button>
+      {fragment}
+    </>
+  );
+}
+```
+
+**選ぶ目安**: 初回ロードに含めたくない、ユーザー操作で段階的に取得したい場合。
+
+### 4. Composite Component (クライアント slot 埋め込み)
+
+サーバー描画マークアップの中にクライアント interactivity を差し込みたい場合に
+使う。`children`、render prop、component prop の 3 種類の slot が使える。
+
+```tsx
+// server 側
+import { createCompositeComponent } from "@tanstack/react-start/rsc";
+
+const getPostCard = createServerFn({ method: "GET" })
+  .inputValidator(z.object({ postId: z.string() }))
+  .handler(async ({ data }) => {
+    const post = await loadPost(data.postId);
+    const src = await createCompositeComponent<{
+      renderActions?: (args: { postId: string }) => ReactNode;
+    }>((props) => (
+      <article>
+        <h1>{post.title}</h1>
+        <p>{post.body}</p>
+        <footer>{props.renderActions?.({ postId: post.id })}</footer>
+      </article>
+    ));
+    return { src };
+  });
+```
+
+```tsx
+// client 側
+import { CompositeComponent } from "@tanstack/react-start/rsc";
+
+<CompositeComponent
+  src={src}
+  renderActions={({ postId }) => <LikeButton postId={postId} />}
+/>;
+```
+
+**選ぶ目安**: サーバー描画の中に「いいねボタン」のようなクライアント UI を差し込みたい。
+`Children.map` / `cloneElement` でサーバー slot を覗きたくなったら、render prop に
+変換する。
+
+### 選択フロー
+
+| 条件 | 選ぶの |
+|---|---|
+| URL に 1:1 で紐づく | **loader** |
+| route 跨ぎで使う / 独立 invalidate | **Query** |
+| 初回に含めたくない、ユーザー操作トリガ | **イベントハンドラ直呼び** |
+| サーバーマークアップ内にクライアント UI を混ぜたい | **Composite Component** |
+
+**悪いパターン**: 同じ RSC を loader と Query の両方で取得し、
+片方だけ invalidate する "二重所有"。
 
 ---
 
@@ -26,7 +211,7 @@ import { cache } from "react";
 import { notFound, redirect } from "@tanstack/react-router";
 import { getRequestHeaders } from "@tanstack/react-start/server";
 
-import { container } from "@/core/di/server";
+import { getContainer } from "@/core/application/di/server";
 import { getPost } from "@/core/application/post/getPost";
 import { isNotFoundError, isUnauthenticatedError } from "@/core/application/error";
 import { RelatedPosts } from "./RelatedPosts";
@@ -37,7 +222,7 @@ const loadPost = cache(async (postId: string) => {
 
   try {
     return await getPost({
-      container,
+      container: getContainer(),
       headers,
       input: { postId },
     });
@@ -62,50 +247,15 @@ export async function PostDetail({ postId }: { postId: string }) {
     </article>
   );
 }
-
-// head 情報を loader 側で使いたい場合は、cache 化しているので二重フェッチにならない
-export async function getPostTitle(postId: string): Promise<string> {
-  const { post } = await loadPost(postId);
-  return post.title;
-}
-```
-
-```tsx
-// app/components/post/RelatedPosts.tsx (サーバーコンポーネント)
-
-import { getRequestHeaders } from "@tanstack/react-start/server";
-import { container } from "@/core/di/server";
-import { listRelatedPosts } from "@/core/application/post/listRelatedPosts";
-
-export async function RelatedPosts({ postId }: { postId: string }) {
-  const headers = getRequestHeaders();
-  const { posts } = await listRelatedPosts({
-    container,
-    headers,
-    input: { postId, limit: 5 },
-  });
-
-  if (posts.length === 0) return null;
-
-  return (
-    <section>
-      <h2>関連記事</h2>
-      <ul>
-        {posts.map((post) => (
-          <li key={post.id}>{post.title}</li>
-        ))}
-      </ul>
-    </section>
-  );
-}
 ```
 
 ### ポイント
 
 - サーバーコンポーネント内で `await` しているので、loader でデータを揃える必要はない。
 - 認証・存在チェック後の例外マッピングは `try/catch` + `throw redirect/notFound` で十分。
-  `handleUseCase` のような正規化ヘルパーは不要。
-- 同一リクエスト内の重複呼び出しは `cache()` でメモ化する（fetch deduping）。
+- 同一リクエスト内の重複呼び出しは `cache()` でメモ化する。
+- DI コンテナは `@/core/application/di/server` の `getContainer()` を呼ぶ。ファイル冒頭に
+  `import "@tanstack/react-start/server-only";` を入れてクライアント混入を防ぐ。
 
 ---
 
@@ -152,6 +302,7 @@ function PostPage() {
 - loader は `renderServerComponent(<RSC />)` を呼ぶだけ。データフェッチはサーバーコンポーネント側。
 - ナビゲーション後も `staleTime` が効くため、同じ URL に戻ったときにキャッシュを再利用できる。
 - 強制再取得したいときはクライアント側で `useRouter().invalidate()`。
+- 入力バリデーションは `.inputValidator(...)`。**旧 API の `.validator(...)` は使わない。**
 
 ---
 
@@ -163,15 +314,17 @@ function PostPage() {
 ```typescript
 // app/lib/server/currentUser.ts
 
+import "@tanstack/react-start/server-only";
+
 import { cache } from "react";
 import { redirect } from "@tanstack/react-router";
 import { getRequestHeaders } from "@tanstack/react-start/server";
 
-import { container } from "@/core/di/server";
+import { getContainer } from "@/core/application/di/server";
 import type { User } from "@/core/domain/user/entity";
 
 export const getCurrentUser = cache(async (): Promise<User | null> => {
-  return container.authProvider.getCurrentUser(getRequestHeaders());
+  return getContainer().authProvider.getCurrentUser(getRequestHeaders());
 });
 
 export async function requireCurrentUser(): Promise<User> {
@@ -187,10 +340,85 @@ RSC との相性が良い。
 
 ---
 
-## 単一フォーム (Conform + createServerFn)
+## Server Function (mutation)
 
-クライアントコンポーネントで Conform バリデーションし、`onSubmit` から `createServerFn`
-を直接呼ぶ。エラーは server function 内で `throw` してそのままクライアントに伝える。
+state を変える操作は `createServerFn({ method: "POST" })` に集約し、
+クライアントからは `useServerFn(fn)` 経由で呼ぶ。
+
+```typescript
+// app/components/todo/actions.ts
+
+import { createServerFn } from "@tanstack/react-start";
+import { getRequestHeaders } from "@tanstack/react-start/server";
+import { z } from "zod";
+
+import { getContainer } from "@/core/application/di/server";
+import { createTodo } from "@/core/application/todo/createTodo";
+
+export const createTodoFn = createServerFn({ method: "POST" })
+  .inputValidator(z.object({ title: z.string().min(1).max(140) }))
+  .handler(({ data }) =>
+    createTodo({
+      container: getContainer(),
+      input: data,
+    }),
+  );
+```
+
+```tsx
+// app/components/todo/CreateTodoForm.tsx
+"use client";
+
+import { useRouter } from "@tanstack/react-router";
+import { useServerFn } from "@tanstack/react-start";
+import { type FormEvent, useState, useTransition } from "react";
+import { createTodoFn } from "./actions";
+
+export function CreateTodoForm() {
+  const router = useRouter();
+  const createTodo = useServerFn(createTodoFn);
+  const [title, setTitle] = useState("");
+  const [isPending, startTransition] = useTransition();
+
+  const onSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    startTransition(async () => {
+      await createTodo({ data: { title: title.trim() } });
+      setTitle("");
+      await router.invalidate();
+    });
+  };
+
+  return (
+    <form onSubmit={onSubmit}>
+      <input
+        type="text"
+        value={title}
+        onChange={(event) => setTitle(event.target.value)}
+        disabled={isPending}
+        maxLength={140}
+        required
+      />
+      <button type="submit" disabled={isPending}>追加</button>
+    </form>
+  );
+}
+```
+
+### ポイント
+
+- `useServerFn(fn)` は `isRedirect` を自動検知して router.navigate に変換する。
+  usecase 側で `throw redirect({ to: "/login" })` した場合に client の try/catch
+  でフォールスルーせずに済む。
+- 完了後 `router.invalidate()` で loader データを再取得する。
+- バリデーションエラーやドメインエラーを **フィールド単位で** UI に返したい場合は
+  Conform + `parseWithZod` で onSubmit 側に寄せる。
+
+---
+
+## Conform によるクライアントバリデーション
+
+Conform のクライアントバリデーション + `useServerFn` の組み合わせ例。
 
 ```tsx
 // app/routes/posts/new.tsx
@@ -198,7 +426,7 @@ RSC との相性が良い。
 
 import { useTransition } from "react";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
-import { createServerFn } from "@tanstack/react-start";
+import { useServerFn } from "@tanstack/react-start";
 import {
   getFormProps,
   getInputProps,
@@ -207,29 +435,7 @@ import {
 } from "@conform-to/react";
 import { getZodConstraint, parseWithZod } from "@conform-to/zod/v4";
 import { toast } from "sonner";
-import { z } from "zod";
-
-import { container } from "@/core/di/server";
-import { createPost } from "@/core/application/post/createPost";
-import { requireCurrentUser } from "@/lib/server/currentUser";
-import { getRequestHeaders } from "@tanstack/react-start/server";
-
-const createPostSchema = z.object({
-  title: z.string().min(1, "タイトルを入力してください"),
-  content: z.string().min(1, "本文を入力してください"),
-});
-
-const createPostFn = createServerFn({ method: "POST" })
-  .inputValidator(createPostSchema)
-  .handler(async ({ data }) => {
-    await requireCurrentUser();
-    const { post } = await createPost({
-      container,
-      headers: getRequestHeaders(),
-      input: data,
-    });
-    return { postId: post.id };
-  });
+import { createPostFn, createPostSchema } from "./actions";
 
 export const Route = createFileRoute("/posts/new")({
   component: NewPostPage,
@@ -237,6 +443,7 @@ export const Route = createFileRoute("/posts/new")({
 
 function NewPostPage() {
   const router = useRouter();
+  const createPost = useServerFn(createPostFn);
   const [isPending, startTransition] = useTransition();
 
   const [form, fields] = useForm({
@@ -249,10 +456,9 @@ function NewPostPage() {
     onSubmit: (event, { submission }) => {
       event.preventDefault();
       if (submission?.status !== "success") return;
-
       startTransition(async () => {
         try {
-          const { postId } = await createPostFn({ data: submission.value });
+          const { postId } = await createPost({ data: submission.value });
           toast.success("投稿を作成しました");
           await router.navigate({
             to: "/posts/$postId",
@@ -289,203 +495,6 @@ function NewPostPage() {
 
 ---
 
-## 同一ページに複数フォーム
-
-TanStack Start では `createServerFn` を **何個でも独立して定義** できるので、
-React Router 時代の「intent でディスパッチ」パターンは不要。フォームごとに
-専用の server function を作って、それぞれの `useTransition` で状態を管理する。
-
-```tsx
-// app/routes/settings/index.tsx
-"use client";
-
-import { useState, useTransition } from "react";
-import { createFileRoute, useRouter } from "@tanstack/react-router";
-import { createServerFn } from "@tanstack/react-start";
-import { getRequestHeaders } from "@tanstack/react-start/server";
-import {
-  type SubmissionResult,
-  getFormProps,
-  getInputProps,
-  useForm,
-} from "@conform-to/react";
-import { getZodConstraint, parseWithZod } from "@conform-to/zod/v4";
-import { toast } from "sonner";
-import { z } from "zod";
-
-import { container } from "@/core/di/server";
-import { changePassword, updateProfile } from "@/core/application/user";
-import { isBusinessRuleError } from "@/core/domain/error";
-import { formatErrorMessage } from "@/lib/error";
-import { requireCurrentUser } from "@/lib/server/currentUser";
-
-const updateProfileSchema = z.object({
-  name: z.string().min(1, "名前を入力してください"),
-  email: z.email("有効なメールアドレスを入力してください"),
-});
-
-const changePasswordSchema = z.object({
-  currentPassword: z.string().min(1, "現在のパスワードを入力してください"),
-  newPassword: z.string().min(8, "8文字以上で入力してください"),
-});
-
-const updateProfileFn = createServerFn({ method: "POST" })
-  .inputValidator(updateProfileSchema)
-  .handler(async ({ data }) => {
-    await requireCurrentUser();
-    const { user } = await updateProfile({
-      container,
-      headers: getRequestHeaders(),
-      input: data,
-    });
-    return { user };
-  });
-
-const changePasswordFn = createServerFn({ method: "POST" })
-  .inputValidator(changePasswordSchema)
-  .handler(async ({ data }) => {
-    await requireCurrentUser();
-    await changePassword({
-      container,
-      headers: getRequestHeaders(),
-      input: data,
-    });
-  });
-
-export const Route = createFileRoute("/settings/")({
-  component: SettingsPage,
-});
-
-function SettingsPage() {
-  const router = useRouter();
-
-  // ── プロフィール更新 ──
-  const [profileResult, setProfileResult] = useState<SubmissionResult>();
-  const [isUpdating, startUpdate] = useTransition();
-
-  const [profileForm, profileFields] = useForm({
-    id: "profile-form",
-    lastResult: profileResult,
-    constraint: getZodConstraint(updateProfileSchema),
-    shouldValidate: "onSubmit",
-    shouldRevalidate: "onBlur",
-    onValidate: ({ formData }) =>
-      parseWithZod(formData, { schema: updateProfileSchema }),
-    onSubmit: (event, { submission }) => {
-      event.preventDefault();
-      if (submission?.status !== "success") return;
-
-      startUpdate(async () => {
-        try {
-          const { user } = await updateProfileFn({ data: submission.value });
-          toast.success(`${user.name} を更新しました`);
-          router.invalidate();
-        } catch (e) {
-          toast.error(formatErrorMessage(e));
-        }
-      });
-    },
-  });
-
-  // ── パスワード変更 ──
-  const [passwordResult, setPasswordResult] = useState<SubmissionResult>();
-  const [isChanging, startChange] = useTransition();
-
-  const [passwordForm, passwordFields] = useForm({
-    id: "password-form",
-    lastResult: passwordResult,
-    constraint: getZodConstraint(changePasswordSchema),
-    shouldValidate: "onSubmit",
-    shouldRevalidate: "onBlur",
-    onValidate: ({ formData }) =>
-      parseWithZod(formData, { schema: changePasswordSchema }),
-    onSubmit: (event, { submission }) => {
-      event.preventDefault();
-      if (submission?.status !== "success") return;
-
-      startChange(async () => {
-        try {
-          await changePasswordFn({ data: submission.value });
-          toast.success("パスワードを変更しました");
-          passwordForm.reset();
-        } catch (e) {
-          // ドメインルール違反は該当フィールドにエラーを表示
-          if (isBusinessRuleError(e)) {
-            setPasswordResult({
-              status: "error",
-              error: { currentPassword: [formatErrorMessage(e)] },
-            });
-            return;
-          }
-          toast.error(formatErrorMessage(e));
-        }
-      });
-    },
-  });
-
-  return (
-    <div>
-      <h2>プロフィール設定</h2>
-      <form {...getFormProps(profileForm)}>
-        <div>
-          <label htmlFor={profileFields.name.id}>名前</label>
-          <input {...getInputProps(profileFields.name, { type: "text" })} />
-          <div className="text-destructive">{profileFields.name.errors}</div>
-        </div>
-
-        <div>
-          <label htmlFor={profileFields.email.id}>メールアドレス</label>
-          <input {...getInputProps(profileFields.email, { type: "email" })} />
-          <div className="text-destructive">{profileFields.email.errors}</div>
-        </div>
-
-        <button type="submit" disabled={isUpdating}>
-          {isUpdating ? "更新中..." : "更新"}
-        </button>
-      </form>
-
-      <h2>パスワード変更</h2>
-      <form {...getFormProps(passwordForm)}>
-        <div>
-          <label htmlFor={passwordFields.currentPassword.id}>現在のパスワード</label>
-          <input
-            {...getInputProps(passwordFields.currentPassword, { type: "password" })}
-          />
-          <div className="text-destructive">
-            {passwordFields.currentPassword.errors}
-          </div>
-        </div>
-
-        <div>
-          <label htmlFor={passwordFields.newPassword.id}>新しいパスワード</label>
-          <input
-            {...getInputProps(passwordFields.newPassword, { type: "password" })}
-          />
-          <div className="text-destructive">
-            {passwordFields.newPassword.errors}
-          </div>
-        </div>
-
-        <button type="submit" disabled={isChanging}>
-          {isChanging ? "変更中..." : "変更"}
-        </button>
-      </form>
-    </div>
-  );
-}
-```
-
-### ポイント
-
-- フォームと server function は **1 対 1** で対応させる。intent でディスパッチする
-  必要はない（React Router の単一 `action()` 制約への対処だったもの）。
-- ペンディング状態は `useTransition` を **フォームごとに** 1 つずつ持つ。
-- フィールド単位のエラー表示が必要なときだけ `useState` + `setResult({ status: "error", error })`
-  を使い、そうでなければ `try/catch` + `toast` で十分。
-- 操作後の loader 再フェッチは `router.invalidate()` を呼ぶ。
-
----
-
 ## エラー / Not Found
 
 ルート単位で `errorComponent` / `notFoundComponent` を定義する。サーバー
@@ -502,3 +511,59 @@ export const Route = createFileRoute("/posts/$postId")({
 
 サイト全体の最終フォールバックは `app/routes/__root.tsx` の `errorComponent` /
 `notFoundComponent` で受ける。
+
+### Server Function の例外を構造化して伝搬する
+
+`createServerFn` の `handler` が throw した例外はクライアントまで届くが、
+`Error` のままだと `cause` チェーンや stack trace がシリアライズの過程で壊れ、
+`kind` による分岐ができない。そこで application 層で
+
+- `AppServerError` — 伝搬専用の例外クラス
+- `serializeError(error)` — Business / NotFound / Validation 等を `SerializedError`（`{ kind, code, message }`）に畳み込む
+- `extractSerializedError(error)` — クライアント側で `SerializedError` を取り出す
+- `withErrorResponse(fn)` — handler をラップして上記を適用
+
+を用意している。server function 側:
+
+```typescript
+// app/components/todo/actions.ts
+import { withErrorResponse } from "@/core/application/errorResponse";
+
+export const createTodoFn = createServerFn({ method: "POST" })
+  .inputValidator(z.object({ title: z.string().min(1).max(140) }))
+  .handler(({ data }) =>
+    withErrorResponse(() =>
+      createTodo({ container: getContainer(), input: data }),
+    ),
+  );
+```
+
+クライアント側で kind に応じて UI を分岐する:
+
+```tsx
+import { extractSerializedError } from "@/core/application/errorResponse";
+
+try {
+  await deleteTodo({ data: { id } });
+} catch (e) {
+  const { kind, message } = extractSerializedError(e);
+  if (kind === "notFound") setErrorMessage("このTodoは既に削除されています");
+  else setErrorMessage(message);
+}
+```
+
+---
+
+## まとめ: 現行 `@tanstack/react-start` の必須事項
+
+- Vite: `tanstackStart({ srcDirectory: "app", rsc: { enabled: true } })` +
+  `rsc()` (`@vitejs/plugin-rsc`) + `viteReact()` の 3 枚構成
+- server function バリデーション: **`.inputValidator(...)`**（`.validator(...)` は旧 API）
+- RSC 高レベル API: `renderServerComponent` / `createCompositeComponent` / `CompositeComponent`
+- server-only 境界: `import "@tanstack/react-start/server-only";` を DI コンテナや
+  サーバーヘルパーの先頭に置く
+- クライアントからの server function 呼び出し: **`useServerFn(fn)` でラップ**
+  (redirect の自動ハンドル付き)
+- RSC 値を Query に入れるときは `structuralSharing: false` 必須
+- 低レベル API (`renderToReadableStream` / `createFromReadableStream` /
+  `createFromFetch`) はカスタムトランスポートが必要なときだけ
