@@ -1,34 +1,13 @@
 import { SystemError, SystemErrorCode } from "@/core/application/error";
-import { BusinessRuleError } from "@/core/domain/error";
-
-/**
- * Run a rehydration callback (e.g. `Todo.fromPersistence`) and map any
- * `BusinessRuleError` it raises to a `SystemError(DatabaseError)`.
- *
- * The domain's factories enforce invariants; violating one during read-back
- * means the stored row is corrupt, which is an infrastructural failure, not
- * a business-rule failure the caller can recover from.
- */
-export function rehydrate<T>(entityName: string, fn: () => T): T {
-  try {
-    return fn();
-  } catch (error) {
-    if (error instanceof BusinessRuleError) {
-      throw new SystemError(
-        SystemErrorCode.DatabaseError,
-        `Stored ${entityName} violates invariants`,
-        error,
-      );
-    }
-    throw error;
-  }
-}
 
 /**
  * Wrap a database operation so that any thrown value surfaces as a
  * `SystemError(DatabaseError)` with the given contextual message. Errors
- * that are already `SystemError` (e.g. re-thrown from {@link rehydrate}) or
- * a domain/application error we want to propagate pass through untouched.
+ * that are already `SystemError` (e.g. thrown by a repository's own
+ * row-to-entity conversion on a corrupt row) pass through untouched so the
+ * original context is preserved. Application-level errors that callers need
+ * to see (e.g. `ConflictError` from an optimistic-lock failure) are thrown
+ * outside this helper, so they are not reached by the `catch` here.
  */
 export async function mapDbError<T>(
   message: string,
