@@ -26,24 +26,7 @@ export type ClaimedOutboxEntry = OutboxEntry &
   }>;
 
 /**
- * Read-only view of the outbox.
- *
- * A readonly unit of work exposes only this interface so that usecases
- * running in `{ mode: "readonly" }` cannot persist or claim events at the
- * type level.
- */
-export interface OutboxReader {
-  /**
-   * Read-only helper: returns unprocessed entries ordered by `occurredAt`.
-   *
-   * Does NOT claim entries. Concurrent workers using this method will
-   * double-dispatch. For production relay use {@link OutboxRepository.claimPending}.
-   */
-  findPendingEvents(limit: number): Promise<readonly OutboxEntry[]>;
-}
-
-/**
- * Full read/write outbox port.
+ * Outbox port used by the event relay worker.
  *
  * Implementations MUST participate in the transactional executor that their
  * owning unit of work provides, so that `saveEvents` runs in the same
@@ -52,8 +35,13 @@ export interface OutboxReader {
  * Delivery guarantee: AT-LEAST-ONCE. Consumers of claimed events must be
  * idempotent (typically keyed on `event.id`). Crashes between dispatch and
  * `markProcessed` are the canonical source of redelivery.
+ *
+ * There is no readonly preview method on purpose: a non-claiming read would
+ * let concurrent workers double-dispatch and has no legitimate use outside
+ * relay tooling. Tests that need to inspect pending rows should query the
+ * outbox table directly.
  */
-export interface OutboxRepository extends OutboxReader {
+export interface OutboxRepository {
   /**
    * Persist the given domain events to the outbox. Must be invoked inside the
    * same transaction that produced the events.
