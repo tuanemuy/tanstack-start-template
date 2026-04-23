@@ -1,10 +1,17 @@
 import { AnyError } from "@/lib/error";
 
-export class ApplicationError extends AnyError {
+/**
+ * Base application-layer error.
+ *
+ * `TCode extends string` lets each subclass narrow `code` to its own literal
+ * union so that `if (error.code === NotFoundErrorCode.TodoNotFound)` narrows
+ * correctly at the call site.
+ */
+export class ApplicationError<TCode extends string = string> extends AnyError {
   override readonly name: string = "ApplicationError";
 
   constructor(
-    public readonly code: string,
+    public readonly code: TCode,
     message: string,
     cause?: unknown,
   ) {
@@ -14,21 +21,13 @@ export class ApplicationError extends AnyError {
 
 export const NotFoundErrorCode = {
   NotFound: "NOT_FOUND",
-  // ${Entity}NotFound: "${ENTITY}_NOT_FOUND",
+  TodoNotFound: "TODO_NOT_FOUND",
 } as const;
 export type NotFoundErrorCode =
   (typeof NotFoundErrorCode)[keyof typeof NotFoundErrorCode];
 
-export class NotFoundError extends ApplicationError {
+export class NotFoundError extends ApplicationError<NotFoundErrorCode> {
   override readonly name = "NotFoundError";
-
-  constructor(
-    public readonly code: NotFoundErrorCode,
-    message: string,
-    cause?: unknown,
-  ) {
-    super(code, message, cause);
-  }
 }
 
 export function isNotFoundError(error: unknown): error is NotFoundError {
@@ -37,21 +36,13 @@ export function isNotFoundError(error: unknown): error is NotFoundError {
 
 export const ConflictErrorCode = {
   Conflict: "CONFLICT",
-  // ${Entity}Conflict: "${ENTITY}_CONFLICT",
+  OptimisticLockFailure: "OPTIMISTIC_LOCK_FAILURE",
 } as const;
 export type ConflictErrorCode =
   (typeof ConflictErrorCode)[keyof typeof ConflictErrorCode];
 
-export class ConflictError extends ApplicationError {
+export class ConflictError extends ApplicationError<ConflictErrorCode> {
   override readonly name = "ConflictError";
-
-  constructor(
-    public readonly code: ConflictErrorCode,
-    message: string,
-    cause?: unknown,
-  ) {
-    super(code, message, cause);
-  }
 }
 
 export function isConflictError(error: unknown): error is ConflictError {
@@ -70,16 +61,8 @@ export const UnauthenticatedErrorCode = {
 export type UnauthenticatedErrorCode =
   (typeof UnauthenticatedErrorCode)[keyof typeof UnauthenticatedErrorCode];
 
-export class UnauthenticatedError extends ApplicationError {
+export class UnauthenticatedError extends ApplicationError<UnauthenticatedErrorCode> {
   override readonly name = "UnauthenticatedError";
-
-  constructor(
-    public readonly code: UnauthenticatedErrorCode,
-    message: string,
-    cause?: unknown,
-  ) {
-    super(code, message, cause);
-  }
 }
 
 export function isUnauthenticatedError(
@@ -94,16 +77,8 @@ export const ForbiddenErrorCode = {
 export type ForbiddenErrorCode =
   (typeof ForbiddenErrorCode)[keyof typeof ForbiddenErrorCode];
 
-export class ForbiddenError extends ApplicationError {
+export class ForbiddenError extends ApplicationError<ForbiddenErrorCode> {
   override readonly name = "ForbiddenError";
-
-  constructor(
-    public readonly code: ForbiddenErrorCode,
-    message: string,
-    cause?: unknown,
-  ) {
-    super(code, message, cause);
-  }
 }
 
 export function isForbiddenError(error: unknown): error is ForbiddenError {
@@ -116,16 +91,8 @@ export const ValidationErrorCode = {
 export type ValidationErrorCode =
   (typeof ValidationErrorCode)[keyof typeof ValidationErrorCode];
 
-export class ValidationError extends ApplicationError {
+export class ValidationError extends ApplicationError<ValidationErrorCode> {
   override readonly name = "ValidationError";
-
-  constructor(
-    public readonly code: ValidationErrorCode,
-    message: string,
-    cause?: unknown,
-  ) {
-    super(code, message, cause);
-  }
 }
 
 export function isValidationError(error: unknown): error is ValidationError {
@@ -143,16 +110,8 @@ export const SystemErrorCode = {
 export type SystemErrorCode =
   (typeof SystemErrorCode)[keyof typeof SystemErrorCode];
 
-export class SystemError extends ApplicationError {
+export class SystemError extends ApplicationError<SystemErrorCode> {
   override readonly name = "SystemError";
-
-  constructor(
-    public readonly code: SystemErrorCode,
-    message: string,
-    cause?: unknown,
-  ) {
-    super(code, message, cause);
-  }
 }
 
 export function isSystemError(error: unknown): error is SystemError {
