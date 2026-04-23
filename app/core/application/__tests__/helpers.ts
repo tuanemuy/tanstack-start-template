@@ -10,8 +10,12 @@ import { drizzle } from "drizzle-orm/libsql";
 import { migrate } from "drizzle-orm/libsql/migrator";
 import { afterEach, beforeEach } from "vitest";
 import * as schema from "@/core/adapters/drizzleSqlite/schema";
-import { DrizzleSqliteUnitOfWorkProvider } from "@/core/adapters/drizzleSqlite/unitOfWork";
-import type { Container } from "@/core/application/container/server";
+import {
+  DrizzleSqliteUnitOfWorkProvider,
+  isRetryableError,
+} from "@/core/adapters/drizzleSqlite/unitOfWork";
+import type { Container } from "@/core/application/di/server";
+import { RetryingUnitOfWorkProvider } from "@/core/application/retryingUnitOfWork";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -49,6 +53,15 @@ export async function createTestDatabase(): Promise<TestDatabaseWithCleanup> {
     `test-db-${Date.now()}-${Math.random().toString(36).slice(2)}.sqlite`,
   );
   const client = createClient({ url: `file:${dbPath}` });
+  // Enable WAL journaling + IMMEDIATE busy timeout so that concurrency tests
+  // (optimistic-lock races, concurrent outbox workers) observe realistic
+  // multi-writer semantics rather than being serialized by the default
+  // rollback-journal lock model.
+  await client.execute("PRAGMA journal_mode=WAL");
+  // Busy-timeout lets BEGIN IMMEDIATE wait briefly for a contending writer
+  // rather than erroring out. Required for the concurrent outbox-relay test
+  // to run without exhausting the UoW retry budget.
+  await client.execute("PRAGMA busy_timeout=5000");
   const db = drizzle(client, { schema });
 
   // Apply migrations
@@ -111,19 +124,25 @@ export async function createTestContainer(
 ): Promise<TestContainer> {
   const dbWithCleanup = options.dbWithCleanup ?? (await createTestDatabase());
 
+  // Mirror the production wiring from `createContainer`: retry decorator on
+  // top of the bare drizzle UoW. Without the decorator, concurrency tests
+  // see raw `SQLITE_BUSY` instead of the post-retry behavior that actually
+  // ships.
+  const innerUow = new DrizzleSqliteUnitOfWorkProvider(dbWithCleanup.db);
+  const unitOfWorkProvider = new RetryingUnitOfWorkProvider(
+    innerUow,
+    isRetryableError,
+  );
+
   const container: TestContainer = {
     config: {
       appUrl: "http://localhost:3000",
-      sessionTimeoutHours: 24,
-      maxSessionsPerUser: 3,
       ...options.config,
     },
-    unitOfWorkProvider: new DrizzleSqliteUnitOfWorkProvider(dbWithCleanup.db),
-    // ... other adapters and services would be initialized here
+    unitOfWorkProvider,
     // Test utilities
     db: dbWithCleanup.db,
     cleanup: async () => {
-      // Clean up the temporary database file
       dbWithCleanup.cleanup();
     },
   };
