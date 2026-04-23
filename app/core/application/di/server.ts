@@ -72,12 +72,18 @@ function getServerConfig(): ServerConfig {
  * touching `process.env`. Production/SSR code should call {@link getContainer}
  * which memoizes a single instance derived from the runtime environment.
  *
+ * Async because `getDatabase` awaits the WAL PRAGMA for local file URLs; the
+ * container is only handed out after the connection is confirmed to be in
+ * WAL mode so that early queries cannot race the mode switch.
+ *
  * The UoW is composed as `Retrying(DrizzleSqlite(db))` so that transient
  * write-lock contention retries cross-cut the adapter without the adapter
  * knowing about it.
  */
-export function createContainer(config: ServerConfig): Container {
-  const db = getDatabase(config.databaseUrl);
+export async function createContainer(
+  config: ServerConfig,
+): Promise<Container> {
+  const db = await getDatabase(config.databaseUrl);
   const innerUow = new DrizzleSqliteUnitOfWorkProvider(db);
   const unitOfWorkProvider = new RetryingUnitOfWorkProvider(
     innerUow,
@@ -93,14 +99,30 @@ export function createContainer(config: ServerConfig): Container {
 /**
  * Lazily-constructed, memoized container for server runtime use.
  *
- * The first call reads `process.env` via {@link getServerConfig}; subsequent
- * calls return the cached instance. This avoids blowing up at import time
- * when tooling or the client bundler accidentally pulls in this module
- * without the runtime env being populated.
+ * The first call reads `process.env` via {@link getServerConfig} and kicks
+ * off async container construction; subsequent calls return the same
+ * in-flight or resolved promise. Memoizing the `Promise<Container>` (rather
+ * than the resolved value) ensures that concurrent callers during startup
+ * share a single initialization — no duplicate DB connections, no duplicate
+ * WAL PRAGMA round-trips, and no chance of observing a half-initialized
+ * container.
+ *
+ * This avoids blowing up at import time when tooling or the client bundler
+ * accidentally pulls in this module without the runtime env being populated.
+ *
+ * Intentionally a process-wide singleton. Ports held here (DB pool, UoW
+ * provider) are long-lived and safe to share across requests. Request-scoped
+ * concerns — per-request logger, tenant/auth context, trace IDs, or ports
+ * that close over caller identity — do NOT belong here; threading them
+ * through the singleton would leak request state across requests. If/when
+ * such concerns are introduced, add a sibling entry point (e.g.
+ * `createRequestContainer(headers)`) that composes request-scoped ports on
+ * top of the shared singleton, and have server components / server
+ * functions call that factory instead of {@link getContainer} directly.
  */
-let _container: Container | null = null;
-export function getContainer(): Container {
-  if (_container !== null) return _container;
-  _container = createContainer(getServerConfig());
-  return _container;
+let _containerPromise: Promise<Container> | null = null;
+export function getContainer(): Promise<Container> {
+  if (_containerPromise !== null) return _containerPromise;
+  _containerPromise = createContainer(getServerConfig());
+  return _containerPromise;
 }

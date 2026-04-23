@@ -5,7 +5,7 @@ import { CreateTodoForm } from "./CreateTodoForm";
 import { TodoItem } from "./TodoItem";
 
 const loadTodos = cache(async () =>
-  listTodos({ container: getContainer(), input: undefined }),
+  listTodos({ container: await getContainer(), input: undefined }),
 );
 
 export async function TodoList() {

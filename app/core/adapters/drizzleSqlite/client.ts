@@ -31,30 +31,14 @@ function isLocalFileUrl(url: string): boolean {
 }
 
 /**
- * Create a database instance with optional WAL mode for local files
+ * Create a database instance with WAL mode enabled for local files.
  *
- * Note: For local SQLite files, WAL mode is enabled asynchronously.
- * Use `getDatabaseAsync` if you need to ensure WAL mode is enabled before use.
+ * For local `file:` URLs the WAL PRAGMA is awaited before the database is
+ * returned, so callers never issue queries against a connection that is still
+ * in rollback-journal mode. This avoids a race that defeats the concurrency
+ * guarantees we rely on for the outbox / UoW retry paths.
  */
-export function getDatabase(url: string): Database {
-  const normalizedUrl = normalizeFileUrl(url);
-  const client = createClient({ url: normalizedUrl });
-
-  // Enable WAL mode for local files (fire and forget)
-  if (isLocalFileUrl(url)) {
-    enableWalMode(client).catch((err) => {
-      console.warn("Failed to enable WAL mode:", err);
-    });
-  }
-
-  return drizzle(client, { schema });
-}
-
-/**
- * Create a database instance with WAL mode enabled (async version)
- * Use this when you need to ensure WAL mode is enabled before performing operations
- */
-export async function getDatabaseAsync(url: string): Promise<Database> {
+export async function getDatabase(url: string): Promise<Database> {
   const normalizedUrl = normalizeFileUrl(url);
   const client = createClient({ url: normalizedUrl });
 

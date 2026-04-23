@@ -31,7 +31,7 @@ async function main(): Promise<void> {
     throw new Error("SQLITE_URL environment variable is not set");
   }
 
-  const container = createContainer({ databaseUrl, appUrl });
+  const container = await createContainer({ databaseUrl, appUrl });
 
   for (const seed of SEED_TODOS) {
     const { todo } = await createTodo({
