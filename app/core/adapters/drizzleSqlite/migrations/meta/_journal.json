@@ -1,0 +1,20 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1776865846386,
+      "tag": "0000_broad_eddie_brock",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1776868443687,
+      "tag": "0001_clumsy_molten_man",
+      "breakpoints": true
+    }
+  ]
+}

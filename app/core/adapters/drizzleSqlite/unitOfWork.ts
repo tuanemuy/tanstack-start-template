@@ -1,122 +1,105 @@
 import type {
-  Repositories,
-  TransactionContext,
+  ReadonlyContext,
+  ReadWriteContext,
   UnitOfWorkProvider,
 } from "@/core/application/unitOfWork";
+import type { DomainEvent } from "@/core/domain/common/event";
 import type { Database, Executor } from "./client";
-// import { DrizzleSqliteOutboxRepository } from "./repositories/outboxRepository";
-// import { DrizzleSqlite${Entity}Repository } from "./repositories/${entity}Repository";
+import {
+  DrizzleSqliteOutboxReader,
+  DrizzleSqliteOutboxRepository,
+} from "./repositories/outboxRepository";
+import {
+  DrizzleSqliteTodoReader,
+  DrizzleSqliteTodoRepository,
+} from "./repositories/todoRepository";
 
 /**
- * Configuration for transaction retry behavior
+ * libsql / better-sqlite3 surface a `code` property on thrown errors for the
+ * cases we want to retry (contention on the write lock). We intentionally
+ * narrow against the structured code first and fall back to message matching
+ * only so older driver versions stay covered.
+ *
+ * `SQLITE_BUSY` / `SQLITE_LOCKED` are the two retryable conditions. The
+ * text "cannot start a transaction within a transaction" indicates a nested
+ * UoW call (a programming bug) rather than transient contention, so we let
+ * it propagate rather than silently retrying.
  */
-type TransactionRetryConfig = {
-  maxRetries: number;
-  baseDelayMs: number;
-  maxDelayMs: number;
-};
+const RETRYABLE_SQLITE_CODES = new Set(["SQLITE_BUSY", "SQLITE_LOCKED"]);
 
-const DEFAULT_RETRY_CONFIG: TransactionRetryConfig = {
-  maxRetries: 3,
-  baseDelayMs: 100,
-  maxDelayMs: 2000,
-};
+export function isRetryableError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
 
-/**
- * Check if an error is retryable (database lock/busy errors)
- */
-function isRetryableError(error: unknown): boolean {
-  if (error instanceof Error) {
-    const message = error.message.toLowerCase();
-    // SQLite BUSY and LOCKED errors
-    return (
-      message.includes("sqlite_busy") ||
-      message.includes("database is locked") ||
-      message.includes("database is busy") ||
-      message.includes("cannot start a transaction within a transaction")
-    );
+  const code = (error as { code?: unknown }).code;
+  if (typeof code === "string" && RETRYABLE_SQLITE_CODES.has(code)) {
+    return true;
   }
-  return false;
+
+  const message = error.message.toLowerCase();
+  return (
+    message.includes("sqlite_busy") ||
+    message.includes("sqlite_locked") ||
+    message.includes("database is locked") ||
+    message.includes("database is busy")
+  );
 }
 
 /**
- * Calculate delay with exponential backoff and jitter
+ * Plain libsql-backed `UnitOfWorkProvider`.
+ *
+ * Retries are delegated to `RetryingUnitOfWorkProvider` in the application
+ * layer so that the adapter stays focused on wrapping a single transaction.
+ * Use {@link isRetryableError} as the predicate when composing.
  */
-function calculateRetryDelay(
-  attempt: number,
-  config: TransactionRetryConfig,
-): number {
-  const exponentialDelay = config.baseDelayMs * 2 ** (attempt - 1);
-  const jitter = Math.random() * config.baseDelayMs;
-  return Math.min(exponentialDelay + jitter, config.maxDelayMs);
-}
-
-/**
- * Sleep for the specified duration
- */
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 export class DrizzleSqliteUnitOfWorkProvider implements UnitOfWorkProvider {
-  private readonly retryConfig: TransactionRetryConfig;
+  constructor(private readonly db: Database) {}
 
-  constructor(
-    private readonly db: Database,
-    retryConfig?: Partial<TransactionRetryConfig>,
-  ) {
-    this.retryConfig = { ...DEFAULT_RETRY_CONFIG, ...retryConfig };
-  }
-
-  async transaction<T>(
-    fn: (ctx: TransactionContext) => Promise<T>,
+  run<T>(
+    fn: (ctx: ReadWriteContext) => Promise<T>,
+    options?: { mode?: "readwrite" },
+  ): Promise<T>;
+  run<T>(
+    fn: (ctx: ReadonlyContext) => Promise<T>,
+    options: { mode: "readonly" },
+  ): Promise<T>;
+  run<T>(
+    fn:
+      | ((ctx: ReadWriteContext) => Promise<T>)
+      | ((ctx: ReadonlyContext) => Promise<T>),
+    options?: { mode?: "readonly" | "readwrite" },
   ): Promise<T> {
-    let lastError: unknown;
-
-    for (let attempt = 1; attempt <= this.retryConfig.maxRetries; attempt++) {
-      try {
-        return await this.executeTransaction(fn);
-      } catch (error) {
-        lastError = error;
-
-        if (isRetryableError(error) && attempt < this.retryConfig.maxRetries) {
-          const delay = calculateRetryDelay(attempt, this.retryConfig);
-          await sleep(delay);
-          continue;
-        }
-
-        throw error;
-      }
-    }
-
-    // This should not be reached, but TypeScript requires it
-    throw lastError;
-  }
-
-  private async executeTransaction<T>(
-    fn: (ctx: TransactionContext) => Promise<T>,
-  ): Promise<T> {
+    const mode = options?.mode ?? "readwrite";
     return this.db.transaction(async (tx) => {
-      // Create repositories with transaction executor
-      const repositories = createRepositories(tx as Executor);
+      const executor = tx as Executor;
 
-      // Create transaction context with event collector
-      const ctx: TransactionContext = {
-        ...repositories,
+      if (mode === "readonly") {
+        const ctx: ReadonlyContext = {
+          todoRepository: new DrizzleSqliteTodoReader(executor),
+          outboxRepository: new DrizzleSqliteOutboxReader(executor),
+        };
+        return (fn as (ctx: ReadonlyContext) => Promise<T>)(ctx);
+      }
+
+      const todoRepository = new DrizzleSqliteTodoRepository(executor);
+      const outboxRepository = new DrizzleSqliteOutboxRepository(executor);
+      const collected: DomainEvent[] = [];
+      const ctx: ReadWriteContext = {
+        todoRepository,
+        outboxRepository,
+        collectEvent: (event) => {
+          collected.push(event);
+        },
       };
 
-      // Execute the transaction function
-      return await fn(ctx);
+      const result = await (fn as (ctx: ReadWriteContext) => Promise<T>)(ctx);
+
+      // Persist collected events in the same transaction so that entity
+      // changes and event publishing commit atomically together.
+      if (collected.length > 0) {
+        await outboxRepository.saveEvents(collected);
+      }
+
+      return result;
     });
   }
-}
-
-/**
- * Create all repositories with the given database executor
- */
-function createRepositories(db: Executor): Repositories {
-  return {
-    // outboxRepository: new DrizzleSqliteOutboxRepository(db),
-    // ${entity}Repository: new DrizzleSqlite${Entity}Repository(db),
-  };
 }
