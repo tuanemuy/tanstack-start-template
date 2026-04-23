@@ -371,7 +371,7 @@ export const createTodoFn = createServerFn({ method: "POST" })
 
 import { useRouter } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import { type FormEvent, useState, useTransition } from "react";
+import { type SubmitEvent, useState, useTransition } from "react";
 import { createTodoFn } from "./actions";
 
 export function CreateTodoForm() {
@@ -380,7 +380,7 @@ export function CreateTodoForm() {
   const [title, setTitle] = useState("");
   const [isPending, startTransition] = useTransition();
 
-  const onSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const onSubmit = (event: SubmitEvent<HTMLFormElement>) => {
     event.preventDefault();
     startTransition(async () => {
       await createTodo({ data: { title: title.trim() } });
