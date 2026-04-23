@@ -1,25 +1,32 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { renderServerComponent } from "@tanstack/react-start/rsc";
+import { TodoList } from "@/components/todo/TodoList";
+import { withErrorResponse } from "@/core/application/errorResponse";
+import { sanitizeRouteError } from "@/lib/errorDisplay";
 
-function Greeting() {
-  return <h1>Home</h1>;
-}
-
-const getGreeting = createServerFn().handler(async () => {
-  const Renderable = await renderServerComponent(<Greeting />);
-  return { Renderable };
-});
+const renderTodoList = createServerFn({ method: "GET" }).handler(async () =>
+  withErrorResponse(async () => {
+    const Rendered = await renderServerComponent(<TodoList />);
+    return { Rendered };
+  }),
+);
 
 export const Route = createFileRoute("/")({
   loader: async () => {
-    const { Renderable } = await getGreeting();
-    return { Greeting: Renderable };
+    const { Rendered } = await renderTodoList();
+    return { TodoList: Rendered };
   },
   component: HomePage,
+  errorComponent: ({ error }) => (
+    <div role="alert">
+      <h1>エラーが発生しました</h1>
+      <pre>{sanitizeRouteError(error)}</pre>
+    </div>
+  ),
 });
 
 function HomePage() {
-  const { Greeting } = Route.useLoaderData();
-  return <>{Greeting}</>;
+  const { TodoList } = Route.useLoaderData();
+  return <>{TodoList}</>;
 }

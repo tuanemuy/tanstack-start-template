@@ -4,7 +4,9 @@ import {
   Outlet,
   Scripts,
 } from "@tanstack/react-router";
+import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import type { ReactNode } from "react";
+import { sanitizeRouteError } from "@/lib/errorDisplay";
 import appCss from "../styles/index.css?url";
 
 export const Route = createRootRoute({
@@ -21,7 +23,7 @@ export const Route = createRootRoute({
     <RootDocument>
       <div>
         <h1>Something went wrong</h1>
-        <pre>{error.message}</pre>
+        <pre>{sanitizeRouteError(error)}</pre>
       </div>
     </RootDocument>
   ),
@@ -44,12 +46,13 @@ function RootComponent() {
 
 function RootDocument({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="ja">
       <head>
         <HeadContent />
       </head>
       <body>
         {children}
+        {import.meta.env.DEV ? <TanStackRouterDevtools /> : null}
         <Scripts />
       </body>
     </html>
