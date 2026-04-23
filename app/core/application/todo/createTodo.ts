@@ -17,9 +17,9 @@ export async function createTodo({
   const { entity: todo, events } = Todo.create({ title: input.title });
 
   await container.unitOfWorkProvider.run(
-    async ({ todoRepository, collectEvent }) => {
+    async ({ todoRepository, collectEvents }) => {
       await todoRepository.save(todo);
-      for (const event of events) collectEvent(event);
+      collectEvents(events);
     },
   );
 

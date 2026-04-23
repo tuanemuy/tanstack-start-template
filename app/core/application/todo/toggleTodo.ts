@@ -19,7 +19,7 @@ export async function toggleTodo({
   const id = TodoId.create(input.id);
 
   const updated = await container.unitOfWorkProvider.run(
-    async ({ todoRepository, collectEvent }) => {
+    async ({ todoRepository, collectEvents }) => {
       const current = await todoRepository.findById(id);
       if (!current) {
         throw new NotFoundError(
@@ -29,7 +29,7 @@ export async function toggleTodo({
       }
       const { entity: next, events } = Todo.toggle(current);
       await todoRepository.save(next);
-      for (const event of events) collectEvent(event);
+      collectEvents(events);
       return next;
     },
   );

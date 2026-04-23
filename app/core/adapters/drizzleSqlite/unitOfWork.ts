@@ -2,13 +2,11 @@ import type {
   ReadonlyContext,
   ReadWriteContext,
   UnitOfWorkProvider,
+  WorkerContext,
 } from "@/core/application/unitOfWork";
 import type { DomainEvent } from "@/core/domain/common/event";
 import type { Database, Executor } from "./client";
-import {
-  DrizzleSqliteOutboxReader,
-  DrizzleSqliteOutboxRepository,
-} from "./repositories/outboxRepository";
+import { DrizzleSqliteOutboxRepository } from "./repositories/outboxRepository";
 import {
   DrizzleSqliteTodoReader,
   DrizzleSqliteTodoRepository,
@@ -69,25 +67,29 @@ export class DrizzleSqliteUnitOfWorkProvider implements UnitOfWorkProvider {
     options?: { mode?: "readonly" | "readwrite" },
   ): Promise<T> {
     const mode = options?.mode ?? "readwrite";
+    // Readonly runs still open a transaction so that multiple reads inside
+    // one callback observe a single consistent snapshot (SQLite WAL's
+    // deferred read transaction). Callers that issue e.g. a `findAll` plus
+    // a `count` can rely on both seeing the same state.
     return this.db.transaction(async (tx) => {
       const executor = tx as Executor;
 
       if (mode === "readonly") {
         const ctx: ReadonlyContext = {
           todoRepository: new DrizzleSqliteTodoReader(executor),
-          outboxRepository: new DrizzleSqliteOutboxReader(executor),
         };
         return (fn as (ctx: ReadonlyContext) => Promise<T>)(ctx);
       }
 
       const todoRepository = new DrizzleSqliteTodoRepository(executor);
+      // The outbox writer is private to this method: usecases cannot reach
+      // it, they only drop events into `collected` via `collectEvents`.
       const outboxRepository = new DrizzleSqliteOutboxRepository(executor);
       const collected: DomainEvent[] = [];
       const ctx: ReadWriteContext = {
         todoRepository,
-        outboxRepository,
-        collectEvent: (event) => {
-          collected.push(event);
+        collectEvents: (events) => {
+          collected.push(...events);
         },
       };
 
@@ -100,6 +102,34 @@ export class DrizzleSqliteUnitOfWorkProvider implements UnitOfWorkProvider {
       }
 
       return result;
+    });
+  }
+
+  /**
+   * Worker-only transaction. Exposes the full `OutboxRepository` (and
+   * nothing else) so the event relay worker can claim / mark-processed /
+   * read pending entries without pulling domain repositories into scope.
+   *
+   * The transaction atomicity of the claim path (the "SELECT candidate ids
+   * -> UPDATE those rows" pair inside `claimPending`) relies on the
+   * single-statement `UPDATE ... WHERE id IN (SELECT ...)` semantics of
+   * SQLite: the subquery is evaluated as part of the same statement that
+   * performs the write, so concurrent claimants cannot interleave between
+   * the read and the write.
+   *
+   * libsql's `db.transaction(fn, behavior)` accepts a second argument for
+   * the transaction behavior but ignores it — the underlying client always
+   * opens a DEFERRED transaction. We rely on the single-statement claim
+   * semantics above rather than trying to force IMMEDIATE mode through an
+   * option that the driver silently drops.
+   */
+  runWorker<T>(fn: (ctx: WorkerContext) => Promise<T>): Promise<T> {
+    return this.db.transaction(async (tx) => {
+      const executor = tx as Executor;
+      const ctx: WorkerContext = {
+        outboxRepository: new DrizzleSqliteOutboxRepository(executor),
+      };
+      return fn(ctx);
     });
   }
 }

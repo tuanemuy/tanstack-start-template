@@ -14,7 +14,7 @@ export async function deleteTodo({
   const id = TodoId.create(input.id);
 
   await container.unitOfWorkProvider.run(
-    async ({ todoRepository, collectEvent }) => {
+    async ({ todoRepository, collectEvents }) => {
       const current = await todoRepository.findById(id);
       if (!current) {
         throw new NotFoundError(
@@ -22,11 +22,15 @@ export async function deleteTodo({
           `Todo not found: ${id}`,
         );
       }
-      // `Todo.delete` yields the `todo.deleted` event; the aggregate itself
-      // is gone after this call so `entity` is intentionally `null`.
+      // `Todo.delete` returns `WithEvents<null, …>` — `entity: null` marks
+      // the aggregate as gone, per the `WithEvents` convention for deletion.
       const { events } = Todo.delete(current);
-      await todoRepository.delete(id);
-      for (const event of events) collectEvent(event);
+      // Pass the version read above so the adapter's DELETE is guarded by
+      // an optimistic-lock predicate (`WHERE version = ?`). A concurrent
+      // writer that already advanced the version surfaces as
+      // `ConflictError(OptimisticLockFailure)`.
+      await todoRepository.delete(id, current.version);
+      collectEvents(events);
     },
   );
 }
