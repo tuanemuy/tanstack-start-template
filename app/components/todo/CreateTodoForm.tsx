@@ -1,34 +1,31 @@
 "use client";
 
-import { useRouter } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import { type FormEvent, useState, useTransition } from "react";
+import { type SubmitEvent, useState } from "react";
 import { TodoTitle } from "@/core/domain/todo/valueObject";
-import { displayError } from "@/lib/errorDisplay";
+import { displayError } from "@/core/presentation/errorDisplay";
+import { useServerAction } from "@/core/presentation/useServerAction";
 import { createTodoFn } from "./actions";
 
 export function CreateTodoForm() {
-  const router = useRouter();
-  const createTodo = useServerFn(createTodoFn);
   const [title, setTitle] = useState("");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [isPending, startTransition] = useTransition();
 
-  const onSubmit = (event: FormEvent<HTMLFormElement>) => {
+  const { run, isPending } = useServerAction(useServerFn(createTodoFn), {
+    onSuccess: () => {
+      setTitle("");
+      setErrorMessage(null);
+    },
+    onError: {
+      default: (error) => setErrorMessage(displayError(error)),
+    },
+  });
+
+  const onSubmit = (event: SubmitEvent<HTMLFormElement>) => {
     event.preventDefault();
     const value = title.trim();
     if (!value) return;
-
-    startTransition(async () => {
-      try {
-        await createTodo({ data: { title: value } });
-        setTitle("");
-        setErrorMessage(null);
-        await router.invalidate();
-      } catch (error) {
-        setErrorMessage(displayError(error));
-      }
-    });
+    run({ data: { title: value } });
   };
 
   return (

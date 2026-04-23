@@ -1,4 +1,4 @@
-import { extractSerializedError } from "@/core/application/errorResponse";
+import { extractSerializedError } from "@/core/presentation/errorResponse";
 
 /**
  * Render an unknown error into a user-safe Japanese message.

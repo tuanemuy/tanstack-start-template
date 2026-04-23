@@ -6,7 +6,7 @@ import {
 } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import type { ReactNode } from "react";
-import { sanitizeRouteError } from "@/lib/errorDisplay";
+import { sanitizeRouteError } from "@/core/presentation/errorDisplay";
 import appCss from "../styles/index.css?url";
 
 export const Route = createRootRoute({

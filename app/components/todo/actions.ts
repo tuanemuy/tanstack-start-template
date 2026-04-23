@@ -3,20 +3,20 @@ import "@tanstack/react-start/server-only";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { getContainer } from "@/core/application/di/server";
-import { withErrorResponse } from "@/core/application/errorResponse";
 import { createTodo } from "@/core/application/todo/createTodo";
 import { deleteTodo } from "@/core/application/todo/deleteTodo";
 import { toggleTodo } from "@/core/application/todo/toggleTodo";
 import { TodoTitle } from "@/core/domain/todo/valueObject";
+import { withErrorResponse } from "@/core/presentation/errorResponse";
 
 export const createTodoFn = createServerFn({ method: "POST" })
   .inputValidator(
     z.object({ title: z.string().trim().min(1).max(TodoTitle.maxLength) }),
   )
-  .handler(({ data }) =>
-    withErrorResponse(() =>
+  .handler(async ({ data }) =>
+    withErrorResponse(async () =>
       createTodo({
-        container: getContainer(),
+        container: await getContainer(),
         input: data,
       }),
     ),
@@ -24,10 +24,10 @@ export const createTodoFn = createServerFn({ method: "POST" })
 
 export const toggleTodoFn = createServerFn({ method: "POST" })
   .inputValidator(z.object({ id: z.string().min(1) }))
-  .handler(({ data }) =>
-    withErrorResponse(() =>
+  .handler(async ({ data }) =>
+    withErrorResponse(async () =>
       toggleTodo({
-        container: getContainer(),
+        container: await getContainer(),
         input: data,
       }),
     ),
@@ -35,10 +35,10 @@ export const toggleTodoFn = createServerFn({ method: "POST" })
 
 export const deleteTodoFn = createServerFn({ method: "POST" })
   .inputValidator(z.object({ id: z.string().min(1) }))
-  .handler(({ data }) =>
-    withErrorResponse(() =>
+  .handler(async ({ data }) =>
+    withErrorResponse(async () =>
       deleteTodo({
-        container: getContainer(),
+        container: await getContainer(),
         input: data,
       }),
     ),

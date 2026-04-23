@@ -28,7 +28,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Tech Stack
 
 - **Runtime**: Node.js 22.x
-- **Frontend**: TanStack Start (React Server Components enabled), TanStack Router, Tailwind CSS, Conform
+- **Frontend**: TanStack Start (React Server Components enabled), TanStack Router, Tailwind CSS
 - **Database**: Turso with Drizzle ORM
 
 ## Core Architecture
@@ -43,18 +43,21 @@ Hexagonal architecture with domain-driven design principles:
 - **Adapter Layer** (`app/core/adapters/`): Contains concrete implementations for external services
     - `app/core/adapters/${externalServiceProvider}/**.ts`: Adapters for external services like databases, APIs, etc.
 - **Application Layer** (`app/core/application/`): Contains use cases and application services
-    - `app/core/application/di/(server|client).ts`: Dependency injection setup
+    - `app/core/application/di/server.ts`: Dependency injection setup (server-only, process-wide singleton)
     - `app/core/application/${domain}/${usecase}.ts`: Application services that orchestrate domain logic. Each service is a function that takes a context object.
     - `app/core/domain/error.ts`: Error types for business logic
     - `app/core/domain/${domain}/errorCode.ts`: Error codes for each domain
     - `app/core/application/error.ts`: Error types for application layer
     - `app/core/application/__tests__/helpers.ts`: Test helpers for application services
+- **Presentation Layer** (`app/core/presentation/`): Framework-specific cross-cutting utilities
+    - `app/core/presentation/errorResponse.ts`: Server function error transport (`AppServerError`, `withErrorResponse`, `SerializedError`, `serializeError`, `extractSerializedError`)
+    - `app/core/presentation/errorDisplay.ts`: Localized error message helpers for UI (`displayError`, `sanitizeRouteError`)
 
 ### Unit of Work
 
 - `app/core/application/unitOfWork.ts`: Defines the `UnitOfWorkProvider` port plus the `ReadonlyContext` / `ReadWriteContext` shapes.
 - `ReadonlyContext` exposes the `*Reader` subset of every port; `save` / `delete` / `saveEvents` are not callable in `{ mode: "readonly" }` at the **type level** (no runtime traps).
-- `ReadWriteContext` adds `collectEvent(event)` for the Outbox pattern. Events collected in the callback are persisted to the outbox in the same transaction.
+- `ReadWriteContext` adds `collectEvents(events)` (array signature) for the Outbox pattern. Events handed over in the callback are persisted to the outbox in the same transaction.
 - `app/core/application/retryingUnitOfWork.ts`: `RetryingUnitOfWorkProvider` decorator that retries transient contention errors. The adapter-specific `isRetryable` predicate is injected at wire time (`createContainer`).
 - Adapters (e.g. `app/core/adapters/drizzleSqlite/unitOfWork.ts`) implement the bare port; retry is composed on top via the decorator.
 
@@ -72,6 +75,13 @@ Uses the Outbox pattern to ensure consistency between entity changes and event p
 - `app/core/adapters/drizzleSqlite/repositories/outboxRepository.ts`: Drizzle implementation (reader class + repository subclass).
 - `app/core/application/workers/eventRelayWorker.ts`: Event relay worker. Claims a batch under a fresh lease, dispatches each event, then marks the batch processed in a single round-trip.
 
+### Presentation Layer
+
+- **Presentation Layer** (`app/core/presentation/`): Framework-specific cross-cutting utilities.
+    - `app/core/presentation/errorResponse.ts`: Server function error transport (`AppServerError`, `withErrorResponse`, `SerializedError`, `serializeError`, `extractSerializedError`). Re-throws TanStack Router's `redirect()` / `notFound()` sentinels unchanged so navigation works.
+    - `app/core/presentation/errorDisplay.ts`: Localized error message helpers for UI (`displayError`, `sanitizeRouteError`).
+- Actual UI (routes, components, layouts) lives in `app/routes/` and `app/components/`. The distinction: framework-specific transport/helper code goes in `app/core/presentation/`; concrete React components and route definitions go in `app/routes/` / `app/components/`.
+
 ### Example Implementation
 
 - `docs/backend_implementation_example.md`: Detailed examples of types, ports, adapters, application services and context object.
@@ -87,7 +97,6 @@ TanStack Start application code using:
 - TanStack Start with React Server Components (`@vitejs/plugin-rsc`)
 - TanStack Router (file-based routing)
 - Tailwind CSS v4
-- Conform
 
 - UI Components
     - `app/components/${domain}/`: Domain-specific components
@@ -134,4 +143,6 @@ TanStack Start application code using:
 
 ### Presentation Layer
 
-- Catches all exceptions and transforms them into appropriate responses, such as HTTP errors.
+- Catches all exceptions from the application layer at the server function / route boundary.
+- Wraps most errors in `AppServerError` (a serializable wire envelope), except TanStack Router `redirect()` / `notFound()` sentinels which are re-thrown to drive navigation.
+- UI code uses `displayError` / `sanitizeRouteError` to render a localized, infra-detail-free message to the user.

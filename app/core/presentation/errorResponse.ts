@@ -1,7 +1,4 @@
-import {
-  type BusinessRuleError,
-  isBusinessRuleError,
-} from "@/core/domain/error";
+import { isNotFound, isRedirect } from "@tanstack/react-router";
 import {
   type ConflictError,
   type ForbiddenError,
@@ -15,7 +12,11 @@ import {
   type SystemError,
   type UnauthenticatedError,
   type ValidationError,
-} from "./error";
+} from "@/core/application/error";
+import {
+  type BusinessRuleError,
+  isBusinessRuleError,
+} from "@/core/domain/error";
 
 /**
  * Discriminator for error kinds crossing the server/client boundary.
@@ -177,6 +178,13 @@ export async function withErrorResponse<T>(fn: () => Promise<T>): Promise<T> {
   try {
     return await fn();
   } catch (error) {
+    // TanStack Router's `redirect()` and `notFound()` throw sentinel values
+    // that the router machinery catches upstream to drive navigation. They
+    // are control flow, not errors — wrapping them in AppServerError would
+    // surface an error UI instead of navigating. Re-throw unchanged so the
+    // router sees them intact.
+    if (isRedirect(error)) throw error;
+    if (isNotFound(error)) throw error;
     if (isAppServerError(error)) throw error;
     throw new AppServerError(serializeError(error));
   }

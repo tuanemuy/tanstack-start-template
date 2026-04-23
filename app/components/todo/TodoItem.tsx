@@ -1,11 +1,13 @@
 "use client";
 
-import { useRouter } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import { useState, useTransition } from "react";
-import { extractSerializedError } from "@/core/application/errorResponse";
+import { useState } from "react";
 import type { TodoView } from "@/core/application/todo/dto";
-import { displayError } from "@/lib/errorDisplay";
+import { displayError } from "@/core/presentation/errorDisplay";
+import {
+  type ErrorHandlers,
+  useServerAction,
+} from "@/core/presentation/useServerAction";
 import { deleteTodoFn, toggleTodoFn } from "./actions";
 
 type Props = {
@@ -13,28 +15,23 @@ type Props = {
 };
 
 export function TodoItem({ todo }: Props) {
-  const router = useRouter();
-  const toggleTodo = useServerFn(toggleTodoFn);
-  const deleteTodo = useServerFn(deleteTodoFn);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [isPending, startTransition] = useTransition();
 
-  const run = (fn: () => Promise<unknown>) => {
-    startTransition(async () => {
-      try {
-        await fn();
-        setErrorMessage(null);
-        await router.invalidate();
-      } catch (error) {
-        const serialized = extractSerializedError(error);
-        if (serialized.kind === "notFound") {
-          setErrorMessage("このTodoは既に削除されています");
-        } else {
-          setErrorMessage(displayError(error));
-        }
-      }
-    });
+  const onError: ErrorHandlers = {
+    notFound: () => setErrorMessage("このTodoは既に削除されています"),
+    default: (error) => setErrorMessage(displayError(error)),
   };
+  const onSuccess = () => setErrorMessage(null);
+
+  const toggle = useServerAction(useServerFn(toggleTodoFn), {
+    onError,
+    onSuccess,
+  });
+  const remove = useServerAction(useServerFn(deleteTodoFn), {
+    onError,
+    onSuccess,
+  });
+  const isPending = toggle.isPending || remove.isPending;
 
   return (
     <li>
@@ -42,7 +39,7 @@ export function TodoItem({ todo }: Props) {
         <input
           type="checkbox"
           checked={todo.completed}
-          onChange={() => run(() => toggleTodo({ data: { id: todo.id } }))}
+          onChange={() => toggle.run({ data: { id: todo.id } })}
           disabled={isPending}
         />
         <span
@@ -55,7 +52,7 @@ export function TodoItem({ todo }: Props) {
       </label>
       <button
         type="button"
-        onClick={() => run(() => deleteTodo({ data: { id: todo.id } }))}
+        onClick={() => remove.run({ data: { id: todo.id } })}
         disabled={isPending}
       >
         削除

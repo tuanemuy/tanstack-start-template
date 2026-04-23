@@ -1,20 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { createServerFn } from "@tanstack/react-start";
 import { renderServerComponent } from "@tanstack/react-start/rsc";
 import { TodoList } from "@/components/todo/TodoList";
-import { withErrorResponse } from "@/core/application/errorResponse";
-import { sanitizeRouteError } from "@/lib/errorDisplay";
-
-const renderTodoList = createServerFn({ method: "GET" }).handler(async () =>
-  withErrorResponse(async () => {
-    const Rendered = await renderServerComponent(<TodoList />);
-    return { Rendered };
-  }),
-);
+import { sanitizeRouteError } from "@/core/presentation/errorDisplay";
 
 export const Route = createFileRoute("/")({
   loader: async () => {
-    const { Rendered } = await renderTodoList();
+    const Rendered = await renderServerComponent(<TodoList />);
     return { TodoList: Rendered };
   },
   component: HomePage,
