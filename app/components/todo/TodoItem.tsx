@@ -2,13 +2,17 @@
 
 import { useServerFn } from "@tanstack/react-start";
 import { useState } from "react";
+// Presentation reuses the application-layer DTO directly for template
+// simplicity. If the UI ever needs fields the application DTO doesn't
+// expose (computed labels, i18n, etc.), introduce a presentation-owned
+// `type TodoViewModel = ...` and map `TodoView -> TodoViewModel` here.
 import type { TodoView } from "@/core/application/todo/dto";
 import { displayError } from "@/core/presentation/errorDisplay";
 import {
   type ErrorHandlers,
   useServerAction,
 } from "@/core/presentation/useServerAction";
-import { deleteTodoFn, toggleTodoFn } from "./actions";
+import { changeTodoStatusFn, deleteTodoFn } from "./actions";
 
 type Props = {
   todo: TodoView;
@@ -23,7 +27,7 @@ export function TodoItem({ todo }: Props) {
   };
   const onSuccess = () => setErrorMessage(null);
 
-  const toggle = useServerAction(useServerFn(toggleTodoFn), {
+  const changeStatus = useServerAction(useServerFn(changeTodoStatusFn), {
     onError,
     onSuccess,
   });
@@ -31,7 +35,7 @@ export function TodoItem({ todo }: Props) {
     onError,
     onSuccess,
   });
-  const isPending = toggle.isPending || remove.isPending;
+  const isPending = changeStatus.isPending || remove.isPending;
 
   return (
     <li>
@@ -39,7 +43,14 @@ export function TodoItem({ todo }: Props) {
         <input
           type="checkbox"
           checked={todo.completed}
-          onChange={() => toggle.run({ data: { id: todo.id } })}
+          onChange={(event) =>
+            changeStatus.run({
+              data: {
+                id: todo.id,
+                status: event.target.checked ? "completed" : "active",
+              },
+            })
+          }
           disabled={isPending}
         />
         <span

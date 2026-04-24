@@ -9,17 +9,15 @@ import { createTodoFn } from "./actions";
 
 export function CreateTodoForm() {
   const [title, setTitle] = useState("");
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const { run, isPending } = useServerAction(useServerFn(createTodoFn), {
-    onSuccess: () => {
-      setTitle("");
-      setErrorMessage(null);
+  const { run, isPending, lastError, clearLastError } = useServerAction(
+    useServerFn(createTodoFn),
+    {
+      onSuccess: () => {
+        setTitle("");
+      },
     },
-    onError: {
-      default: (error) => setErrorMessage(displayError(error)),
-    },
-  });
+  );
 
   const onSubmit = (event: SubmitEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -28,6 +26,16 @@ export function CreateTodoForm() {
     run({ data: { title: value } });
   };
 
+  // Prefer field-level messages when the server returned a structured
+  // `ValidationError.fieldErrors`; fall back to the consolidated message
+  // for every other error kind (business / system / conflict / etc.).
+  const titleFieldErrors =
+    lastError?.kind === "validation" ? lastError.fieldErrors?.title : undefined;
+  const summaryMessage =
+    lastError !== null && titleFieldErrors === undefined
+      ? displayError(lastError)
+      : null;
+
   return (
     <form onSubmit={onSubmit}>
       <label>
@@ -35,16 +43,29 @@ export function CreateTodoForm() {
         <input
           type="text"
           value={title}
-          onChange={(event) => setTitle(event.target.value)}
+          onChange={(event) => {
+            setTitle(event.target.value);
+            if (lastError) clearLastError();
+          }}
           disabled={isPending}
           maxLength={TodoTitle.maxLength}
           required
+          aria-invalid={titleFieldErrors !== undefined}
         />
       </label>
+      {titleFieldErrors !== undefined && titleFieldErrors.length > 0 ? (
+        <p className="text-red-500" role="alert">
+          {titleFieldErrors[0]}
+        </p>
+      ) : null}
       <button type="submit" disabled={isPending || title.trim().length === 0}>
         {isPending ? "作成中..." : "追加"}
       </button>
-      {errorMessage ? <p role="alert">{errorMessage}</p> : null}
+      {summaryMessage !== null ? (
+        <p className="text-red-500" role="alert">
+          {summaryMessage}
+        </p>
+      ) : null}
     </form>
   );
 }
