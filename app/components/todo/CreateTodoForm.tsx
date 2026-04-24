@@ -5,7 +5,7 @@ import { type SubmitEvent, useState } from "react";
 import { displayError } from "@/core/presentation/errorDisplay";
 import { useServerAction } from "@/core/presentation/useServerAction";
 import { createTodoFn } from "./actions";
-import { TODO_TITLE_WIRE_MAX_LENGTH } from "./wireSchemas";
+import { TODO_TITLE_MAX_LENGTH } from "./schema";
 
 export function CreateTodoForm() {
   const [title, setTitle] = useState("");
@@ -48,7 +48,7 @@ export function CreateTodoForm() {
             if (lastError) clearLastError();
           }}
           disabled={isPending}
-          maxLength={TODO_TITLE_WIRE_MAX_LENGTH}
+          maxLength={TODO_TITLE_MAX_LENGTH}
           required
           aria-invalid={titleFieldErrors !== undefined}
         />

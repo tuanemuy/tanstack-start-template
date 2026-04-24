@@ -58,13 +58,13 @@ export type TodoTitle = string & { readonly [todoTitleBrand]: true };
 /**
  * Internal Zod schema. Deliberately not exported.
  *
- * Wire-level validators must define their own schemas (see
- * `app/components/todo/wireSchemas.ts`) so that frontend code never has
- * to import this module — that import would drag the domain factory,
+ * Server-function input validators must define their own schemas (see
+ * `app/components/todo/schema.ts`) so that frontend code never has to
+ * import this module — that import would drag the domain factory,
  * `BusinessRuleError`, the UUIDv7 generator, and every transitive
- * domain dependency into the client bundle. Drift between wire and
- * domain rules is acceptable: the domain factory below is the
- * authoritative final gate.
+ * domain dependency into the client bundle. Drift between transport
+ * rules and domain rules is acceptable: the domain factory below is
+ * the authoritative final gate.
  */
 const todoTitleSchema = z.string().trim().min(1).max(TODO_TITLE_MAX_LENGTH);
 
