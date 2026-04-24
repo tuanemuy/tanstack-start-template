@@ -4,9 +4,19 @@ import { Todo } from "../entity";
 import { TodoErrorCode } from "../errorCode";
 import { TodoId } from "../valueObject";
 
+// Centralised "now" so each test makes its time semantics explicit instead
+// of relying on `new Date()` ambient I/O. We use `new Date(0)` (the unix
+// epoch) plus delta offsets so the values are stable and easy to reason
+// about in failure messages.
+const T0 = new Date(0);
+// `at(123)` reads as "the instant 123 ms after T0". Named `at` rather than
+// `after` because Vitest exposes a global `after` test-hook and Biome flags
+// the collision.
+const at = (ms: number) => new Date(T0.getTime() + ms);
+
 describe("Todo.create", () => {
   it("produces an active entity with a valid TodoId", () => {
-    const { entity } = Todo.create({ title: "Buy milk" });
+    const { entity } = Todo.create({ title: "Buy milk" }, T0);
     expect(entity.status).toBe("active");
     // Should not throw — round-trips through the validating constructor.
     expect(() => TodoId.create(entity.id)).not.toThrow();
@@ -14,24 +24,23 @@ describe("Todo.create", () => {
   });
 
   it("sets createdAt equal to updatedAt at creation time", () => {
-    const { entity } = Todo.create({ title: "Write docs" });
+    const { entity } = Todo.create({ title: "Write docs" }, T0);
     expect(entity.createdAt.getTime()).toBe(entity.updatedAt.getTime());
   });
 
-  it("satisfies updatedAt >= createdAt as an invariant", () => {
-    const { entity } = Todo.create({ title: "Invariant" });
-    expect(entity.updatedAt.getTime()).toBeGreaterThanOrEqual(
-      entity.createdAt.getTime(),
-    );
+  it("uses the provided `now` for both createdAt and updatedAt", () => {
+    const { entity } = Todo.create({ title: "Pinned time" }, at(123));
+    expect(entity.createdAt.getTime()).toBe(at(123).getTime());
+    expect(entity.updatedAt.getTime()).toBe(at(123).getTime());
   });
 
   it("initializes version at 0", () => {
-    const { entity } = Todo.create({ title: "Fresh" });
+    const { entity } = Todo.create({ title: "Fresh" }, T0);
     expect(entity.version).toBe(0);
   });
 
-  it("emits a single TodoCreatedEvent with matching todoId and title", () => {
-    const { entity, events } = Todo.create({ title: "Buy milk" });
+  it("emits a single TodoCreatedEvent with matching todoId, title and occurredAt", () => {
+    const { entity, events } = Todo.create({ title: "Buy milk" }, at(7));
     expect(events).toHaveLength(1);
     const event = events[0];
     expect(event).toBeDefined();
@@ -41,15 +50,14 @@ describe("Todo.create", () => {
     expect(event.payload.todoId).toBe(entity.id);
     expect(event.payload.title).toBe(entity.title);
     expect(event.aggregateId).toBe(entity.id);
+    expect(event.occurredAt.getTime()).toBe(at(7).getTime());
   });
 });
 
 describe("Todo.toggle", () => {
-  it("flips active → completed and emits TodoToggledEvent(completed=true)", async () => {
-    const { entity: original } = Todo.create({ title: "Buy milk" });
-    // Ensure a measurable time gap for updatedAt monotonicity.
-    await new Promise((resolve) => setTimeout(resolve, 2));
-    const { entity: next, events } = Todo.toggle(original);
+  it("flips active → completed and emits TodoToggledEvent(completed=true)", () => {
+    const { entity: original } = Todo.create({ title: "Buy milk" }, T0);
+    const { entity: next, events } = Todo.toggle(original, at(2));
 
     expect(original.status).toBe("active");
     expect(next.status).toBe("completed");
@@ -69,9 +77,9 @@ describe("Todo.toggle", () => {
   });
 
   it("flips completed → active and emits TodoToggledEvent(completed=false)", () => {
-    const { entity: active } = Todo.create({ title: "Buy milk" });
-    const { entity: completed } = Todo.complete(active);
-    const { entity: reopened, events } = Todo.toggle(completed);
+    const { entity: active } = Todo.create({ title: "Buy milk" }, T0);
+    const { entity: completed } = Todo.complete(active, at(1));
+    const { entity: reopened, events } = Todo.toggle(completed, at(2));
 
     expect(reopened.status).toBe("active");
     const event = events[0];
@@ -83,16 +91,16 @@ describe("Todo.toggle", () => {
   });
 
   it("increments version by 1", () => {
-    const { entity: original } = Todo.create({ title: "versioned" });
-    const { entity: toggled } = Todo.toggle(original);
+    const { entity: original } = Todo.create({ title: "versioned" }, T0);
+    const { entity: toggled } = Todo.toggle(original, at(1));
     expect(toggled.version).toBe(original.version + 1);
   });
 });
 
 describe("Todo.complete / Todo.reopen (narrowed transitions)", () => {
   it("complete requires ActiveTodo and returns CompletedTodo", () => {
-    const { entity: active } = Todo.create({ title: "do it" });
-    const { entity: completed, events } = Todo.complete(active);
+    const { entity: active } = Todo.create({ title: "do it" }, T0);
+    const { entity: completed, events } = Todo.complete(active, at(1));
     expect(completed.status).toBe("completed");
     expect(completed.version).toBe(active.version + 1);
     const event = events[0];
@@ -104,9 +112,9 @@ describe("Todo.complete / Todo.reopen (narrowed transitions)", () => {
   });
 
   it("reopen requires CompletedTodo and returns ActiveTodo", () => {
-    const { entity: active } = Todo.create({ title: "do it" });
-    const { entity: completed } = Todo.complete(active);
-    const { entity: reopened, events } = Todo.reopen(completed);
+    const { entity: active } = Todo.create({ title: "do it" }, T0);
+    const { entity: completed } = Todo.complete(active, at(1));
+    const { entity: reopened, events } = Todo.reopen(completed, at(2));
     expect(reopened.status).toBe("active");
     expect(reopened.version).toBe(completed.version + 1);
     const event = events[0];
@@ -120,24 +128,24 @@ describe("Todo.complete / Todo.reopen (narrowed transitions)", () => {
 
 describe("Todo type guards and match", () => {
   it("isActive / isCompleted narrow correctly", () => {
-    const { entity: active } = Todo.create({ title: "guards" });
+    const { entity: active } = Todo.create({ title: "guards" }, T0);
     expect(Todo.isActive(active)).toBe(true);
     expect(Todo.isCompleted(active)).toBe(false);
 
-    const { entity: completed } = Todo.complete(active);
+    const { entity: completed } = Todo.complete(active, at(1));
     expect(Todo.isActive(completed)).toBe(false);
     expect(Todo.isCompleted(completed)).toBe(true);
   });
 
   it("match dispatches to the correct branch", () => {
-    const { entity: active } = Todo.create({ title: "matching" });
+    const { entity: active } = Todo.create({ title: "matching" }, T0);
     const label = Todo.match(active, {
       active: () => "A",
       completed: () => "C",
     });
     expect(label).toBe("A");
 
-    const { entity: completed } = Todo.complete(active);
+    const { entity: completed } = Todo.complete(active, at(1));
     const label2 = Todo.match(completed, {
       active: () => "A",
       completed: () => "C",
@@ -147,10 +155,9 @@ describe("Todo type guards and match", () => {
 });
 
 describe("Todo.rename", () => {
-  it("updates the title and advances updatedAt with a TodoRenamedEvent", async () => {
-    const { entity: original } = Todo.create({ title: "Old name" });
-    await new Promise((resolve) => setTimeout(resolve, 2));
-    const { entity: next, events } = Todo.rename(original, "New");
+  it("updates the title and advances updatedAt with a TodoRenamedEvent", () => {
+    const { entity: original } = Todo.create({ title: "Old name" }, T0);
+    const { entity: next, events } = Todo.rename(original, "New", at(2));
 
     expect(next.title as unknown as string).toBe("New");
     expect(next.id).toBe(original.id);
@@ -170,18 +177,17 @@ describe("Todo.rename", () => {
   });
 
   it("increments version by 1 when the title actually changes", () => {
-    const { entity: original } = Todo.create({ title: "Before" });
-    const { entity: next } = Todo.rename(original, "After");
+    const { entity: original } = Todo.create({ title: "Before" }, T0);
+    const { entity: next } = Todo.rename(original, "After", at(1));
     expect(next.version).toBe(original.version + 1);
   });
 
-  it("is idempotent when the new title equals the current title (after normalization)", async () => {
-    const { entity: original } = Todo.create({ title: "Stable" });
-    // Wait so that a naive implementation would produce a different updatedAt.
-    await new Promise((resolve) => setTimeout(resolve, 5));
-    // Supply the same title with extra surrounding whitespace: after trim it
-    // normalizes to the same value.
-    const { entity: same, events } = Todo.rename(original, "  Stable  ");
+  it("is idempotent when the new title equals the current title (after normalization)", () => {
+    const { entity: original } = Todo.create({ title: "Stable" }, T0);
+    // Even when called with a later "now", the no-op renaming must return
+    // the same instance and not advance updatedAt — that's the contract that
+    // protects against spurious outbox traffic.
+    const { entity: same, events } = Todo.rename(original, "  Stable  ", at(5));
 
     expect(same).toBe(original);
     expect(same.version).toBe(original.version);
@@ -190,9 +196,9 @@ describe("Todo.rename", () => {
   });
 
   it("preserves the status variant when renaming a completed todo", () => {
-    const { entity: active } = Todo.create({ title: "A" });
-    const { entity: completed } = Todo.complete(active);
-    const { entity: renamed } = Todo.rename(completed, "B");
+    const { entity: active } = Todo.create({ title: "A" }, T0);
+    const { entity: completed } = Todo.complete(active, at(1));
+    const { entity: renamed } = Todo.rename(completed, "B", at(2));
     // At the type level `renamed` is inferred as CompletedTodo via the
     // generic signature; at runtime `status` is unchanged.
     expect(renamed.status).toBe("completed");
@@ -204,9 +210,9 @@ describe("Todo.rename", () => {
   // title is valid. Reversing the order (compare raw input first) would let
   // malformed-but-equal inputs silently short-circuit.
   it("throws BusinessRuleError(TitleEmpty) for invalid new title even when current title is valid", () => {
-    const { entity: original } = Todo.create({ title: "valid" });
+    const { entity: original } = Todo.create({ title: "valid" }, T0);
     try {
-      Todo.rename(original, "   ");
+      Todo.rename(original, "   ", at(1));
       expect.fail("should have thrown");
     } catch (error) {
       expect(isBusinessRuleError(error)).toBe(true);
@@ -219,8 +225,8 @@ describe("Todo.rename", () => {
 
 describe("Todo.delete", () => {
   it("returns WithEvents<null, …> with a single TodoDeletedEvent", () => {
-    const { entity } = Todo.create({ title: "To delete" });
-    const { entity: next, events } = Todo.delete(entity);
+    const { entity } = Todo.create({ title: "To delete" }, T0);
+    const { entity: next, events } = Todo.delete(entity, at(1));
 
     // Delete is terminal — no successor entity.
     expect(next).toBeNull();
@@ -233,5 +239,6 @@ describe("Todo.delete", () => {
     if (event.type !== "todo.deleted") return;
     expect(event.payload.todoId).toBe(entity.id);
     expect(event.aggregateId).toBe(entity.id);
+    expect(event.occurredAt.getTime()).toBe(at(1).getTime());
   });
 });
