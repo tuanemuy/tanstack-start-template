@@ -15,7 +15,10 @@ import {
   isRetryableError,
 } from "@/core/adapters/drizzleSqlite/unitOfWork";
 import type { Container } from "@/core/application/di/server";
-import { RetryingUnitOfWorkProvider } from "@/core/application/retryingUnitOfWork";
+import { RetryingUnitOfWorkProvider } from "@/core/application/execution/retryingUnitOfWork";
+import { SystemClock } from "@/core/domain/common/ports/clock";
+import { ConsoleLogger } from "@/core/domain/common/ports/logger";
+import { FakeUnitOfWorkProvider } from "./fakes";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -140,6 +143,11 @@ export async function createTestContainer(
       ...options.config,
     },
     unitOfWorkProvider,
+    // Use the production wiring for clock and logger by default. Tests that
+    // need deterministic time or assertable log capture build their own
+    // container with `FakeClock` / `FakeLogger`.
+    clock: SystemClock,
+    logger: ConsoleLogger,
     // Test utilities
     db: dbWithCleanup.db,
     cleanup: async () => {
@@ -198,6 +206,76 @@ export function createMockHeaders(headers?: Record<string, string>): Headers {
     }
   }
   return h;
+}
+
+// ============================================
+// Fake In-Memory Test Container
+// ============================================
+
+/**
+ * Test container backed by in-memory fakes (`FakeUnitOfWorkProvider` and
+ * friends).
+ *
+ * Use this harness for usecase-level tests that exercise validation,
+ * orchestration and event emission. It is ~10x faster than the Drizzle-
+ * backed container because there is no file I/O, no migrations, and no
+ * transaction overhead.
+ *
+ * Scope caveat: transactional rollback, concurrent-writer races, and
+ * adapter-specific behaviour (e.g. `SQLITE_BUSY` retries) are NOT modelled
+ * here. Tests that need those should use {@link setupTestContainer}
+ * against real SQLite — typically co-located under a `*.integration.test.ts`
+ * filename so they can be skipped in a tight local loop.
+ */
+export type FakeTestContainer = Container & {
+  /**
+   * Direct access to the underlying fake UoW provider so tests can inspect
+   * collected events, seed the todo store, or pre-populate outbox rows
+   * without going through a usecase.
+   */
+  fakeUow: FakeUnitOfWorkProvider;
+};
+
+export function createFakeTestContainer(
+  options: { config?: Partial<Container["config"]> } = {},
+): FakeTestContainer {
+  const fakeUow = new FakeUnitOfWorkProvider();
+  return {
+    config: { appUrl: "http://localhost:3000", ...options.config },
+    unitOfWorkProvider: fakeUow,
+    // SystemClock by default — fast usecase tests that don't pin time still
+    // get a working clock. Tests that need determinism construct a tailored
+    // container with `FakeClock` and `FakeLogger`.
+    clock: SystemClock,
+    logger: ConsoleLogger,
+    fakeUow,
+  };
+}
+
+/**
+ * Setup a fake in-memory container per test with automatic reset.
+ *
+ * No explicit `afterEach` cleanup is needed — the container is rebuilt from
+ * scratch in `beforeEach`, so the previous test's state is simply dropped.
+ *
+ * @example
+ * ```typescript
+ * const getContainer = setupFakeTestContainer();
+ * it("records a created event", async () => {
+ *   const container = getContainer();
+ *   await createTodo({ container, input: { title: "x" } });
+ *   expect(container.fakeUow.getRecordedEvents()).toHaveLength(1);
+ * });
+ * ```
+ */
+export function setupFakeTestContainer(
+  options: { config?: Partial<Container["config"]> } = {},
+): () => FakeTestContainer {
+  let container: FakeTestContainer;
+  beforeEach(() => {
+    container = createFakeTestContainer(options);
+  });
+  return () => container;
 }
 
 // ============================================

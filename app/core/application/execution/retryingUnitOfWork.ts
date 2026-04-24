@@ -1,3 +1,4 @@
+import { retry } from "./retry";
 import type {
   ReadonlyContext,
   ReadWriteContext,
@@ -35,19 +36,27 @@ function calculateRetryDelay(attempt: number, config: RetryConfig): number {
   return Math.min(exponentialDelay + jitter, config.maxDelayMs);
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 /**
- * Wraps any `UnitOfWorkProvider` and retries `run` / `runWorker` when the
- * inner call fails with a retryable error (typically transient write-lock
- * contention).
+ * Wraps any `UnitOfWorkProvider` and retries `runReadonly` / `runReadWrite` /
+ * `runWorker` when the inner call fails with a retryable error (typically
+ * transient write-lock contention).
  *
  * Keeping retry as a decorator — instead of baking it into a specific
  * adapter — means switching database drivers only requires supplying a new
  * `isRetryable` predicate, and tests can opt out by composing without this
  * wrapper.
+ *
+ * ## Retry layering (driver-level first, app-level fallback)
+ *
+ * The SQLite busy timeout (`PRAGMA busy_timeout`) is the first line of
+ * defence against write-lock contention: the driver blocks briefly inside
+ * the offending statement rather than surfacing `SQLITE_BUSY` immediately.
+ * The app-level retry here kicks in only when the driver has exhausted its
+ * own wait and surfaces the transient error to us. The two layers stack:
+ * configure `busy_timeout` to absorb short contention waits, and keep this
+ * decorator as the belt-and-braces retry for the rare case where contention
+ * outlasts the driver timeout. `isRetryable` is injected at wire time so
+ * adapter-specific codes stay out of this module.
  *
  * ## Side-effect warning
  *
@@ -64,9 +73,10 @@ function sleep(ms: number): Promise<void> {
  *
  * Recommended pattern: keep the UoW callback pure with respect to external
  * systems (pull inputs in, hand outputs back via the return value) and fire
- * the external effect *after* `run` / `runWorker` resolves successfully.
- * Outbox events are the canonical way to turn "commit implies side effect"
- * into an at-least-once guarantee across system boundaries.
+ * the external effect *after* `runReadWrite` / `runWorker` resolves
+ * successfully. Outbox events are the canonical way to turn "commit
+ * implies side effect" into an at-least-once guarantee across system
+ * boundaries.
  */
 export class RetryingUnitOfWorkProvider implements UnitOfWorkProvider {
   constructor(
@@ -75,51 +85,18 @@ export class RetryingUnitOfWorkProvider implements UnitOfWorkProvider {
     private readonly config: RetryConfig = DEFAULT_RETRY_CONFIG,
   ) {}
 
-  run<T>(
-    fn: (ctx: ReadWriteContext) => Promise<T>,
-    options?: { mode?: "readwrite" },
-  ): Promise<T>;
-  run<T>(
-    fn: (ctx: ReadonlyContext) => Promise<T>,
-    options: { mode: "readonly" },
-  ): Promise<T>;
   /**
-   * @see {@link RetryingUnitOfWorkProvider} for the side-effect warning that
-   *   applies to every retried callback — external effects (HTTP, logs,
-   *   in-memory caches) run once per attempt while DB work is rolled back.
-   *   Keep the callback pure; run external effects after `run` resolves.
+   * @see {@link RetryingUnitOfWorkProvider} for the side-effect warning.
    */
-  async run<T>(
-    fn:
-      | ((ctx: ReadWriteContext) => Promise<T>)
-      | ((ctx: ReadonlyContext) => Promise<T>),
-    options?: { mode?: "readonly" | "readwrite" },
-  ): Promise<T> {
-    let lastError: unknown;
+  async runReadonly<T>(fn: (ctx: ReadonlyContext) => Promise<T>): Promise<T> {
+    return this.runWithRetry(() => this.inner.runReadonly(fn));
+  }
 
-    for (let attempt = 1; attempt <= this.config.maxAttempts; attempt++) {
-      try {
-        if (options?.mode === "readonly") {
-          return await this.inner.run(
-            fn as (ctx: ReadonlyContext) => Promise<T>,
-            options as { mode: "readonly" },
-          );
-        }
-        return await this.inner.run(
-          fn as (ctx: ReadWriteContext) => Promise<T>,
-          options as { mode?: "readwrite" } | undefined,
-        );
-      } catch (error) {
-        lastError = error;
-        if (this.isRetryable(error) && attempt < this.config.maxAttempts) {
-          await sleep(calculateRetryDelay(attempt, this.config));
-          continue;
-        }
-        throw error;
-      }
-    }
-
-    throw lastError;
+  /**
+   * @see {@link RetryingUnitOfWorkProvider} for the side-effect warning.
+   */
+  async runReadWrite<T>(fn: (ctx: ReadWriteContext) => Promise<T>): Promise<T> {
+    return this.runWithRetry(() => this.inner.runReadWrite(fn));
   }
 
   /**
@@ -133,21 +110,19 @@ export class RetryingUnitOfWorkProvider implements UnitOfWorkProvider {
    *   in another `runWorker` call.
    */
   async runWorker<T>(fn: (ctx: WorkerContext) => Promise<T>): Promise<T> {
-    let lastError: unknown;
+    return this.runWithRetry(() => this.inner.runWorker(fn));
+  }
 
-    for (let attempt = 1; attempt <= this.config.maxAttempts; attempt++) {
-      try {
-        return await this.inner.runWorker(fn);
-      } catch (error) {
-        lastError = error;
-        if (this.isRetryable(error) && attempt < this.config.maxAttempts) {
-          await sleep(calculateRetryDelay(attempt, this.config));
-          continue;
-        }
-        throw error;
-      }
-    }
-
-    throw lastError;
+  private async runWithRetry<T>(attempt: () => Promise<T>): Promise<T> {
+    // `retry` re-throws the last error verbatim when retryable attempts run
+    // out (or when `shouldRetry` rejects the error on the first attempt), so
+    // the decorator can simply forward the call. The `UnitOfWorkProvider`
+    // contract — `Promise<T>` plus thrown errors on failure — passes through
+    // unchanged.
+    return retry(attempt, {
+      maxAttempts: this.config.maxAttempts,
+      shouldRetry: this.isRetryable,
+      delayMs: (i) => calculateRetryDelay(i, this.config),
+    });
   }
 }

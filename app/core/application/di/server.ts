@@ -14,8 +14,10 @@ import {
   DrizzleSqliteUnitOfWorkProvider,
   isRetryableError,
 } from "@/core/adapters/drizzleSqlite/unitOfWork";
-import { RetryingUnitOfWorkProvider } from "../retryingUnitOfWork";
-import type { UnitOfWorkProvider } from "../unitOfWork";
+import { type Clock, SystemClock } from "@/core/domain/common/ports/clock";
+import { ConsoleLogger, type Logger } from "@/core/domain/common/ports/logger";
+import { RetryingUnitOfWorkProvider } from "../execution/retryingUnitOfWork";
+import type { UnitOfWorkProvider } from "../execution/unitOfWork";
 
 /**
  * Application configuration shared across the DI container.
@@ -29,10 +31,31 @@ export type AppConfig = {
  *
  * When extending, prefer adding new ports here rather than constructing
  * adapters ad-hoc from application services.
+ *
+ * The outbox ports (`OutboxWriter` / `OutboxWorkerRepository`) are
+ * intentionally NOT exposed at the container level: usecases reach the
+ * writer surface through `collectEvents` on `ReadWriteContext`, and the
+ * relay worker reaches the worker surface through `runWorker`'s
+ * `WorkerContext`. Both paths are mediated by `unitOfWorkProvider`, which
+ * is the single transactional boundary; putting a "bare" outbox repository
+ * on `Container` would let callers bypass the UoW and break that invariant.
  */
 export type Container = {
   config: AppConfig;
   unitOfWorkProvider: UnitOfWorkProvider;
+  /**
+   * Clock port. Usecases call `container.clock.now()` once at the entry
+   * point and pass the resulting `Date` into every domain operation that
+   * needs a timestamp. Domain code does not see the port itself — only the
+   * resolved `Date` value — keeping it pure.
+   */
+  clock: Clock;
+  /**
+   * Structured logger. Used for cross-cutting observability signals that
+   * are not domain errors (e.g. outbox decode/dispatch failures inside the
+   * relay worker). Domain and usecase happy paths should not log.
+   */
+  logger: Logger;
 };
 
 /**
@@ -93,6 +116,8 @@ export async function createContainer(
   return {
     config: { appUrl: config.appUrl },
     unitOfWorkProvider,
+    clock: SystemClock,
+    logger: ConsoleLogger,
   };
 }
 

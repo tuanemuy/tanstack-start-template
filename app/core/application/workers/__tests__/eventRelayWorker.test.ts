@@ -1,16 +1,20 @@
 import { asc, eq, isNull } from "drizzle-orm";
 import { describe, expect, it, vi } from "vitest";
 import * as schema from "@/core/adapters/drizzleSqlite/schema";
-import { BusinessRuleError } from "@/core/domain/error";
 import { TodoEvents } from "@/core/domain/todo/events";
 import { TodoId, TodoTitle } from "@/core/domain/todo/valueObject";
+import { FakeLogger } from "../../__tests__/fakes";
 import { setupTestContainer } from "../../__tests__/helpers";
-import { SystemError, SystemErrorCode } from "../../error";
-import { createEventDecoderRegistry } from "../../eventDispatch";
+import { createEventDecoderRegistry } from "../../events/eventDispatch";
+import { changeTodoStatus } from "../../todo/changeTodoStatus";
 import { createTodo } from "../../todo/createTodo";
 import { deleteTodo } from "../../todo/deleteTodo";
-import { toggleTodo } from "../../todo/toggleTodo";
 import { type EventDispatcher, processOutboxEvents } from "../eventRelayWorker";
+
+// Fixed timestamp for any directly-constructed event in tests. The relay
+// worker doesn't care about `occurredAt` semantics — it only relays — so
+// pinning it here keeps the calls terse and the suite deterministic.
+const T0 = new Date(0);
 
 describe("processOutboxEvents", () => {
   const getContainer = setupTestContainer();
@@ -23,14 +27,17 @@ describe("processOutboxEvents", () => {
       container,
       input: { title: "A" },
     });
-    await toggleTodo({ container, input: { id: a.id } });
+    await changeTodoStatus({
+      container,
+      input: { id: a.id, status: "completed" },
+    });
     await deleteTodo({ container, input: { id: a.id } });
 
     // Sanity: 3 pending entries before processing.
     const beforeRows = await container.db
       .select()
       .from(schema.outboxEvents)
-      .orderBy(asc(schema.outboxEvents.occurredAt));
+      .orderBy(asc(schema.outboxEvents.sequence));
     expect(beforeRows).toHaveLength(3);
     expect(beforeRows.every((r) => r.processedAt === null)).toBe(true);
 
@@ -93,13 +100,15 @@ describe("processOutboxEvents", () => {
     // access to `outboxRepository.saveEvents`.
     const id = TodoId.generate();
     const title = TodoTitle.create("batched");
-    await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
-      collectEvents([
-        TodoEvents.created(id, title),
-        TodoEvents.toggled(id, true),
-        TodoEvents.deleted(id),
-      ]);
-    });
+    await container.unitOfWorkProvider.runReadWrite(
+      async ({ collectEvents }) => {
+        collectEvents([
+          TodoEvents.created(id, title, T0),
+          TodoEvents.toggled(id, true, T0),
+          TodoEvents.deleted(id, T0),
+        ]);
+      },
+    );
 
     const dispatch: EventDispatcher = vi.fn(async () => {});
     const { processed } = await processOutboxEvents(container, dispatch, {
@@ -121,14 +130,16 @@ describe("processOutboxEvents", () => {
     // Seed 4 outbox entries via the normal event path.
     const id = TodoId.generate();
     const title = TodoTitle.create("concurrent");
-    await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
-      collectEvents([
-        TodoEvents.created(id, title),
-        TodoEvents.toggled(id, true),
-        TodoEvents.toggled(id, false),
-        TodoEvents.deleted(id),
-      ]);
-    });
+    await container.unitOfWorkProvider.runReadWrite(
+      async ({ collectEvents }) => {
+        collectEvents([
+          TodoEvents.created(id, title, T0),
+          TodoEvents.toggled(id, true, T0),
+          TodoEvents.toggled(id, false, T0),
+          TodoEvents.deleted(id, T0),
+        ]);
+      },
+    );
 
     const dispatchA: EventDispatcher = vi.fn(async () => {});
     const dispatchB: EventDispatcher = vi.fn(async () => {});
@@ -171,9 +182,11 @@ describe("processOutboxEvents", () => {
     // Seed 1 outbox entry via the normal event path.
     const id = TodoId.generate();
     const title = TodoTitle.create("lease-expiry");
-    await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
-      collectEvents([TodoEvents.created(id, title)]);
-    });
+    await container.unitOfWorkProvider.runReadWrite(
+      async ({ collectEvents }) => {
+        collectEvents([TodoEvents.created(id, title, T0)]);
+      },
+    );
 
     const rowsBefore = await container.db.select().from(schema.outboxEvents);
     expect(rowsBefore).toHaveLength(1);
@@ -202,7 +215,7 @@ describe("processOutboxEvents", () => {
     expect(rowsAfter[0]?.leasedUntil).toBeNull();
   });
 
-  it("rejects events whose prefix has no registered decoder", async () => {
+  it("skips events whose prefix has no registered decoder (logs, keeps batch moving)", async () => {
     const container = getContainer();
 
     // Insert a row whose `event_type` is in an unknown domain.
@@ -210,15 +223,19 @@ describe("processOutboxEvents", () => {
       id: "01950000-0000-7000-8000-000000000001",
       eventType: "mystery.happened",
       schemaVersion: 1,
-      payload: { payload: {} },
+      payload: {
+        payload: {},
+        aggregateId: "01950000-0000-7000-8000-000000000001",
+      },
       occurredAt: new Date(),
     });
 
     const dispatch: EventDispatcher = vi.fn(async () => {});
-    await expect(
-      processOutboxEvents(container, dispatch),
-    ).rejects.toBeInstanceOf(SystemError);
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { processed } = await processOutboxEvents(container, dispatch);
+    errorSpy.mockRestore();
 
+    expect(processed).toBe(0);
     expect(dispatch).not.toHaveBeenCalled();
 
     // The row must still be pending (unprocessed) — the failed decode left
@@ -229,24 +246,195 @@ describe("processOutboxEvents", () => {
     expect(rows[0]?.processedAt).toBeNull();
   });
 
-  it("surfaces a malformed payload as an error rather than silent passthrough", async () => {
+  it("emits a structured error log via the injected Logger on decode failure", async () => {
     const container = getContainer();
 
-    // Insert a todo event with an invalid `todoId` (not a UUIDv7). The
-    // decoder must re-run `TodoId.create` and throw before dispatch.
+    // Swap the container's logger for a FakeLogger so we can assert on
+    // decode-failure observability without spying on `console`. This is
+    // exactly the "wire a different logger for tests" affordance the port
+    // was introduced for.
+    const logger = new FakeLogger();
+    const containerWithLogger = { ...container, logger };
+
     await container.db.insert(schema.outboxEvents).values({
-      id: "01950000-0000-7000-8000-000000000002",
-      eventType: "todo.created",
+      id: "01950000-0000-7000-8000-000000000099",
+      eventType: "mystery.happened",
       schemaVersion: 1,
-      payload: { payload: { todoId: "not-a-uuid", title: "ok" } },
+      payload: {
+        payload: {},
+        aggregateId: "01950000-0000-7000-8000-000000000099",
+      },
       occurredAt: new Date(),
     });
 
     const dispatch: EventDispatcher = vi.fn(async () => {});
-    await expect(
-      processOutboxEvents(container, dispatch),
-    ).rejects.toBeInstanceOf(BusinessRuleError);
+    const { processed } = await processOutboxEvents(
+      containerWithLogger,
+      dispatch,
+    );
+
+    expect(processed).toBe(0);
     expect(dispatch).not.toHaveBeenCalled();
+
+    const errors = logger.byLevel("error");
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.message).toMatch(/decode failed/);
+    // Structured meta keys are part of the contract — operators rely on
+    // them for filtering / alerting.
+    expect(errors[0]?.meta?.eventId).toBe(
+      "01950000-0000-7000-8000-000000000099",
+    );
+    expect(errors[0]?.meta?.eventType).toBe("mystery.happened");
+    expect(errors[0]?.meta?.cause).toBeDefined();
+  });
+
+  it("skips malformed payloads rather than aborting the batch", async () => {
+    const container = getContainer();
+
+    // Insert one malformed row (invalid todoId) and one valid row. The
+    // worker must skip the bad row and dispatch the good one — a single
+    // decode failure cannot block delivery of the rest of the batch.
+    const badId = "01950000-0000-7000-8000-000000000002";
+    const goodId = TodoId.generate();
+    const goodTitle = TodoTitle.create("ok");
+    await container.db.insert(schema.outboxEvents).values({
+      id: badId,
+      eventType: "todo.created",
+      schemaVersion: 1,
+      payload: {
+        payload: { todoId: "not-a-uuid", title: "ok" },
+        aggregateId: badId,
+      },
+      occurredAt: new Date(0),
+    });
+    await container.unitOfWorkProvider.runReadWrite(
+      async ({ collectEvents }) => {
+        collectEvents([TodoEvents.created(goodId, goodTitle, T0)]);
+      },
+    );
+
+    const dispatch: EventDispatcher = vi.fn(async () => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { processed } = await processOutboxEvents(container, dispatch);
+    errorSpy.mockRestore();
+
+    expect(processed).toBe(1);
+    expect(dispatch).toHaveBeenCalledTimes(1);
+
+    const rows = await container.db
+      .select()
+      .from(schema.outboxEvents)
+      .orderBy(asc(schema.outboxEvents.sequence));
+    // The bad row remains pending (lease will expire, retry later).
+    expect(rows[0]?.id).toBe(badId);
+    expect(rows[0]?.processedAt).toBeNull();
+    // The good row was dispatched and marked processed.
+    expect(rows[1]?.processedAt).not.toBeNull();
+  });
+
+  it("tolerates dispatcher failure on one row without dropping the rest of the batch", async () => {
+    const container = getContainer();
+
+    const idA = TodoId.generate();
+    const idB = TodoId.generate();
+    const title = TodoTitle.create("allSettled");
+    await container.unitOfWorkProvider.runReadWrite(
+      async ({ collectEvents }) => {
+        collectEvents([
+          TodoEvents.created(idA, title, T0),
+          TodoEvents.created(idB, title, T0),
+        ]);
+      },
+    );
+
+    // First dispatch call fails, second succeeds. `Promise.allSettled`
+    // keeps the batch alive: only the successful row is marked processed.
+    let call = 0;
+    const dispatch: EventDispatcher = vi.fn(async () => {
+      call += 1;
+      if (call === 1) throw new Error("consumer is angry");
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { processed } = await processOutboxEvents(container, dispatch);
+    errorSpy.mockRestore();
+
+    expect(dispatch).toHaveBeenCalledTimes(2);
+    expect(processed).toBe(1);
+
+    // Exactly one row is marked processed; the other stays pending for
+    // lease-expiry-driven retry.
+    const rows = await container.db.select().from(schema.outboxEvents);
+    const processedRows = rows.filter((r) => r.processedAt !== null);
+    const pendingRows = rows.filter((r) => r.processedAt === null);
+    expect(processedRows).toHaveLength(1);
+    expect(pendingRows).toHaveLength(1);
+  });
+
+  it("tolerates multiple simultaneous dispatcher failures mixed with successes", async () => {
+    const container = getContainer();
+
+    // Seed 5 events; dispatcher fails on ids in positions 0 and 3 (by
+    // call order). The remaining three must still be marked processed.
+    const ids = [
+      TodoId.generate(),
+      TodoId.generate(),
+      TodoId.generate(),
+      TodoId.generate(),
+      TodoId.generate(),
+    ];
+    const title = TodoTitle.create("mixed");
+    await container.unitOfWorkProvider.runReadWrite(
+      async ({ collectEvents }) => {
+        collectEvents(ids.map((id) => TodoEvents.created(id, title, T0)));
+      },
+    );
+
+    let call = 0;
+    const failingCalls = new Set([1, 4]); // 1st and 4th dispatch call fail.
+    const dispatch: EventDispatcher = vi.fn(async () => {
+      call += 1;
+      if (failingCalls.has(call)) throw new Error(`consumer rejected #${call}`);
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { processed } = await processOutboxEvents(container, dispatch);
+    errorSpy.mockRestore();
+
+    // 5 attempted, 2 failed, 3 marked.
+    expect(dispatch).toHaveBeenCalledTimes(5);
+    expect(processed).toBe(3);
+
+    const rows = await container.db.select().from(schema.outboxEvents);
+    const processedRows = rows.filter((r) => r.processedAt !== null);
+    const pendingRows = rows.filter((r) => r.processedAt === null);
+    expect(processedRows).toHaveLength(3);
+    // The two pending rows stay available for a future lease-expiry retry.
+    expect(pendingRows).toHaveLength(2);
+  });
+
+  it("does not call markProcessed when every dispatch fails (no wasted round-trip)", async () => {
+    const container = getContainer();
+
+    const id = TodoId.generate();
+    const title = TodoTitle.create("all-fail");
+    await container.unitOfWorkProvider.runReadWrite(
+      async ({ collectEvents }) => {
+        collectEvents([TodoEvents.created(id, title, T0)]);
+      },
+    );
+
+    const dispatch: EventDispatcher = vi.fn(async () => {
+      throw new Error("consumer is always angry");
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { processed } = await processOutboxEvents(container, dispatch);
+    errorSpy.mockRestore();
+
+    expect(processed).toBe(0);
+
+    // Row stays pending. No row was marked — the lease is still live
+    // so it's not re-claimable immediately, but processedAt remains null.
+    const rows = await container.db.select().from(schema.outboxEvents);
+    expect(rows[0]?.processedAt).toBeNull();
   });
 
   it("accepts a caller-supplied decoder registry (composable, testable)", async () => {
@@ -254,18 +442,22 @@ describe("processOutboxEvents", () => {
 
     const id = TodoId.generate();
     const title = TodoTitle.create("custom-registry");
-    await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
-      collectEvents([TodoEvents.created(id, title)]);
-    });
+    await container.unitOfWorkProvider.runReadWrite(
+      async ({ collectEvents }) => {
+        collectEvents([TodoEvents.created(id, title, T0)]);
+      },
+    );
 
-    // Registry without `todo` entry -> strict rejection on decode.
+    // Registry without `todo` entry -> decode failure reported via the
+    // Result channel, worker skips the row, returns 0 processed.
     const emptyRegistry = createEventDecoderRegistry({});
     const dispatch: EventDispatcher = vi.fn(async () => {});
-    const err = await processOutboxEvents(container, dispatch, {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { processed } = await processOutboxEvents(container, dispatch, {
       decoderRegistry: emptyRegistry,
-    }).catch((e: unknown) => e);
-    expect(err).toBeInstanceOf(SystemError);
-    expect((err as SystemError).code).toBe(SystemErrorCode.InternalServerError);
+    });
+    errorSpy.mockRestore();
+    expect(processed).toBe(0);
     expect(dispatch).not.toHaveBeenCalled();
   });
 });

@@ -1,9 +1,10 @@
 import type {
   DomainEvent,
   EventDecodeMeta,
+  EventDecodeResult,
   EventDecoder,
 } from "@/core/domain/common/event";
-import { SystemError, SystemErrorCode } from "./error";
+import { SystemError, SystemErrorCode } from "../errors";
 
 export type EventDecodeInput = Readonly<{
   type: string;
@@ -16,12 +17,17 @@ export type EventDecodeInput = Readonly<{
  * for `"todo.created"`) to the decoder that owns that domain's events.
  *
  * Strict by design: events whose prefix has no registered decoder are
- * rejected rather than passed through raw, because a silent passthrough
- * would let a typo'd event type reach dispatchers that expect branded
- * payloads.
+ * reported via the Result channel rather than passed through raw, because
+ * a silent passthrough would let a typo'd event type reach dispatchers
+ * that expect branded payloads.
+ *
+ * `decode` returns the same {@link EventDecodeResult} shape as a domain
+ * decoder so callers can branch on `ok` uniformly regardless of whether
+ * the failure originated in the registry ("unknown prefix") or in the
+ * domain ("malformed payload").
  */
 export type EventDecoderRegistry = Readonly<{
-  decode: (entry: EventDecodeInput) => DomainEvent;
+  decode: (entry: EventDecodeInput) => EventDecodeResult<DomainEvent>;
 }>;
 
 function prefixOf(type: string): string {
@@ -41,13 +47,17 @@ export function createEventDecoderRegistry(
     decode: ({ type, payload, meta }) => {
       const decoder = entries[prefixOf(type)];
       if (!decoder) {
-        // A missing decoder is a wiring bug, not a runtime branch. Fail
-        // fast so the outbox row stays claimed (lease will expire) rather
-        // than silently delivering an unbranded payload.
-        throw new SystemError(
-          SystemErrorCode.InternalServerError,
-          `No decoder registered for event type "${type}"`,
-        );
+        // A missing decoder is a wiring bug, not a recoverable runtime
+        // condition. Report it through the Result channel so the worker
+        // can surface it (skip + alert) without an exception unwinding
+        // the whole batch.
+        return {
+          ok: false,
+          error: new SystemError(
+            SystemErrorCode.InternalServerError,
+            `No decoder registered for event type "${type}"`,
+          ),
+        };
       }
       return decoder(type, payload, meta);
     },
