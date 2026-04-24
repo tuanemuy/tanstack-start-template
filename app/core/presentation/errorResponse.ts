@@ -1,49 +1,21 @@
 import { isNotFound, isRedirect } from "@tanstack/react-router";
 import {
-  type ConflictError,
-  type ForbiddenError,
-  isConflictError,
-  isForbiddenError,
-  isNotFoundError,
-  isSystemError,
-  isUnauthenticatedError,
-  isValidationError,
-  type NotFoundError,
-  type SystemError,
-  type UnauthenticatedError,
-  type ValidationError,
-} from "@/core/application/error";
-import {
-  type BusinessRuleError,
-  isBusinessRuleError,
-} from "@/core/domain/error";
+  isSerializableError,
+  type SerializedError,
+} from "@/lib/serializedError";
 
-/**
- * Discriminator for error kinds crossing the server/client boundary.
- */
-export type SerializedErrorKind =
-  | "business"
-  | "notFound"
-  | "conflict"
-  | "validation"
-  | "unauthenticated"
-  | "forbidden"
-  | "system"
-  | "unknown";
-
-/**
- * Transport-friendly representation of a domain/application error.
- *
- * Server functions return the full Error object to the client, but stack
- * traces and cause chains get in the way. We pack just what the UI needs —
- * a kind, optional code, and a message — into a plain object that survives
- * JSON serialization.
- */
-export type SerializedError = {
-  kind: SerializedErrorKind;
-  code: string | null;
-  message: string;
-};
+// Re-export the wire-format types so existing presentation-layer imports
+// (`import { SerializedError } from "@/core/presentation/errorResponse"`)
+// keep working. The canonical home is `app/lib/serializedError.ts` because
+// the contract is shared with every error producer (domain / application).
+export type {
+  FieldErrors,
+  SerializableError,
+  SerializedError,
+  SerializedErrorBase,
+  SerializedErrorKind,
+  SerializedValidationError,
+} from "@/lib/serializedError";
 
 function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -53,58 +25,22 @@ function errorMessage(error: unknown): string {
 
 /**
  * Classify any thrown value into a {@link SerializedError}.
+ *
+ * The classification protocol is **structural**: any value that exposes a
+ * `toSerialized()` method (the `SerializableError` contract in
+ * `app/lib/serializedError.ts`) is delegated to. Concrete error classes
+ * (domain `BusinessRuleError`, application `NotFoundError`, …) own their
+ * own serialization logic, so this function never enumerates them via
+ * `instanceof`. Adding a new error class — even from a brand-new domain —
+ * does not require editing presentation.
+ *
+ * Anything that does not satisfy the protocol is classified as
+ * `kind: "unknown"`.
  */
 export function serializeError(error: unknown): SerializedError {
-  if (isBusinessRuleError(error)) {
-    return {
-      kind: "business",
-      code: (error as BusinessRuleError).code,
-      message: error.message,
-    };
+  if (isSerializableError(error)) {
+    return error.toSerialized();
   }
-  if (isNotFoundError(error)) {
-    return {
-      kind: "notFound",
-      code: (error as NotFoundError).code,
-      message: error.message,
-    };
-  }
-  if (isConflictError(error)) {
-    return {
-      kind: "conflict",
-      code: (error as ConflictError).code,
-      message: error.message,
-    };
-  }
-  if (isValidationError(error)) {
-    return {
-      kind: "validation",
-      code: (error as ValidationError).code,
-      message: error.message,
-    };
-  }
-  if (isUnauthenticatedError(error)) {
-    return {
-      kind: "unauthenticated",
-      code: (error as UnauthenticatedError).code,
-      message: error.message,
-    };
-  }
-  if (isForbiddenError(error)) {
-    return {
-      kind: "forbidden",
-      code: (error as ForbiddenError).code,
-      message: error.message,
-    };
-  }
-  if (isSystemError(error)) {
-    return {
-      kind: "system",
-      code: (error as SystemError).code,
-      message: error.message,
-    };
-  }
-
   return {
     kind: "unknown",
     code: null,
@@ -142,6 +78,16 @@ export class AppServerError extends Error {
       writable: false,
       configurable: false,
     });
+  }
+
+  /**
+   * Pass-through to the carried envelope. Lets `AppServerError` participate
+   * in the same structural `SerializableError` contract as domain /
+   * application errors so callers can route everything through
+   * {@link serializeError} without a special case.
+   */
+  toSerialized(): SerializedError {
+    return this.serialized;
   }
 }
 
