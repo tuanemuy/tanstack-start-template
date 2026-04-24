@@ -1,5 +1,11 @@
 import { sql } from "drizzle-orm";
-import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import {
+  index,
+  integer,
+  sqliteTable,
+  text,
+  uniqueIndex,
+} from "drizzle-orm/sqlite-core";
 
 /**
  * todos - Todo table
@@ -47,6 +53,7 @@ export const outboxEvents = sqliteTable(
   "outbox_events",
   {
     id: text("id").primaryKey(),
+    sequence: integer("sequence").notNull().default(0),
     eventType: text("event_type").notNull(),
     schemaVersion: integer("schema_version").notNull().default(1),
     payload: text("payload", { mode: "json" }).notNull(),
@@ -60,7 +67,22 @@ export const outboxEvents = sqliteTable(
   },
   (table) => [
     index("idx_outbox_pending")
-      .on(table.occurredAt)
+      .on(table.sequence)
       .where(sql`processed_at IS NULL`),
+    uniqueIndex("idx_outbox_sequence").on(table.sequence),
   ],
 );
+
+/**
+ * Single-row sequence allocator for outbox insertion order.
+ *
+ * Domain event timestamps are not a safe ordering key: several events can be
+ * emitted in the same millisecond, and a single transaction may emit multiple
+ * events whose relative order matters. The writer increments this row inside
+ * the same transaction before inserting outbox rows, then stamps each row with
+ * a contiguous sequence number.
+ */
+export const outboxSequence = sqliteTable("outbox_sequence", {
+  id: integer("id").primaryKey(),
+  nextValue: integer("next_value").notNull(),
+});

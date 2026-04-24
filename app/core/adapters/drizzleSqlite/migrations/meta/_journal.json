@@ -15,6 +15,13 @@
       "when": 1776868443687,
       "tag": "0001_clumsy_molten_man",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1776979200000,
+      "tag": "0002_ordered_outbox_sequence",
+      "breakpoints": true
     }
   ]
 }

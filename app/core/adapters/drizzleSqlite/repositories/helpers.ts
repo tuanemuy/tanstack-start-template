@@ -1,4 +1,4 @@
-import { SystemError, SystemErrorCode } from "@/core/application/error";
+import { SystemError, SystemErrorCode } from "@/core/application/errors";
 
 /**
  * Wrap a database operation so that any thrown value surfaces as a

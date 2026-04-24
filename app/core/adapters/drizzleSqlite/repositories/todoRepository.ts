@@ -4,7 +4,7 @@ import {
   ConflictErrorCode,
   SystemError,
   SystemErrorCode,
-} from "@/core/application/error";
+} from "@/core/application/errors";
 import type {
   Pagination,
   PaginationResult,
