@@ -380,34 +380,53 @@ state を変える操作は `createServerFn({ method: "POST" })` に集約し、
 ### server function 側の Zod スコープ
 
 `.inputValidator(...)` の Zod schema は **wire 型チェック**。「transport が
-渡してきた JSON がハンドラの想定シグネチャと噛み合うか」を確認しつつ、
-**ドメインが公開している zod schema があればそれをそのまま再利用** する。
+渡してきた JSON がハンドラの想定シグネチャと噛み合うか」を確認する。
 
-文字数・範囲・フォーマットといった業務制約のソース・オブ・トゥルースは
-ドメイン層 (`TodoTitle.schema` / `TodoId.create` …)。wire 側で同じ制約を
-ハードコードすると必ずドリフトするので、ドメインが `schema` プロパティを
-公開しているケースでは `z.object({ title: TodoTitle.schema })` のように
-**そのまま** 流用する。schema 出力型は plain string のままにしておき、
-brand を付けるのは `TodoTitle.create` を経由する経路だけに限定する（wire
-ペイロードに brand を載せて越境させない）。
+**ドメインが公開している schema を流用しない**。`actions.ts` は
+`createServerFn` の宣言を含むが、`inputValidator` は TanStack Start の
+仕様で client/server の両方で走るため、ファイルとそこから static import
+される全モジュールが client バンドルに乗る。ここでドメインの
+`TodoTitle.schema` を import すると、`BusinessRuleError` クラス・UUIDv7
+ジェネレータ・transitive な domain 依存まで道連れでブラウザに送り込まれ、
+クリーンアーキテクチャの依存方向（presentation → domain への直接結合）
+も崩れる。
 
-zod の `safeParse` 失敗を `ValidationError` に畳んで投げる薄いヘルパーを
-被せておくと、wire レベルの失敗もユースケース内部で投げる `ValidationError`
-も client から見ると同じ envelope（`{ kind: "validation", fieldErrors }`）
-として届く。`useServerAction` の `lastError.fieldErrors` で 1 経路で扱える。
+→ wire 用スキーマは `app/components/todo/wireSchemas.ts` のように
+**presentation 内に独立** して定義する。ドメイン層は最終ゲートとして
+`TodoTitle.create` 等のファクトリを内部で再検証するので、wire と domain
+の間のドリフトは許容（最悪 domain が `BusinessRuleError` で落とす）。
+wire は transport 層の DoS ガードや UX 用の事前検証に集中し、業務制約の
+正典はドメインのファクトリのまま据え置く。
+
+zod の `safeParse` 失敗を `ValidationError` の wire envelope に畳んで
+投げる薄いヘルパー (`wireValidator`) を被せておくと、wire レベルの失敗も
+ユースケース内部で投げる `ValidationError` も client から見ると同じ
+envelope（`{ kind: "validation", fieldErrors }`）として届く。
+`useServerAction` の `lastError.fieldErrors` で 1 経路で扱える。
+
+```typescript
+// app/components/todo/wireSchemas.ts
+import { z } from "zod";
+
+// ドメインから独立。client バンドルに乗ってもよい純粋な Zod 定義のみ。
+export const TODO_TITLE_WIRE_MAX_LENGTH = 140;
+
+export const createTodoWireSchema = z.object({
+  title: z.string().trim().min(1).max(TODO_TITLE_WIRE_MAX_LENGTH),
+});
+```
 
 ```typescript
 // app/components/todo/actions.ts
-
 import { createServerFn } from "@tanstack/react-start";
-import { type ZodType, z } from "zod";
+import type { ZodType, z } from "zod";
 import {
   ValidationError,
   ValidationErrorCode,
   zodIssuesToFieldErrors,
 } from "@/core/application/errors";
-import { TodoTitle } from "@/core/domain/todo/valueObject";
 import { AppServerError } from "@/core/presentation/errorResponse";
+import { createTodoWireSchema } from "./wireSchemas";
 
 // 失敗時に ValidationError と同じ wire envelope を生成するラッパ。
 // validator は handler の前に走るので withErrorResponse には頼れない →
@@ -427,21 +446,13 @@ function wireValidator<TSchema extends ZodType>(schema: TSchema) {
 }
 
 export const createTodoFn = createServerFn({ method: "POST" })
-  .inputValidator(
-    wireValidator(
-      z.object({
-        // ドメインの schema をそのまま再利用。trim / min(1) / max(140) は
-        // すべて TodoTitle.schema の責務で、wire 側に複製しない。
-        title: TodoTitle.schema,
-      }),
-    ),
-  )
+  .inputValidator(wireValidator(createTodoWireSchema))
   .handler(({ data }) => createTodoHandler(data));
 ```
 
 `TodoId` のように「validation が UUIDv7 形式チェックだけ」のようなケースは
 wire 側で `z.string().min(1)` だけにとどめ、本格的な検証はユースケース内の
-`TodoId.create` に委ねる（重複定義しない）。
+`TodoId.create` に委ねる。
 
 ### useServerAction で呼ぶ
 
@@ -456,10 +467,10 @@ invalidation + transition + エラー kind 分岐 + オートリトライ** を�
 
 import { useServerFn } from "@tanstack/react-start";
 import { type SubmitEvent, useState } from "react";
-import { TodoTitle } from "@/core/domain/todo/valueObject";
 import { displayError } from "@/core/presentation/errorDisplay";
 import { useServerAction } from "@/core/presentation/useServerAction";
 import { createTodoFn } from "./actions";
+import { TODO_TITLE_WIRE_MAX_LENGTH } from "./wireSchemas";
 
 export function CreateTodoForm() {
   const [title, setTitle] = useState("");
@@ -501,7 +512,7 @@ export function CreateTodoForm() {
             if (lastError) clearLastError();
           }}
           disabled={isPending}
-          maxLength={TodoTitle.maxLength}
+          maxLength={TODO_TITLE_WIRE_MAX_LENGTH}
           required
           aria-invalid={titleFieldErrors !== undefined}
         />

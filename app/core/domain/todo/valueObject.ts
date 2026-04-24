@@ -56,14 +56,15 @@ export const TodoId = {
 export type TodoTitle = string & { readonly [todoTitleBrand]: true };
 
 /**
- * Reusable Zod schema for a todo title.
+ * Internal Zod schema. Deliberately not exported.
  *
- * Exposed on `TodoTitle.schema` so that server-function validators (Conform,
- * form schemas, etc.) can share the exact same rules as the domain factory
- * without duplicating the `trim / min(1) / max(140)` truth. Schema output is
- * plain `string`; branding to `TodoTitle` happens only through the
- * `TodoTitle.create` factory so there is a single source of truth for the
- * nominal brand.
+ * Wire-level validators must define their own schemas (see
+ * `app/components/todo/wireSchemas.ts`) so that frontend code never has
+ * to import this module — that import would drag the domain factory,
+ * `BusinessRuleError`, the UUIDv7 generator, and every transitive
+ * domain dependency into the client bundle. Drift between wire and
+ * domain rules is acceptable: the domain factory below is the
+ * authoritative final gate.
  */
 const todoTitleSchema = z.string().trim().min(1).max(TODO_TITLE_MAX_LENGTH);
 
@@ -85,8 +86,6 @@ function mapTitleIssueToErrorCode(
 }
 
 export const TodoTitle = {
-  schema: todoTitleSchema,
-  maxLength: TODO_TITLE_MAX_LENGTH,
   create: (raw: string): TodoTitle => {
     const result = todoTitleSchema.safeParse(raw);
     if (result.success) {

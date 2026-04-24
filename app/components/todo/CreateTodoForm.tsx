@@ -2,10 +2,10 @@
 
 import { useServerFn } from "@tanstack/react-start";
 import { type SubmitEvent, useState } from "react";
-import { TodoTitle } from "@/core/domain/todo/valueObject";
 import { displayError } from "@/core/presentation/errorDisplay";
 import { useServerAction } from "@/core/presentation/useServerAction";
 import { createTodoFn } from "./actions";
+import { TODO_TITLE_WIRE_MAX_LENGTH } from "./wireSchemas";
 
 export function CreateTodoForm() {
   const [title, setTitle] = useState("");
@@ -48,7 +48,7 @@ export function CreateTodoForm() {
             if (lastError) clearLastError();
           }}
           disabled={isPending}
-          maxLength={TodoTitle.maxLength}
+          maxLength={TODO_TITLE_WIRE_MAX_LENGTH}
           required
           aria-invalid={titleFieldErrors !== undefined}
         />

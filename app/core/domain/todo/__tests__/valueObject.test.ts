@@ -53,19 +53,6 @@ describe("TodoTitle", () => {
     expect(title as unknown as string).toBe("hello");
     expect((title as unknown as string).length).toBe(5);
   });
-
-  it("exposes maxLength as 140", () => {
-    expect(TodoTitle.maxLength).toBe(140);
-  });
-
-  it("exposes a Zod schema that parses a valid title", () => {
-    expect(TodoTitle.schema).toBeDefined();
-    const result = TodoTitle.schema.safeParse("hello");
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data as unknown as string).toBe("hello");
-    }
-  });
 });
 
 describe("TodoId", () => {
