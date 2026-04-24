@@ -35,19 +35,28 @@ URL に 1:1 で紐づくフラグメント。ルーターキャッシュが所�
 import { createFileRoute } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { renderServerComponent } from "@tanstack/react-start/rsc";
-import { TodoList } from "@/components/todo/TodoList";
+import { sanitizeRouteError } from "@/core/presentation/errorDisplay";
 
-const renderTodoList = createServerFn({ method: "GET" }).handler(async () => {
-  const Rendered = await renderServerComponent(<TodoList />);
-  return { Rendered };
-});
-
-export const Route = createFileRoute("/")({
-  loader: async () => {
-    const { Rendered } = await renderTodoList();
+const loadTodoListRouteData = createServerFn({ method: "GET" }).handler(
+  async () => {
+    const { TodoList } = await import("@/components/todo/TodoList");
+    const Rendered = await renderServerComponent(<TodoList />);
     return { TodoList: Rendered };
   },
+);
+
+export const Route = createFileRoute("/")({
+  // staleTime: 0 なら毎回 loader を回し直して最新 RSC を取る。TodoList が
+  // 内部で `cache()` しているので同一ナビゲーション内の重複 fetch はない。
+  staleTime: 0,
+  loader: () => loadTodoListRouteData(),
   component: HomePage,
+  errorComponent: ({ error }) => (
+    <div role="alert">
+      <h1>エラーが発生しました</h1>
+      <pre>{sanitizeRouteError(error)}</pre>
+    </div>
+  ),
 });
 
 function HomePage() {
@@ -55,6 +64,10 @@ function HomePage() {
   return <>{TodoList}</>;
 }
 ```
+
+route ファイルは client graph にも入るため、server-only な DI や server
+component を静的 import しない。`createServerFn` / `.server.ts` 側へ閉じ込め、
+loader はその bridge を呼ぶだけにする。
 
 **選ぶ目安**: 一覧・詳細ページなど URL パラメータで一意に決まるフラグメント。
 
@@ -147,6 +160,11 @@ export function LoadMoreButton({ userId }: { userId: string }) {
 
 ### 4. Composite Component (クライアント slot 埋め込み)
 
+> **現状**: このテンプレートでは採用していない。Todo の UI は loader +
+> 通常の `"use client"` コンポーネントで完結するため不要。将来サーバー描画
+> マークアップの中にクライアント interactivity を差し込む必要が出たときの
+> 参考パターンとして残している。
+
 サーバー描画マークアップの中にクライアント interactivity を差し込みたい場合に
 使う。`children`、render prop、component prop の 3 種類の slot が使える。
 
@@ -213,16 +231,20 @@ import { getRequestHeaders } from "@tanstack/react-start/server";
 
 import { getContainer } from "@/core/application/di/server";
 import { getPost } from "@/core/application/post/getPost";
-import { isNotFoundError, isUnauthenticatedError } from "@/core/application/error";
+import { isNotFoundError, isUnauthenticatedError } from "@/core/application/errors";
 import { RelatedPosts } from "./RelatedPosts";
 
-// 同一リクエスト内で同じ postId を呼んでも 1 回だけフェッチする
+// 同一リクエスト内で同じ postId を呼んでも 1 回だけフェッチする。
+// `cache()` は引数でキャッシュキーを作るので、`loadPost("a")` と
+// `loadPost("b")` は別キャッシュとして独立して評価される。異なる引数で
+// 呼ぶほど dedupe は効かず、引数を全く取らない関数でも `cache(() => ...)`
+// してから関数参照経由で呼ばないと dedupe されない点に注意。
 const loadPost = cache(async (postId: string) => {
   const headers = getRequestHeaders();
 
   try {
     return await getPost({
-      container: getContainer(),
+      container: await getContainer(),
       headers,
       input: { postId },
     });
@@ -253,9 +275,13 @@ export async function PostDetail({ postId }: { postId: string }) {
 
 - サーバーコンポーネント内で `await` しているので、loader でデータを揃える必要はない。
 - 認証・存在チェック後の例外マッピングは `try/catch` + `throw redirect/notFound` で十分。
-- 同一リクエスト内の重複呼び出しは `cache()` でメモ化する。
+- **`cache()` の dedupe スコープは同一リクエスト + 同一引数**。`loadPost(id)` を
+  同一 RSC ツリー内で複数回呼んでも実行は 1 回、異なる `id` は別キャッシュで独立評価。
+  引数を取らない loader は `cache(async () => ...)` で包んだうえで **同じ関数参照**
+  経由で呼ぶ（例: `app/components/todo/TodoList.tsx` の `loadTodos()`）。
 - DI コンテナは `@/core/application/di/server` の `getContainer()` を呼ぶ。ファイル冒頭に
   `import "@tanstack/react-start/server-only";` を入れてクライアント混入を防ぐ。
+- `getContainer()` は `Promise<Container>` を返すので `await` が必要。
 
 ---
 
@@ -272,14 +298,17 @@ import { createServerFn } from "@tanstack/react-start";
 import { renderServerComponent } from "@tanstack/react-start/rsc";
 import { z } from "zod";
 
-import { PostDetail, getPostTitle } from "@/components/post/PostDetail";
-
 const renderPostDetail = createServerFn({ method: "GET" })
   .inputValidator(z.object({ postId: z.string() }))
-  .handler(async ({ data }) => ({
-    Detail: await renderServerComponent(<PostDetail postId={data.postId} />),
-    title: await getPostTitle(data.postId),
-  }));
+  .handler(async ({ data }) => {
+    const { PostDetail, getPostTitle } = await import(
+      "@/components/post/PostDetail"
+    );
+    return {
+      Detail: await renderServerComponent(<PostDetail postId={data.postId} />),
+      title: await getPostTitle(data.postId),
+    };
+  });
 
 export const Route = createFileRoute("/posts/$postId")({
   staleTime: 10_000,
@@ -299,7 +328,8 @@ function PostPage() {
 
 ### ポイント
 
-- loader は `renderServerComponent(<RSC />)` を呼ぶだけ。データフェッチはサーバーコンポーネント側。
+- loader は server function bridge を呼ぶだけ。`renderServerComponent(<RSC />)` と
+  server-only import は bridge の handler 側に閉じ込める。
 - ナビゲーション後も `staleTime` が効くため、同じ URL に戻ったときにキャッシュを再利用できる。
 - 強制再取得したいときはクライアント側で `useRouter().invalidate()`。
 - 入力バリデーションは `.inputValidator(...)`。**旧 API の `.validator(...)` は使わない。**
@@ -324,7 +354,8 @@ import { getContainer } from "@/core/application/di/server";
 import type { User } from "@/core/domain/user/entity";
 
 export const getCurrentUser = cache(async (): Promise<User | null> => {
-  return getContainer().authProvider.getCurrentUser(getRequestHeaders());
+  const container = await getContainer();
+  return container.authProvider.getCurrentUser(getRequestHeaders());
 });
 
 export async function requireCurrentUser(): Promise<User> {
@@ -342,67 +373,169 @@ RSC との相性が良い。
 
 ## Server Function (mutation)
 
-state を変える操作は `createServerFn({ method: "POST" })` に集約し、
-クライアントからは `useServerFn(fn)` 経由で呼ぶ。
+state を変える操作は `createServerFn({ method: "POST" })` に集約し、例外は
+`withErrorResponse(fn)` で `AppServerError` にラップしてクライアントまで
+届ける。クライアントは `useServerFn(fn)` と `useServerAction` を組み合わせる。
+
+### server function 側の Zod スコープ
+
+`.inputValidator(...)` の Zod schema は **wire 型チェック**。「transport が
+渡してきた JSON がハンドラの想定シグネチャと噛み合うか」を確認しつつ、
+**ドメインが公開している zod schema があればそれをそのまま再利用** する。
+
+文字数・範囲・フォーマットといった業務制約のソース・オブ・トゥルースは
+ドメイン層 (`TodoTitle.schema` / `TodoId.create` …)。wire 側で同じ制約を
+ハードコードすると必ずドリフトするので、ドメインが `schema` プロパティを
+公開しているケースでは `z.object({ title: TodoTitle.schema })` のように
+**そのまま** 流用する。schema 出力型は plain string のままにしておき、
+brand を付けるのは `TodoTitle.create` を経由する経路だけに限定する（wire
+ペイロードに brand を載せて越境させない）。
+
+zod の `safeParse` 失敗を `ValidationError` に畳んで投げる薄いヘルパーを
+被せておくと、wire レベルの失敗もユースケース内部で投げる `ValidationError`
+も client から見ると同じ envelope（`{ kind: "validation", fieldErrors }`）
+として届く。`useServerAction` の `lastError.fieldErrors` で 1 経路で扱える。
 
 ```typescript
 // app/components/todo/actions.ts
 
 import { createServerFn } from "@tanstack/react-start";
-import { getRequestHeaders } from "@tanstack/react-start/server";
-import { z } from "zod";
+import { type ZodType, z } from "zod";
+import {
+  ValidationError,
+  ValidationErrorCode,
+  zodIssuesToFieldErrors,
+} from "@/core/application/errors";
+import { TodoTitle } from "@/core/domain/todo/valueObject";
+import { AppServerError } from "@/core/presentation/errorResponse";
 
-import { getContainer } from "@/core/application/di/server";
-import { createTodo } from "@/core/application/todo/createTodo";
+// 失敗時に ValidationError と同じ wire envelope を生成するラッパ。
+// validator は handler の前に走るので withErrorResponse には頼れない →
+// 直接 AppServerError を投げる。
+function wireValidator<TSchema extends ZodType>(schema: TSchema) {
+  return (input: unknown): z.infer<TSchema> => {
+    const parsed = schema.safeParse(input);
+    if (parsed.success) return parsed.data as z.infer<TSchema>;
+    const error = new ValidationError(
+      ValidationErrorCode.InvalidInput,
+      "Invalid input",
+      parsed.error,
+      zodIssuesToFieldErrors(parsed.error.issues),
+    );
+    throw new AppServerError(error.toSerialized());
+  };
+}
 
 export const createTodoFn = createServerFn({ method: "POST" })
-  .inputValidator(z.object({ title: z.string().min(1).max(140) }))
-  .handler(({ data }) =>
-    createTodo({
-      container: getContainer(),
-      input: data,
-    }),
-  );
+  .inputValidator(
+    wireValidator(
+      z.object({
+        // ドメインの schema をそのまま再利用。trim / min(1) / max(140) は
+        // すべて TodoTitle.schema の責務で、wire 側に複製しない。
+        title: TodoTitle.schema,
+      }),
+    ),
+  )
+  .handler(({ data }) => createTodoHandler(data));
 ```
+
+`TodoId` のように「validation が UUIDv7 形式チェックだけ」のようなケースは
+wire 側で `z.string().min(1)` だけにとどめ、本格的な検証はユースケース内の
+`TodoId.create` に委ねる（重複定義しない）。
+
+### useServerAction で呼ぶ
+
+`useServerAction(fn, options)` は server function 呼び出しに **router
+invalidation + transition + エラー kind 分岐 + オートリトライ** を一枚で
+被せるフック。戻り値の `lastError: SerializedError | null` を使うと、
+`validation` エラーの `fieldErrors` をそのまま UI に流し込める。
 
 ```tsx
 // app/components/todo/CreateTodoForm.tsx
 "use client";
 
-import { useRouter } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import { type SubmitEvent, useState, useTransition } from "react";
+import { type SubmitEvent, useState } from "react";
+import { TodoTitle } from "@/core/domain/todo/valueObject";
+import { displayError } from "@/core/presentation/errorDisplay";
+import { useServerAction } from "@/core/presentation/useServerAction";
 import { createTodoFn } from "./actions";
 
 export function CreateTodoForm() {
-  const router = useRouter();
-  const createTodo = useServerFn(createTodoFn);
   const [title, setTitle] = useState("");
-  const [isPending, startTransition] = useTransition();
+
+  const { run, isPending, lastError, clearLastError } = useServerAction(
+    useServerFn(createTodoFn),
+    {
+      // invalidate: "all"（デフォルト）なので onSuccess 後に router.invalidate()
+      // が走る。部分 invalidate したいときは `() => router.invalidate({ filter })`。
+      onSuccess: () => setTitle(""),
+    },
+  );
 
   const onSubmit = (event: SubmitEvent<HTMLFormElement>) => {
     event.preventDefault();
-    startTransition(async () => {
-      await createTodo({ data: { title: title.trim() } });
-      setTitle("");
-      await router.invalidate();
-    });
+    const value = title.trim();
+    if (!value) return;
+    run({ data: { title: value } });
   };
+
+  // ValidationError.fieldErrors があれば field 単位で、それ以外は
+  // displayError で集約メッセージを表示する。
+  const titleFieldErrors =
+    lastError?.kind === "validation" ? lastError.fieldErrors?.title : undefined;
+  const summary =
+    lastError !== null && titleFieldErrors === undefined
+      ? displayError(lastError)
+      : null;
 
   return (
     <form onSubmit={onSubmit}>
-      <input
-        type="text"
-        value={title}
-        onChange={(event) => setTitle(event.target.value)}
-        disabled={isPending}
-        maxLength={140}
-        required
-      />
-      <button type="submit" disabled={isPending}>追加</button>
+      <label>
+        タイトル
+        <input
+          type="text"
+          value={title}
+          onChange={(event) => {
+            setTitle(event.target.value);
+            if (lastError) clearLastError();
+          }}
+          disabled={isPending}
+          maxLength={TodoTitle.maxLength}
+          required
+          aria-invalid={titleFieldErrors !== undefined}
+        />
+      </label>
+      {titleFieldErrors?.[0] ? (
+        <p role="alert">{titleFieldErrors[0]}</p>
+      ) : null}
+      <button type="submit" disabled={isPending || title.trim().length === 0}>
+        {isPending ? "作成中..." : "追加"}
+      </button>
+      {summary ? <p role="alert">{summary}</p> : null}
     </form>
   );
 }
+```
+
+### オートリトライ（retryable 系エラー）
+
+`useServerAction` の `autoRetry` は `SerializedError.retryable === true`
+のときだけ発動する。これは network / external API のように transport 境界で
+再実行しても意味が変わらない失敗向け。`ConflictError` はデフォルトでは
+retryable ではない。OCC conflict の安全な再試行可否はコマンド次第なので、
+`changeTodoStatus({ id, status })` のような冪等 usecase が内部で再読込して
+処理する。
+
+```tsx
+const changeStatus = useServerAction(useServerFn(changeTodoStatusFn), {
+  onError: {
+    notFound: () => setErrorMessage("このTodoは既に削除されています"),
+    default: (error) => setErrorMessage(displayError(error)),
+  },
+  // OCC conflict は usecase 側で安全に扱う。UI は「反転」ではなく
+  // 「この状態にしたい」という status 値を送る。
+});
 ```
 
 ### ポイント
@@ -410,9 +543,15 @@ export function CreateTodoForm() {
 - `useServerFn(fn)` は `isRedirect` を自動検知して router.navigate に変換する。
   usecase 側で `throw redirect({ to: "/login" })` した場合に client の try/catch
   でフォールスルーせずに済む。
-- 完了後 `router.invalidate()` で loader データを再取得する。
-- バリデーションエラーやドメインエラーを **フィールド単位で** UI に返したい場合は
-  Conform + `parseWithZod` で onSubmit 側に寄せる。
+- `invalidate` は `"all"` / `"none"` / `() => void | Promise<void>` の 3 択。
+  デフォルトは `"all"` なので全 loader が refetch される。
+- `lastError` / `clearLastError` で UI 側のエラー state を hook が管理するため、
+  フォームコンポーネント内に `useState<string | null>` を用意しなくて済む。
+- `fieldErrors` を **フィールド単位で** 表示したい場合は `lastError?.kind === "validation"`
+  を分岐するだけ。Conform + `parseWithZod` を別途導入しなくてもこの形で足りる。
+  wire validation 失敗（`wireValidator(...)` が `AppServerError` を投げたケース）と
+  ユースケース内で投げた `ValidationError` は **同じ envelope** で届くので、
+  client 側の表示コードは「どの層で失敗したか」を意識しなくてよい。
 
 ---
 
@@ -501,47 +640,53 @@ function NewPostPage() {
 コンポーネント内で `throw` した例外はここにバブルアップする。
 
 ```tsx
-export const Route = createFileRoute("/posts/$postId")({
-  loader: ({ params }) => renderPostDetail({ data: { postId: params.postId } }),
-  component: PostPage,
-  errorComponent: ({ error }) => <ErrorView error={error} />,
-  notFoundComponent: () => <NotFoundView />,
+// app/routes/index.tsx
+export const Route = createFileRoute("/")({
+  loader: async () => { /* ... */ },
+  component: HomePage,
+  // 子ルートで catch されなかった例外は __root.tsx の errorComponent に
+  // バブルアップする。子側で定義された errorComponent があればそこで止まる。
+  errorComponent: ({ error }) => (
+    <div role="alert">
+      <h1>エラーが発生しました</h1>
+      <pre>{sanitizeRouteError(error)}</pre>
+    </div>
+  ),
 });
 ```
 
-サイト全体の最終フォールバックは `app/routes/__root.tsx` の `errorComponent` /
-`notFoundComponent` で受ける。
+サイト全体の最終フォールバックは `app/routes/__root.tsx` の `errorComponent`
+/ `notFoundComponent`。階層関係は以下：
+
+```
+例外発生源（loader / server component / server function）
+    ↓ throw
+マッチした子ルート .errorComponent  ←  ここで定義していれば止まる
+    ↓ 未定義なら bubble up
+__root.tsx .errorComponent          ←  最終フォールバック（sanitizeRouteError）
+```
+
+`redirect()` / `notFound()` は errorComponent ではなく router 自身が捕捉し、
+それぞれナビゲーション / `notFoundComponent` に振り分ける。
 
 ### Server Function の例外を構造化して伝搬する
 
 `createServerFn` の `handler` が throw した例外はクライアントまで届くが、
 `Error` のままだと `cause` チェーンや stack trace がシリアライズの過程で壊れ、
-`kind` による分岐ができない。そこで application 層で
+`kind` による分岐ができない。そこで presentation 層で
 
-- `AppServerError` — 伝搬専用の例外クラス
-- `serializeError(error)` — Business / NotFound / Validation 等を `SerializedError`（`{ kind, code, message }`）に畳み込む
-- `extractSerializedError(error)` — クライアント側で `SerializedError` を取り出す
-- `withErrorResponse(fn)` — handler をラップして上記を適用
+- `AppServerError` — 伝搬専用の例外クラス（`serialized` を enumerable own property に持ち、JSON 往復後も生き残る）
+- `serializeError(error)` — Business / NotFound / Validation 等を `SerializedError`（`{ kind, code, message, retryable?, fieldErrors? }`）に畳み込む
+- `extractSerializedError(error)` — クライアント側で `SerializedError` を取り出す（`AppServerError` でも、plain object 化された残骸でも動く）
+- `withErrorResponse(fn)` — handler をラップして上記を適用。TanStack Router の `redirect()` / `notFound()` センチネルはそのまま rethrow
 
-を用意している。server function 側:
+を用意している（`app/core/presentation/errorResponse.ts`）。
 
-```typescript
-// app/components/todo/actions.ts
-import { withErrorResponse } from "@/core/application/errorResponse";
-
-export const createTodoFn = createServerFn({ method: "POST" })
-  .inputValidator(z.object({ title: z.string().min(1).max(140) }))
-  .handler(({ data }) =>
-    withErrorResponse(() =>
-      createTodo({ container: getContainer(), input: data }),
-    ),
-  );
-```
-
-クライアント側で kind に応じて UI を分岐する:
+`useServerAction` を通さず生で `await` したい場合は `extractSerializedError`
+で kind に分岐する：
 
 ```tsx
-import { extractSerializedError } from "@/core/application/errorResponse";
+import { extractSerializedError } from "@/core/presentation/errorResponse";
 
 try {
   await deleteTodo({ data: { id } });
@@ -552,6 +697,10 @@ try {
 }
 ```
 
+`displayError` / `sanitizeRouteError` は `Record<SerializedErrorKind, handler>`
+型のテーブルでディスパッチしているので、`SerializedError.kind` に新しい variant
+を足すとコンパイルエラーになる。網羅性を型で担保するのが狙い。
+
 ---
 
 ## まとめ: 現行 `@tanstack/react-start` の必須事項
@@ -560,8 +709,9 @@ try {
   `rsc()` (`@vitejs/plugin-rsc`) + `viteReact()` の 3 枚構成
 - server function バリデーション: **`.inputValidator(...)`**（`.validator(...)` は旧 API）
 - RSC 高レベル API: `renderServerComponent` / `createCompositeComponent` / `CompositeComponent`
-- server-only 境界: `import "@tanstack/react-start/server-only";` を DI コンテナや
-  サーバーヘルパーの先頭に置く
+- server-only 境界: `import "@tanstack/react-start/server-only";` は DI コンテナや
+  サーバーヘルパーの先頭に置く。client component が import する server function
+  定義ファイルには置かず、handler 内の dynamic import で server-only 側へ入る
 - クライアントからの server function 呼び出し: **`useServerFn(fn)` でラップ**
   (redirect の自動ハンドル付き)
 - RSC 値を Query に入れるときは `structuralSharing: false` 必須
