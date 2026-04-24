@@ -11,6 +11,19 @@ const UUID_V7_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 /**
+ * Private nominal brand markers.
+ *
+ * `unique symbol` + `declare const` gives each brand a nominal identity that
+ * cannot be reproduced by normal structural assignment from another module.
+ * This makes the factory in this file the only legitimate construction path.
+ *
+ * TypeScript assertions (`value as TodoId`) can still bypass the checker, so
+ * boundaries that read untrusted data must always re-run the factory.
+ */
+declare const todoIdBrand: unique symbol;
+declare const todoTitleBrand: unique symbol;
+
+/**
  * Branded identifier for the `Todo` aggregate.
  *
  * Intentionally strict: we only accept UUIDv7 strings. Aggregate ids are
@@ -19,7 +32,7 @@ const UUID_V7_PATTERN =
  * a programming error. Rejecting up front prevents malformed ids from
  * leaking through the system.
  */
-export type TodoId = string & { readonly brand: "TodoId" };
+export type TodoId = string & { readonly [todoIdBrand]: true };
 
 export const TodoId = {
   create: (id: string): TodoId => {
@@ -28,10 +41,19 @@ export const TodoId = {
     }
     return id as TodoId;
   },
+  /**
+   * Server-side UUIDv7 generation for the aggregate id.
+   *
+   * Ids are minted by the domain (never by client input) so callers can rely
+   * on monotonic time-ordered uniqueness without introducing an id-generation
+   * port. If a future deployment wants deterministic ids for tests or custom
+   * ordering, route it through a wrapper rather than replacing this with a
+   * Port abstraction — keeping generation inline is deliberate YAGNI.
+   */
   generate: (): TodoId => uuidv7() as TodoId,
 };
 
-export type TodoTitle = string & { readonly brand: "TodoTitle" };
+export type TodoTitle = string & { readonly [todoTitleBrand]: true };
 
 /**
  * Reusable Zod schema for a todo title.
@@ -45,6 +67,23 @@ export type TodoTitle = string & { readonly brand: "TodoTitle" };
  */
 const todoTitleSchema = z.string().trim().min(1).max(TODO_TITLE_MAX_LENGTH);
 
+/**
+ * Localize Zod's issue-shape dependency. The classic `ZodIssue` type alias
+ * is `@deprecated` in Zod v4 (the canonical replacement is `z.core.$ZodIssue`,
+ * a `$`-prefixed internal API), so we describe only the structural slice we
+ * actually read. A future major release that renames issue codes touches just
+ * this helper — every call site keeps working.
+ */
+function mapTitleIssueToErrorCode(
+  issue: { readonly code?: string } | undefined,
+): TodoErrorCode {
+  if (issue?.code === "too_big") return TodoErrorCode.TitleTooLong;
+  // Zod emits `too_small` when the trimmed value is shorter than `min(1)`
+  // and `invalid_type` for non-string inputs. Both surface to the user as
+  // an empty title, so they collapse to the same code.
+  return TodoErrorCode.TitleEmpty;
+}
+
 export const TodoTitle = {
   schema: todoTitleSchema,
   maxLength: TODO_TITLE_MAX_LENGTH,
@@ -53,15 +92,7 @@ export const TodoTitle = {
     if (result.success) {
       return result.data as TodoTitle;
     }
-    // Map zod's first issue to the matching domain error code. Zod emits
-    // `too_small` when the trimmed value is shorter than `min(1)` and
-    // `too_big` when it exceeds `max(140)`; any other failure (e.g. a
-    // non-string input) falls through to the generic `TitleEmpty` code.
-    const issue = result.error.issues[0];
-    const code =
-      issue?.code === "too_big"
-        ? TodoErrorCode.TitleTooLong
-        : TodoErrorCode.TitleEmpty;
+    const code = mapTitleIssueToErrorCode(result.error.issues[0]);
     const message =
       code === TodoErrorCode.TitleTooLong
         ? `Todo title exceeds maximum length (${TODO_TITLE_MAX_LENGTH})`
