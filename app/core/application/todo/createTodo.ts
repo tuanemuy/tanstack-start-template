@@ -14,9 +14,14 @@ export async function createTodo({
   container,
   input,
 }: ServiceArgs<CreateTodoInput>): Promise<CreateTodoOutput> {
-  const { entity: todo, events } = Todo.create({ title: input.title });
+  // Resolve "now" once at the entry point and pass the resulting `Date`
+  // into every domain operation that needs a timestamp. The domain layer
+  // never touches the `Clock` port directly — it stays pure, taking a
+  // `Date` value as input.
+  const now = container.clock.now();
+  const { entity: todo, events } = Todo.create({ title: input.title }, now);
 
-  await container.unitOfWorkProvider.run(
+  await container.unitOfWorkProvider.runReadWrite(
     async ({ todoRepository, collectEvents }) => {
       await todoRepository.save(todo);
       collectEvents(events);

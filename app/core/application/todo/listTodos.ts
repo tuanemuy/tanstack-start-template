@@ -2,7 +2,11 @@ import {
   type Pagination,
   paginationSchema,
 } from "@/core/domain/common/pagination";
-import { ValidationError, ValidationErrorCode } from "../error";
+import {
+  ValidationError,
+  ValidationErrorCode,
+  zodIssuesToFieldErrors,
+} from "../errors";
 import type { ServiceArgs } from "../types";
 import { type TodoView, toTodoView } from "./dto";
 
@@ -26,9 +30,8 @@ export async function listTodos({
 }: ServiceArgs<ListTodosInput | undefined>): Promise<ListTodosOutput> {
   const pagination = parseInput(input);
 
-  const { items, count } = await container.unitOfWorkProvider.run(
+  const { items, count } = await container.unitOfWorkProvider.runReadonly(
     ({ todoRepository }) => todoRepository.findPage(pagination),
-    { mode: "readonly" },
   );
 
   return { todos: items.map(toTodoView), count };
@@ -38,7 +41,9 @@ export async function listTodos({
  * Validate the (optional) pagination input. Missing input falls back to the
  * default page; malformed input — e.g. `page: 0` or `limit: 500` — raises
  * `ValidationError(InvalidInput)` so the presentation layer can surface a
- * 400 rather than propagating a cryptic DB offset error.
+ * 400 rather than propagating a cryptic DB offset error. Zod issues are
+ * expanded into a `fieldErrors` map (keyed by dotted path) so the form UI
+ * can render the failure next to the offending field.
  */
 function parseInput(input: ListTodosInput | undefined): Pagination {
   if (input === undefined) return DEFAULT_PAGINATION;
@@ -48,6 +53,7 @@ function parseInput(input: ListTodosInput | undefined): Pagination {
       ValidationErrorCode.InvalidInput,
       "Invalid pagination input",
       parsed.error,
+      zodIssuesToFieldErrors(parsed.error.issues),
     );
   }
   return parsed.data;
