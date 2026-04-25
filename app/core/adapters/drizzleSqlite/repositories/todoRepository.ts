@@ -15,10 +15,7 @@ import type {
   CompletedTodo,
   Todo,
 } from "@/core/domain/todo/entity";
-import type {
-  TodoReader,
-  TodoRepository,
-} from "@/core/domain/todo/ports/todoRepository";
+import type { TodoRepository } from "@/core/domain/todo/ports/todoRepository";
 import { TodoId, TodoTitle } from "@/core/domain/todo/valueObject";
 import type { Executor } from "../client";
 import { todos } from "../schema";
@@ -30,14 +27,10 @@ type TodoRow = typeof todos.$inferSelect;
  * Convert a raw persisted row into a `Todo` aggregate.
  *
  * Runs every column through its value-object factory so invariants are
- * re-checked on read, and lifts the flat `completed` column into the
- * `active | completed` discriminated union.
- *
- * A `BusinessRuleError` from any VO factory here means the stored row
- * violates a domain invariant — that is infrastructural corruption, not a
- * user-recoverable rule violation, so it is re-thrown as
- * `SystemError(DatabaseError)` with the original error retained in the
- * `cause` chain.
+ * re-checked on read. A `BusinessRuleError` from a VO factory means the
+ * stored row violates a domain invariant — that is infrastructural
+ * corruption, not a user-recoverable rule violation, so it is re-thrown as
+ * `SystemError(DatabaseError)` with the original error in the cause chain.
  */
 function toTodo(row: TodoRow): Todo {
   try {
@@ -68,13 +61,26 @@ function toTodo(row: TodoRow): Todo {
 }
 
 /**
- * Read-only Drizzle implementation of `TodoReader`.
+ * Drizzle-backed `TodoRepository`.
  *
- * Instantiated by the unit of work when `{ mode: "readonly" }` is requested
- * so that callers cannot call write methods even at the type level.
+ * Persists the aggregate using optimistic concurrency control:
+ *
+ * - `version === 0` is a brand-new aggregate and issued as INSERT. A primary
+ *   key collision surfaces as `SystemError` (the "double-create" case is an
+ *   application bug, not a concurrent writer).
+ * - `version > 0` is an update guarded by `WHERE id = ? AND version = ? - 1`.
+ *   A zero-row update means another transaction wrote first and we raise
+ *   `ConflictError(OptimisticLockFailure)`.
+ *
+ * Delete is similarly guarded by `expectedVersion`: a concurrent writer that
+ * has already advanced the version causes the DELETE to match zero rows and
+ * surface as `ConflictError(OptimisticLockFailure)`.
+ *
+ * Upsert (`ON CONFLICT DO UPDATE`) is deliberately NOT used — it would hide
+ * lost updates by silently clobbering the stored version.
  */
-export class DrizzleSqliteTodoReader implements TodoReader {
-  constructor(protected readonly executor: Executor) {}
+export class DrizzleSqliteTodoRepository implements TodoRepository {
+  constructor(private readonly executor: Executor) {}
 
   findById(id: TodoId): Promise<Todo | null> {
     return mapDbError("Failed to find todo", async () => {
@@ -101,17 +107,12 @@ export class DrizzleSqliteTodoReader implements TodoReader {
   findPage(pagination: Pagination): Promise<PaginationResult<Todo>> {
     return mapDbError("Failed to page todos", async () => {
       const offset = (pagination.page - 1) * pagination.limit;
-      // Sequential awaits rather than Promise.all: SQLite serializes per
-      // connection anyway, and some libsql driver versions fault when two
-      // statements are issued concurrently on the same executor.
       const items = await this.executor
         .select()
         .from(todos)
         .orderBy(desc(todos.createdAt))
         .limit(pagination.limit)
         .offset(offset);
-      // If a filter is ever added to the list query above, the same WHERE
-      // must be applied here — otherwise `count` drifts from `items`.
       const countRows = await this.executor
         .select({ count: sql<number>`count(*)` })
         .from(todos);
@@ -121,34 +122,7 @@ export class DrizzleSqliteTodoReader implements TodoReader {
       };
     });
   }
-}
 
-/**
- * Read/write Drizzle implementation of `TodoRepository`.
- *
- * Persists the aggregate using optimistic concurrency control:
- *
- * - `version === 0` is treated as a brand-new aggregate and issued as an
- *   INSERT. If the id already exists the DB's primary-key constraint
- *   surfaces as a `SystemError` (this is the "double-create" case, which
- *   indicates an application bug rather than a concurrent writer).
- * - `version > 0` is an update. We guard the update with
- *   `WHERE id = ? AND version = ? - 1` and inspect the `RETURNING` result:
- *   a zero-row update means another transaction wrote first, and we raise
- *   `ConflictError(OptimisticLockFailure)`.
- *
- * Delete is similarly guarded by the caller-supplied `expectedVersion`
- * (the version read by the usecase), so a concurrent writer that has
- * already advanced the version causes the DELETE to match zero rows and
- * surface as a `ConflictError(OptimisticLockFailure)`.
- *
- * Upsert (`ON CONFLICT DO UPDATE`) is deliberately NOT used — it would hide
- * lost updates by silently clobbering the stored version.
- */
-export class DrizzleSqliteTodoRepository
-  extends DrizzleSqliteTodoReader
-  implements TodoRepository
-{
   async save(todo: Todo): Promise<void> {
     if (todo.version === 0) {
       await mapDbError("Failed to insert todo", async () => {

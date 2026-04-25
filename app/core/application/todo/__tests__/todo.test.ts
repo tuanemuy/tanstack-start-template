@@ -176,7 +176,7 @@ describe("changeTodoStatus (fake)", () => {
 
     // Snapshot at version 0.
     const staleId = TodoId.create(created.id);
-    const stale = await container.unitOfWorkProvider.runReadonly(
+    const stale = await container.unitOfWorkProvider.run(
       async ({ todoRepository }) => {
         const current = await todoRepository.findById(staleId);
         if (!current) throw new Error("seed failed");
@@ -196,11 +196,9 @@ describe("changeTodoStatus (fake)", () => {
 
     let caught: unknown;
     try {
-      await container.unitOfWorkProvider.runReadWrite(
-        async ({ todoRepository }) => {
-          await todoRepository.save(staleMutation);
-        },
-      );
+      await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
+        await todoRepository.save(staleMutation);
+      });
       expect.fail("stale save should have thrown");
     } catch (error) {
       caught = error;

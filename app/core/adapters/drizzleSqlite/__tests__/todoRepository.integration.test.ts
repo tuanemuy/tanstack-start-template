@@ -25,13 +25,11 @@ describe("DrizzleSqliteTodoRepository (integration)", () => {
     const container = getContainer();
     const { entity: created } = Todo.create({ title: "round-trip" }, NOW);
 
-    await container.unitOfWorkProvider.runReadWrite(
-      async ({ todoRepository }) => {
-        await todoRepository.save(created);
-      },
-    );
+    await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
+      await todoRepository.save(created);
+    });
 
-    const loaded = await container.unitOfWorkProvider.runReadonly(
+    const loaded = await container.unitOfWorkProvider.run(
       async ({ todoRepository }) => todoRepository.findById(created.id),
     );
     expect(loaded).not.toBeNull();
@@ -54,20 +52,16 @@ describe("DrizzleSqliteTodoRepository (integration)", () => {
   it("save → findById lifts the completed flag into a CompletedTodo variant", async () => {
     const container = getContainer();
     const { entity: active } = Todo.create({ title: "lift" }, NOW);
-    await container.unitOfWorkProvider.runReadWrite(
-      async ({ todoRepository }) => {
-        await todoRepository.save(active);
-      },
-    );
+    await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
+      await todoRepository.save(active);
+    });
 
     const { entity: completed } = Todo.complete(active, NOW);
-    await container.unitOfWorkProvider.runReadWrite(
-      async ({ todoRepository }) => {
-        await todoRepository.save(completed);
-      },
-    );
+    await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
+      await todoRepository.save(completed);
+    });
 
-    const loaded = await container.unitOfWorkProvider.runReadonly(
+    const loaded = await container.unitOfWorkProvider.run(
       async ({ todoRepository }) => todoRepository.findById(active.id),
     );
     expect(loaded?.status).toBe("completed");
@@ -77,18 +71,14 @@ describe("DrizzleSqliteTodoRepository (integration)", () => {
   it("increments the stored version column on each successful save", async () => {
     const container = getContainer();
     const { entity: active } = Todo.create({ title: "version" }, NOW);
-    await container.unitOfWorkProvider.runReadWrite(
-      async ({ todoRepository }) => {
-        await todoRepository.save(active);
-      },
-    );
+    await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
+      await todoRepository.save(active);
+    });
 
     const { entity: toggled } = Todo.toggle(active, NOW);
-    await container.unitOfWorkProvider.runReadWrite(
-      async ({ todoRepository }) => {
-        await todoRepository.save(toggled);
-      },
-    );
+    await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
+      await todoRepository.save(toggled);
+    });
 
     const rows = await container.db.select().from(schema.todos);
     expect(rows).toHaveLength(1);
@@ -98,19 +88,15 @@ describe("DrizzleSqliteTodoRepository (integration)", () => {
   it("raises ConflictError(OptimisticLockFailure) when expectedVersion does not match", async () => {
     const container = getContainer();
     const { entity: active } = Todo.create({ title: "occ" }, NOW);
-    await container.unitOfWorkProvider.runReadWrite(
-      async ({ todoRepository }) => {
-        await todoRepository.save(active);
-      },
-    );
+    await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
+      await todoRepository.save(active);
+    });
 
     // Someone else toggles the row, advancing DB version to 1.
     const { entity: toggled } = Todo.toggle(active, NOW);
-    await container.unitOfWorkProvider.runReadWrite(
-      async ({ todoRepository }) => {
-        await todoRepository.save(toggled);
-      },
-    );
+    await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
+      await todoRepository.save(toggled);
+    });
 
     // A stale client tries to save a version-based update derived from the
     // original (version 0) read — predicate `WHERE version = 0` matches
@@ -118,11 +104,9 @@ describe("DrizzleSqliteTodoRepository (integration)", () => {
     const { entity: stale } = Todo.toggle(active, NOW);
     let caught: unknown;
     try {
-      await container.unitOfWorkProvider.runReadWrite(
-        async ({ todoRepository }) => {
-          await todoRepository.save(stale);
-        },
-      );
+      await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
+        await todoRepository.save(stale);
+      });
       expect.fail("stale save should have thrown");
     } catch (error) {
       caught = error;
@@ -136,21 +120,17 @@ describe("DrizzleSqliteTodoRepository (integration)", () => {
   it("delete with mismatched expectedVersion raises ConflictError", async () => {
     const container = getContainer();
     const { entity: active } = Todo.create({ title: "del-occ" }, NOW);
-    await container.unitOfWorkProvider.runReadWrite(
-      async ({ todoRepository }) => {
-        await todoRepository.save(active);
-      },
-    );
+    await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
+      await todoRepository.save(active);
+    });
 
     let caught: unknown;
     try {
-      await container.unitOfWorkProvider.runReadWrite(
-        async ({ todoRepository }) => {
-          // Passing the wrong expectedVersion simulates "another writer
-          // advanced the version before we got here".
-          await todoRepository.delete(active.id, 99);
-        },
-      );
+      await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
+        // Passing the wrong expectedVersion simulates "another writer
+        // advanced the version before we got here".
+        await todoRepository.delete(active.id, 99);
+      });
       expect.fail("mismatched delete should have thrown");
     } catch (error) {
       caught = error;
@@ -170,11 +150,9 @@ describe("DrizzleSqliteTodoRepository (integration)", () => {
 
     let caught: unknown;
     try {
-      await container.unitOfWorkProvider.runReadWrite(
-        async ({ todoRepository }) => {
-          await todoRepository.delete(ghostId, 0);
-        },
-      );
+      await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
+        await todoRepository.delete(ghostId, 0);
+      });
       expect.fail("delete of ghost id should have thrown");
     } catch (error) {
       caught = error;
@@ -200,7 +178,7 @@ describe("DrizzleSqliteTodoRepository (integration)", () => {
       });
     }
 
-    const page1 = await container.unitOfWorkProvider.runReadonly(
+    const page1 = await container.unitOfWorkProvider.run(
       async ({ todoRepository }) =>
         todoRepository.findPage({ page: 1, limit: 2 }),
     );
@@ -210,7 +188,7 @@ describe("DrizzleSqliteTodoRepository (integration)", () => {
     expect(page1.items[0]?.title).toBe("row-4");
     expect(page1.items[1]?.title).toBe("row-3");
 
-    const page3 = await container.unitOfWorkProvider.runReadonly(
+    const page3 = await container.unitOfWorkProvider.run(
       async ({ todoRepository }) =>
         todoRepository.findPage({ page: 3, limit: 2 }),
     );
@@ -241,7 +219,7 @@ describe("DrizzleSqliteTodoRepository (integration)", () => {
         updatedAt: at,
       });
     }
-    const all = await container.unitOfWorkProvider.runReadonly(
+    const all = await container.unitOfWorkProvider.run(
       async ({ todoRepository }) => todoRepository.findAll(),
     );
     expect(all.map((t) => t.id)).toEqual([ids[2], ids[1], ids[0]]);
@@ -266,8 +244,8 @@ describe("DrizzleSqliteTodoRepository (integration)", () => {
     // corrupted row must raise rather than return garbage.
     let caught: unknown;
     try {
-      await container.unitOfWorkProvider.runReadonly(
-        async ({ todoRepository }) => todoRepository.findAll(),
+      await container.unitOfWorkProvider.run(async ({ todoRepository }) =>
+        todoRepository.findAll(),
       );
       expect.fail("findAll should have surfaced a SystemError");
     } catch (error) {

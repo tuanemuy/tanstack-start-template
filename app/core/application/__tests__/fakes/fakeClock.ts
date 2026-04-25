@@ -1,4 +1,4 @@
-import type { Clock } from "@/core/domain/common/ports/clock";
+import type { Clock } from "@/core/application/ports/clock";
 
 /**
  * Deterministic in-memory `Clock` for unit tests.

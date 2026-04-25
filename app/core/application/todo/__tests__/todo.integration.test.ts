@@ -119,7 +119,7 @@ describe("concurrent changeTodoStatus", () => {
     });
 
     const staleId = TodoId.create(created.id);
-    const stale = await container.unitOfWorkProvider.runReadonly(
+    const stale = await container.unitOfWorkProvider.run(
       async ({ todoRepository }) => {
         const current = await todoRepository.findById(staleId);
         if (!current) throw new Error("expected todo to exist");
@@ -143,11 +143,9 @@ describe("concurrent changeTodoStatus", () => {
     let caught: unknown;
     let resolved = false;
     try {
-      await container.unitOfWorkProvider.runReadWrite(
-        async ({ todoRepository }) => {
-          await todoRepository.save(staleMutation);
-        },
-      );
+      await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
+        await todoRepository.save(staleMutation);
+      });
       resolved = true;
     } catch (error) {
       caught = error;

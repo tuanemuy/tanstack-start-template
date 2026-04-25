@@ -2,11 +2,7 @@
 
 import { useServerFn } from "@tanstack/react-start";
 import { useState } from "react";
-// Presentation reuses the application-layer DTO directly for template
-// simplicity. If the UI ever needs fields the application DTO doesn't
-// expose (computed labels, i18n, etc.), introduce a presentation-owned
-// `type TodoViewModel = ...` and map `TodoView -> TodoViewModel` here.
-import type { TodoView } from "@/core/application/todo/dto";
+import type { TodoView } from "@/core/application/todo/view";
 import { displayError } from "@/core/presentation/errorDisplay";
 import {
   type ErrorHandlers,

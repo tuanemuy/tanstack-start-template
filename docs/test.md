@@ -50,7 +50,7 @@ concurrent / OCC 挙動を検証する integration 層を分けることで、�
 
 - **実装の形**: `Map<Id, Entity>` + 配列で outbox 行を保持する素朴な in-memory
   実装。port interface にだけ合わせる。
-- **制約**: transaction を **模倣しない**。`runReadWrite` のコールバック内で
+- **制約**: transaction を **模倣しない**。`run` のコールバック内で
   throw しても、既に書いた Map 変更は巻き戻らない（即 commit 等価）。concurrent
   writer レース、`SQLITE_BUSY`、OCC violation などアダプタ起因の挙動は再現
   できない。
@@ -80,9 +80,8 @@ it("records a todo.created event", async () => {
 - afterEach で temp file を `unlink`。retry decorator の指数バックオフが
   乗るので `testTimeout: 15_000` を `vitest.config.ts` で設定している。
 - concurrent / OCC を意識したテストを書くときは、`Promise.all` で
-  `runReadWrite` を同時発火させて `OptimisticLockFailure` を観測する、
-  worker を 2 本並列で回して同じ outbox 行が 2 回 `markProcessed` されない
-  ことを確認する、などのパターンを使う。
+  `run` を同時発火させて `OptimisticLockFailure` を観測する、
+  などのパターンを使う。
 
 ## Property-based 方針
 

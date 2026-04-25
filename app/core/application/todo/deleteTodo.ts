@@ -17,7 +17,7 @@ export async function deleteTodo({
   // domain pure, no `new Date()` at the bottom of the call stack.
   const now = container.clock.now();
 
-  await container.unitOfWorkProvider.runReadWrite(
+  await container.unitOfWorkProvider.run(
     async ({ todoRepository, collectEvents }) => {
       const current = await todoRepository.findById(id);
       if (!current) {

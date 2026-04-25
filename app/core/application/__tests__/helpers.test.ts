@@ -21,7 +21,7 @@ describe("createTestContainer / cleanup", () => {
     try {
       // Querying the todos table must succeed — this proves migrations ran.
       // (Without migrations the query would fail with 'no such table'.)
-      const rows = await container.unitOfWorkProvider.runReadonly(
+      const rows = await container.unitOfWorkProvider.run(
         async ({ todoRepository }) => todoRepository.findAll(),
       );
       expect(rows).toEqual([]);
@@ -74,8 +74,8 @@ describe("setupTestContainer (suite hooks)", () => {
   it("gives each test a fresh container", async () => {
     const c1 = getContainer();
     await createTodo({ container: c1, input: { title: "first" } });
-    const rows1 = await c1.unitOfWorkProvider.runReadonly(
-      async ({ todoRepository }) => todoRepository.findAll(),
+    const rows1 = await c1.unitOfWorkProvider.run(async ({ todoRepository }) =>
+      todoRepository.findAll(),
     );
     expect(rows1).toHaveLength(1);
   });
@@ -84,8 +84,8 @@ describe("setupTestContainer (suite hooks)", () => {
     const c2 = getContainer();
     // If beforeEach/afterEach weren't wiring cleanup correctly, this
     // container would still see the "first" todo from the previous test.
-    const rows = await c2.unitOfWorkProvider.runReadonly(
-      async ({ todoRepository }) => todoRepository.findAll(),
+    const rows = await c2.unitOfWorkProvider.run(async ({ todoRepository }) =>
+      todoRepository.findAll(),
     );
     expect(rows).toEqual([]);
   });

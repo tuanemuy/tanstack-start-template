@@ -4,10 +4,7 @@ import type {
   PaginationResult,
 } from "@/core/domain/common/pagination";
 import type { Todo } from "@/core/domain/todo/entity";
-import type {
-  TodoReader,
-  TodoRepository,
-} from "@/core/domain/todo/ports/todoRepository";
+import type { TodoRepository } from "@/core/domain/todo/ports/todoRepository";
 import type { TodoId } from "@/core/domain/todo/valueObject";
 
 /**
@@ -24,11 +21,9 @@ import type { TodoId } from "@/core/domain/todo/valueObject";
  *   currently stored row and throwing `ConflictError(OptimisticLockFailure)`
  *   on mismatch — same error shape as the production adapter so usecase
  *   tests that catch on `error.code` continue to work.
- * - No driver-level `SQLITE_BUSY`: nothing here is retryable, so pairing
- *   this fake with the production `RetryingUnitOfWorkProvider` does nothing
- *   useful. The matching `FakeUnitOfWorkProvider` skips the retry decorator.
+ * - No driver-level `SQLITE_BUSY`: nothing here is retryable.
  */
-export class FakeTodoRepository implements TodoReader, TodoRepository {
+export class FakeTodoRepository implements TodoRepository {
   /**
    * Shared backing store. Passed in from the unit-of-work fake so that a
    * repository instance spun up for a given "transaction" sees the same

@@ -1,91 +1,77 @@
-import type { DomainEvent } from "@/core/domain/common/event";
+import type { DomainEvent, EventDecoder } from "@/core/domain/common/event";
+import type { OutboxEntry } from "@/core/domain/common/ports/outboxRepository";
 import { decodeTodoEvent } from "@/core/domain/todo/events";
 import type { Container } from "../di/server";
-import {
-  createEventDecoderRegistry,
-  type EventDecoderRegistry,
-} from "../events/eventDispatch";
 
 /**
  * EventRelayWorker
  *
- * Drains the outbox by atomically claiming a batch of pending entries,
- * decoding each entry's payload through the domain-owned decoder registry,
- * invoking a dispatch callback per decoded event, and marking the
- * successfully dispatched rows as processed — scoped to the claim handle
- * returned by the outbox adapter so a row that was re-claimed by another
- * worker after the lease expired is left for that worker to finish.
+ * Drains the outbox by polling pending entries, decoding each through the
+ * domain-owned decoder, dispatching to the caller-supplied callback, and
+ * marking successfully dispatched rows as processed.
  *
  * Intended to be scheduled by an external runner (cron, queue worker, etc.).
- * The dispatcher is passed in rather than resolved from the container so
- * that the container stays minimal until a concrete event-dispatching
- * adapter is introduced.
  *
  * ## Delivery semantics: at-least-once
  *
- * Entries are claimed with a time-boxed lease. If dispatch succeeds but
- * `markProcessed` fails — or the worker crashes between the two — the lease
- * eventually expires and another run re-claims the entries. A consumer that
- * already received the event will therefore see it a second time.
- *
- * **Consumers MUST be idempotent**, typically by keying their side effects
- * on `event.id`.
+ * If dispatch succeeds but `markProcessed` fails — or the worker crashes
+ * between the two — the row stays pending and the next run dispatches it
+ * again. **Consumers MUST be idempotent**, typically keyed on `event.id`.
  *
  * ## Partial-failure handling
  *
- * Within a single batch we tolerate two kinds of per-row failures without
- * aborting the batch:
+ * Per-row failures do not abort the batch:
  *
- * 1. **Decode failure** — a corrupt row (unknown event type, malformed
- *    payload, unsupported schema version). The row is skipped, its
- *    failure logged through `container.logger.error` for observability,
- *    and the lease is left to expire so a future run can retry once the
- *    bad row is fixed. We do NOT `markProcessed` decode-failed rows,
- *    because that would silently lose data.
+ * 1. **Decode failure** — corrupt row (unknown type, malformed payload).
+ *    Logged and skipped (NOT marked processed) so a future run can retry
+ *    once the bad row is fixed. Marking processed would silently lose data.
+ * 2. **Dispatch failure** — consumer threw. Logged and skipped for this
+ *    batch; the next run picks the row up again.
  *
- * 2. **Dispatch failure** — the consumer threw / rejected. The row is
- *    skipped for this batch, logged through `container.logger.error`, and
- *    its lease left to expire. Only rows whose dispatch resolved
- *    successfully are handed to `markProcessed`.
- *
- * `Promise.allSettled` over dispatch ensures one bad consumer call doesn't
- * knock the rest of the batch off the train: each row is accounted for
- * independently, successes clear, failures wait for lease expiry.
+ * `Promise.allSettled` over dispatch keeps one failing consumer from
+ * knocking the rest off the train.
  */
 export type EventDispatcher = (event: DomainEvent) => Promise<void>;
 
+/**
+ * Maps an event-type prefix (the token before the first `.`, e.g. `"todo"`
+ * for `"todo.created"`) to the decoder that owns that domain's events. Add
+ * a new domain by registering its decoder here.
+ */
+export type EventDecoderRegistry = Readonly<Record<string, EventDecoder>>;
+
+export const defaultEventDecoderRegistry: EventDecoderRegistry = {
+  todo: decodeTodoEvent,
+};
+
 export type ProcessOutboxEventsOptions = {
-  /**
-   * Maximum number of entries to claim and dispatch per invocation.
-   * Defaults to 100.
-   */
+  /** Maximum number of entries to dispatch per invocation. Defaults to 100. */
   batchSize?: number;
   /**
-   * How long the claim protects the batch from other workers, in
-   * milliseconds. After this window elapses without the batch being marked
-   * processed, another worker may re-claim the entries. Defaults to 30s.
-   */
-  leaseDurationMs?: number;
-  /**
-   * Registry used to decode raw wire payloads back into branded domain
-   * events before dispatch. Defaults to {@link defaultEventDecoderRegistry}
-   * which covers every domain currently wired in the application. Tests and
-   * specialised runners can pass a narrower registry to isolate behaviour.
+   * Override the decoder registry for tests / specialised runners. Defaults
+   * to {@link defaultEventDecoderRegistry}.
    */
   decoderRegistry?: EventDecoderRegistry;
 };
 
-/**
- * Shipped decoder registry: add a domain's decoder here when the domain
- * introduces events that flow through the outbox. Registration is explicit
- * (no dynamic imports) so `grep` surfaces every wired decoder.
- */
-export const defaultEventDecoderRegistry = createEventDecoderRegistry({
-  todo: decodeTodoEvent,
-});
-
 const DEFAULT_BATCH_SIZE = 100;
-const DEFAULT_LEASE_DURATION_MS = 30_000;
+
+function decodeEntry(
+  entry: OutboxEntry,
+  registry: EventDecoderRegistry,
+): DomainEvent {
+  const dot = entry.type.indexOf(".");
+  const prefix = dot < 0 ? entry.type : entry.type.slice(0, dot);
+  const decoder = registry[prefix];
+  if (!decoder) {
+    throw new Error(`No decoder registered for event type "${entry.type}"`);
+  }
+  return decoder(entry.type, entry.payload, {
+    id: entry.id,
+    occurredAt: entry.occurredAt,
+    aggregateId: entry.aggregateId,
+  });
+}
 
 export async function processOutboxEvents(
   container: Container,
@@ -93,80 +79,32 @@ export async function processOutboxEvents(
   options: ProcessOutboxEventsOptions = {},
 ): Promise<{ processed: number }> {
   const batchSize = options.batchSize ?? DEFAULT_BATCH_SIZE;
-  const leaseDurationMs = options.leaseDurationMs ?? DEFAULT_LEASE_DURATION_MS;
   const registry = options.decoderRegistry ?? defaultEventDecoderRegistry;
-  const { logger, clock } = container;
+  const { logger, clock, outboxRepository } = container;
 
-  // Claim a batch under a fresh lease. Concurrent workers that race here
-  // each receive a disjoint subset because `claimPending` atomically stamps
-  // the rows it returns. The "now" used for lease bookkeeping comes from
-  // the injected `Clock` so worker tests can fast-forward time deterministically.
-  //
-  // `runWorker` exposes the outbox-only context — ordinary `runReadWrite`
-  // no longer has `outboxRepository` in scope, so worker concerns can't
-  // leak into regular usecases at the type level.
-  const claim = await container.unitOfWorkProvider.runWorker(
-    ({ outboxRepository }) =>
-      outboxRepository.claimPending(batchSize, leaseDurationMs, clock.now()),
-  );
+  const entries = await outboxRepository.listPending(batchSize);
+  if (entries.length === 0) return { processed: 0 };
 
-  if (claim.entries.length === 0) {
-    return { processed: 0 };
-  }
-
-  // Decode pass: fold decode failures into a per-row skip list with an
-  // observability signal. A single corrupt row MUST NOT abort the batch
-  // — that would block every valid row behind an unfixable one until the
-  // lease expires, and burn through the retry budget uselessly.
   type DecodedRow = { id: string; event: DomainEvent };
   const decoded: DecodedRow[] = [];
-  for (const entry of claim.entries) {
-    const result = registry.decode({
-      type: entry.event.type,
-      payload: entry.event.payload,
-      meta: {
-        id: entry.event.id,
-        occurredAt: entry.event.occurredAt,
-        schemaVersion: entry.schemaVersion,
-        aggregateId: entry.event.aggregateId,
-      },
-    });
-    if (result.ok) {
-      decoded.push({ id: entry.id, event: result.event });
-    } else {
-      // Decode-failed rows are left un-marked-processed: their lease will
-      // expire and a later run will re-attempt. Log through the injected
-      // structured logger so production sinks can alert on this signal.
+  for (const entry of entries) {
+    try {
+      decoded.push({ id: entry.id, event: decodeEntry(entry, registry) });
+    } catch (error) {
       logger.error(
-        `[outbox] decode failed for event ${entry.event.id} (${entry.event.type})`,
-        {
-          eventId: entry.event.id,
-          eventType: entry.event.type,
-          cause: result.error,
-        },
+        `[outbox] decode failed for event ${entry.id} (${entry.type})`,
+        { eventId: entry.id, eventType: entry.type, cause: error },
       );
     }
   }
 
-  if (decoded.length === 0) {
-    // Nothing to dispatch — every claimed row was corrupt. Returning 0
-    // keeps the scheduler's "processed this tick" counter honest.
-    return { processed: 0 };
-  }
+  if (decoded.length === 0) return { processed: 0 };
 
-  // Dispatch happens OUTSIDE the worker transaction: a retryable failure
-  // inside `runWorker` would re-run the whole callback, and we do not want
-  // to replay HTTP/RPC side-effects on every retry. (See
-  // `RetryingUnitOfWorkProvider` for the general rule.)
-  //
-  // `Promise.allSettled` so a single failing dispatch doesn't short-circuit
-  // the batch: successful rows still get `markProcessed`, failures are
-  // left for the next lease-expiry run to retry.
-  const dispatchResults = await Promise.allSettled(
+  const results = await Promise.allSettled(
     decoded.map((row) => dispatch(row.event)),
   );
   const dispatchedIds: string[] = [];
-  dispatchResults.forEach((result, index) => {
+  results.forEach((result, index) => {
     const row = decoded[index];
     if (!row) return;
     if (result.status === "fulfilled") {
@@ -183,17 +121,8 @@ export async function processOutboxEvents(
     }
   });
 
-  if (dispatchedIds.length === 0) {
-    return { processed: 0 };
-  }
+  if (dispatchedIds.length === 0) return { processed: 0 };
 
-  // One round-trip per batch. `markProcessed` is scoped to the claim
-  // handle so entries whose lease expired and were re-claimed by another
-  // worker are skipped here; the new claimant will mark them processed
-  // when it's done.
-  await container.unitOfWorkProvider.runWorker(({ outboxRepository }) =>
-    outboxRepository.markProcessed(claim.handle, dispatchedIds),
-  );
-
+  await outboxRepository.markProcessed(dispatchedIds, clock.now());
   return { processed: dispatchedIds.length };
 }

@@ -1,4 +1,4 @@
-import type { Logger, LogMeta } from "@/core/domain/common/ports/logger";
+import type { Logger, LogMeta } from "@/core/application/ports/logger";
 
 export type FakeLogEntry = Readonly<{
   level: "info" | "warn" | "error";
