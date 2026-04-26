@@ -1,71 +1,56 @@
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 import { createClient } from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
 import { migrate } from "drizzle-orm/libsql/migrator";
 import { afterEach, beforeEach } from "vitest";
 import { DrizzleSqliteOutboxRepository } from "@/core/adapters/drizzleSqlite/repositories/outboxRepository";
 import * as schema from "@/core/adapters/drizzleSqlite/schema";
-import {
-  DrizzleSqliteUnitOfWorkProvider,
-  isRetryableError,
-} from "@/core/adapters/drizzleSqlite/unitOfWork";
+import { DrizzleSqliteUnitOfWorkProvider } from "@/core/adapters/drizzleSqlite/unitOfWork";
 import type { Container } from "@/core/application/di/server";
-import { RetryingUnitOfWorkProvider } from "@/core/application/execution/retryingUnitOfWork";
 import { SystemClock } from "@/core/application/ports/clock";
 import { ConsoleLogger } from "@/core/application/ports/logger";
-import {
-  FakeOutboxRepository,
-  type FakeOutboxRow,
-} from "./fakes/fakeOutboxRepository";
-import { FakeUnitOfWorkProvider } from "./fakes/fakeUnitOfWork";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// Migrations directory is resolved from CWD (project root) since vitest
+// always runs from there. Using a static path keeps this file free of
+// `import.meta.url` / `fileURLToPath` plumbing.
+const MIGRATIONS_FOLDER = "app/core/adapters/drizzleSqlite/migrations";
 
 // ============================================
-// Test Database (real SQLite, file-based)
+// Test Database (real SQLite, in-memory)
 // ============================================
 
 export type TestDatabase = ReturnType<typeof drizzle<typeof schema>>;
 export type TestDatabaseWithCleanup = {
   db: TestDatabase;
-  dbPath: string;
-  cleanup: () => void;
+  cleanup: () => Promise<void>;
 };
 
 /**
- * Each call creates a unique temporary file-backed SQLite. We use file-based
- * (not `:memory:`) because libsql resets the connection after each
- * transaction, which loses in-memory state.
+ * Each call creates a fresh in-memory SQLite database.
+ *
+ * `cache=shared` is required because libsql opens a new physical connection
+ * per `transaction()` call (see `Sqlite3Client.transaction` in the libsql
+ * source); without shared cache every transaction would target an empty
+ * database. Vitest's default `forks` pool runs each test file in its own
+ * process, so the shared in-memory DB is naturally scoped per file —
+ * sibling tests within one file are isolated by `cleanup` truncating the
+ * tables, not by separate databases.
  */
 export async function createTestDatabase(): Promise<TestDatabaseWithCleanup> {
-  const dbPath = path.join(
-    os.tmpdir(),
-    `test-db-${Date.now()}-${Math.random().toString(36).slice(2)}.sqlite`,
-  );
-  const client = createClient({ url: `file:${dbPath}` });
-  await client.execute("PRAGMA journal_mode=WAL");
-  await client.execute("PRAGMA busy_timeout=5000");
+  const client = createClient({ url: "file::memory:?cache=shared" });
   const db = drizzle(client, { schema });
-
-  const migrationsFolder = path.join(
-    __dirname,
-    "../../adapters/drizzleSqlite/migrations",
-  );
-  await migrate(db, { migrationsFolder });
+  await migrate(db, { migrationsFolder: MIGRATIONS_FOLDER });
 
   return {
     db,
-    dbPath,
-    cleanup: () => {
-      try {
-        fs.unlinkSync(dbPath);
-      } catch {
-        // Ignore cleanup errors
-      }
+    cleanup: async () => {
+      // Truncate user tables so the next test starts clean. We do NOT
+      // close the client — closing the last connection would drop the
+      // shared in-memory DB and force the next `migrate` call to re-run.
+      // Schema tables (`__drizzle_migrations`) are intentionally left
+      // alone so subsequent `migrate` calls within the same process see
+      // them and skip re-running.
+      await db.delete(schema.outboxEvents);
+      await db.delete(schema.todos);
     },
   };
 }
@@ -95,16 +80,13 @@ export async function createTestContainer(
       appUrl: "http://localhost:3000",
       ...options.config,
     },
-    unitOfWorkProvider: new RetryingUnitOfWorkProvider(
-      new DrizzleSqliteUnitOfWorkProvider(db),
-      isRetryableError,
-    ),
+    unitOfWorkProvider: new DrizzleSqliteUnitOfWorkProvider(db),
     outboxRepository: new DrizzleSqliteOutboxRepository(db),
     clock: SystemClock,
     logger: ConsoleLogger,
     db,
     cleanup: async () => {
-      dbWithCleanup.cleanup();
+      await dbWithCleanup.cleanup();
     },
   };
 }
@@ -131,41 +113,6 @@ export function setupTestContainer(
   });
   afterEach(async () => {
     await container.cleanup();
-  });
-  return () => container;
-}
-
-// ============================================
-// Fake In-Memory Test Container (unit tests)
-// ============================================
-
-export type FakeTestContainer = Container & {
-  fakeUow: FakeUnitOfWorkProvider;
-  /** Shared row buffer between the UoW fake and the outbox fake. */
-  outboxRows: FakeOutboxRow[];
-};
-
-export function createFakeTestContainer(
-  options: { config?: Partial<Container["config"]> } = {},
-): FakeTestContainer {
-  const fakeUow = new FakeUnitOfWorkProvider();
-  return {
-    config: { appUrl: "http://localhost:3000", ...options.config },
-    unitOfWorkProvider: fakeUow,
-    outboxRepository: new FakeOutboxRepository(fakeUow.outboxRows),
-    clock: SystemClock,
-    logger: ConsoleLogger,
-    fakeUow,
-    outboxRows: fakeUow.outboxRows,
-  };
-}
-
-export function setupFakeTestContainer(
-  options: { config?: Partial<Container["config"]> } = {},
-): () => FakeTestContainer {
-  let container: FakeTestContainer;
-  beforeEach(() => {
-    container = createFakeTestContainer(options);
   });
   return () => container;
 }

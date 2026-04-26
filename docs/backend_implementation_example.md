@@ -36,7 +36,6 @@ app/core/
 │   ├── errors/index.ts
 │   ├── execution/
 │   │   ├── unitOfWork.ts
-│   │   ├── retryingUnitOfWork.ts
 │   │   └── retry.ts
 │   ├── workers/eventRelayWorker.ts
 │   └── ${domain}/
@@ -202,16 +201,15 @@ export async function createContainer(config: ServerConfig): Promise<Container> 
   const db = await getDatabase(config.databaseUrl);
   return {
     config: { appUrl: config.appUrl },
-    unitOfWorkProvider: new RetryingUnitOfWorkProvider(
-      new DrizzleSqliteUnitOfWorkProvider(db),
-      isRetryableError,
-    ),
+    unitOfWorkProvider: new DrizzleSqliteUnitOfWorkProvider(db),
     outboxRepository: new DrizzleSqliteOutboxRepository(db),
     clock: SystemClock,
     logger: ConsoleLogger,
   };
 }
 ```
+
+`SQLITE_BUSY` 等の transient lock contention は `DrizzleSqliteUnitOfWorkProvider` が内部で retry する（driver-level concern なので application 層は触らない）。
 
 ## Adapter Layer
 
@@ -251,7 +249,7 @@ async save(foo: Foo): Promise<void> {
 3. `collectEvents` のバッファを集めるコンテキストを fn に渡す
 4. fn 解決後、collected events を outbox に save（同一 tx）
 
-`isRetryableError(e)` は `error.code === "SQLITE_BUSY" | "SQLITE_LOCKED"` を判定する predicate。`RetryingUnitOfWorkProvider` がこれを使って transient な lock contention を retry する。
+`SQLITE_BUSY` / `SQLITE_LOCKED` は driver-level の implementation detail なので、adapter が `run()` 内部で `retry()` を使って exponential backoff retry する。application 層・他の adapter へ leak させない。アプリ側の OCC retry（`changeTodoStatus` 内の `ConflictError(OptimisticLockFailure)` retry）とは別レイヤー・別エラークラスなので二重 retry は起きない。
 
 ## Outbox Worker
 

@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import * as schema from "@/core/adapters/drizzleSqlite/schema";
 import { TodoEvents } from "@/core/domain/todo/events";
 import { TodoId, TodoTitle } from "@/core/domain/todo/valueObject";
-import { FakeLogger } from "../../__tests__/fakes";
+import { FakeLogger } from "../../__tests__/fakes/fakeLogger";
 import { setupTestContainer } from "../../__tests__/helpers";
 import { changeTodoStatus } from "../../todo/changeTodoStatus";
 import { createTodo } from "../../todo/createTodo";

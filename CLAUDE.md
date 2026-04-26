@@ -57,8 +57,7 @@ Hexagonal architecture with domain-driven design principles:
     - `app/core/application/ports/logger.ts` — `Logger` port (`info` / `warn` / `error` with optional structured `meta`) plus `ConsoleLogger`. Used for cross-cutting observability signals; domain / usecase happy paths do not log.
     - `app/core/application/errors/index.ts` — Application-layer errors (`NotFoundError`, `ConflictError`, `UnauthenticatedError`, `ForbiddenError`, `ValidationError`, `SystemError`).
     - `app/core/application/execution/unitOfWork.ts` — Single-mode `UnitOfWorkProvider.run(fn)` (see below).
-    - `app/core/application/execution/retryingUnitOfWork.ts` — Decorator that retries transient driver errors (`SQLITE_BUSY` etc.). Composed in `createContainer`.
-    - `app/core/application/execution/retry.ts` — Generic `retry(fn, options)` utility used both inside the UoW decorator and inside idempotent usecases (e.g. for OCC conflict re-reads).
+    - `app/core/application/execution/retry.ts` — Generic `retry(fn, options)` utility used inside idempotent usecases (e.g. for OCC conflict re-reads). Driver-level transient retry (`SQLITE_BUSY` etc.) lives inside the Drizzle adapter — application code never sees those codes.
     - `app/core/application/workers/eventRelayWorker.ts` — Polls the outbox, decodes via the registered domain decoders, dispatches via `Promise.allSettled`, marks processed.
     - `app/core/application/__tests__/helpers.ts` — Test container helpers (Drizzle-backed and fake in-memory).
 - **Presentation Layer** (`app/core/presentation/`): Framework-specific cross-cutting utilities.
@@ -75,13 +74,20 @@ Hexagonal architecture with domain-driven design principles:
 - `UnitOfWorkContext` exposes the domain repositories plus `collectEvents(events)`. Events handed to `collectEvents` are persisted to the outbox in the same transaction once the callback resolves, in **call order**.
 - `collectEvents` is the only path that reaches the outbox writer from a usecase — there is no raw `OutboxRepository.save` call site in domain or application code.
 - `Clock` and `Logger` are not carried on the UoW context. They live on `Container` because they have no per-callback lifecycle; threading them through the UoW would just be ceremony.
-- `app/core/application/execution/retryingUnitOfWork.ts` is a decorator over any `UnitOfWorkProvider`. It retries `run()` calls that fail with a transient driver error (`isRetryable(error)` is supplied at wire time — `app/core/adapters/drizzleSqlite/unitOfWork.ts` exports `isRetryableError` for SQLite). The application-level OCC retry inside `changeTodoStatus` operates on `ConflictError(OptimisticLockFailure)`, which is a different error class, so the two layers compose without double-retry.
+
+### Retry strategy
+
+Two retry layers exist; they catch different error classes and compose without double-retry.
+
+- **Driver-level transient retry (adapter-internal)** — `app/core/adapters/drizzleSqlite/unitOfWork.ts` retries `SQLITE_BUSY` / `SQLITE_LOCKED` inside `run()` with exponential backoff. This is a SQLite implementation detail, so it lives in the adapter; application code never sees these codes and there is no `RetryingUnitOfWorkProvider` decorator. Other adapters (e.g. a future Postgres backend) own their own transient-failure policy in the same way.
+- **Application-level OCC retry (usecase-internal)** — usecases that are idempotent under "set X" semantics (e.g. `changeTodoStatus`) wrap their `unitOfWorkProvider.run(...)` in `retry()` from `execution/retry.ts`, classifying `ConflictError(OptimisticLockFailure)` as retryable. The `now: Date` is captured once before the retry loop so every attempt agrees on the same instant.
 
 ### Domain Events
 
 - `app/core/domain/common/event.ts` defines `DomainEventBase` (with `aggregateId: string` required for every event) and the `WithEvents<TEntity, TEvent>` wrapper used to attach pending events to entity-producing operations. Aggregate deletion is `WithEvents<null, TEvent>` — `entity: null` marks the aggregate as gone while keeping the result shape uniform.
 - Each domain owns its event union (e.g. `app/core/domain/todo/events.ts`) and a `decode*Event(type, payload, meta)` function. The decoder validates the wire payload strictly and re-runs each branded field through its value-object factory. **It throws on a malformed row** — the relay worker catches per-row so one bad row does not abort the whole batch.
 - The wire shape is a plain JSON object whose contents the decoder re-validates. There is no separate "wire vs decoded" type pair and no embedded schema-version field; if a payload shape ever changes incompatibly, add a new event type rather than versioning the existing one.
+- Because the decoder reapplies value-object factories (`TodoTitle.create`, etc.) to stored payloads, **tightening** a value-object invariant (shorter max length, stricter regex) can retroactively reject historical outbox rows. Keep invariant changes additive (looser) when possible; otherwise add a new event type rather than mutating the existing one.
 
 ### Event Handling (Outbox Pattern)
 

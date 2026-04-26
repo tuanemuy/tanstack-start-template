@@ -7,16 +7,19 @@ import {
   ConflictErrorCode,
   isConflictError,
   isNotFoundError,
+  isValidationError,
+  ValidationErrorCode,
 } from "../../errors";
 import { changeTodoStatus } from "../changeTodoStatus";
 import { createTodo } from "../createTodo";
 import { deleteTodo } from "../deleteTodo";
+import { listTodos } from "../listTodos";
 
 /**
  * Integration tests that exercise behaviour the in-memory fake cannot model:
  *
  * - Concurrent mutations (real transactions + WAL / busy_timeout).
- * - The `RetryingUnitOfWorkProvider` in combination with the Drizzle adapter.
+ * - The Drizzle adapter's transient retry of `SQLITE_BUSY` / `SQLITE_LOCKED`.
  * - Post-commit outbox row placement (same transaction as the entity write).
  *
  * Kept in a `*.integration.test.ts` file so the fast usecase suite can be
@@ -160,5 +163,90 @@ describe("concurrent changeTodoStatus", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]?.completed).toBe(true);
     expect(rows[0]?.version).toBe(1);
+  });
+});
+
+describe("listTodos", () => {
+  const getContainer = setupTestContainer();
+
+  it("returns todos ordered by createdAt descending", async () => {
+    const container = getContainer();
+
+    // Insert three rows with explicit, distinct timestamps so the ordering
+    // is unambiguous regardless of clock resolution.  We bypass the usecase
+    // here to avoid relying on wall-clock ticks between `createTodo` calls,
+    // which would make the test flaky under fast machines.
+    const base = new Date("2026-01-01T00:00:00.000Z");
+    const id1 = "019db000-0000-7000-8000-000000000001";
+    const id2 = "019db000-0000-7000-8000-000000000002";
+    const id3 = "019db000-0000-7000-8000-000000000003";
+    const now = new Date();
+    await container.db.insert(schema.todos).values([
+      {
+        id: id1,
+        title: "t-0",
+        completed: false,
+        version: 0,
+        createdAt: base,
+        updatedAt: now,
+      },
+      {
+        id: id2,
+        title: "t-5",
+        completed: false,
+        version: 0,
+        createdAt: new Date(base.getTime() + 5_000),
+        updatedAt: now,
+      },
+      {
+        id: id3,
+        title: "t-10",
+        completed: false,
+        version: 0,
+        createdAt: new Date(base.getTime() + 10_000),
+        updatedAt: now,
+      },
+    ]);
+
+    const { todos: result } = await listTodos({ container, input: undefined });
+
+    expect(result).toHaveLength(3);
+    // Descending createdAt — offset +10 comes first.
+    expect(result[0]?.id).toBe(id3);
+    expect(result[1]?.id).toBe(id2);
+    expect(result[2]?.id).toBe(id1);
+  });
+
+  it("does not produce outbox events (readonly operation)", async () => {
+    const container = getContainer();
+
+    await createTodo({ container, input: { title: "seed" } });
+
+    const beforeRows = await container.db.select().from(schema.outboxEvents);
+    const beforeCount = beforeRows.length;
+
+    await listTodos({ container, input: undefined });
+    await listTodos({ container, input: undefined });
+
+    const afterRows = await container.db.select().from(schema.outboxEvents);
+    expect(afterRows).toHaveLength(beforeCount);
+  });
+
+  it("raises ValidationError(InvalidInput) with fieldErrors on bad pagination", async () => {
+    const container = getContainer();
+    try {
+      await listTodos({
+        container,
+        input: { page: 0, limit: 20 },
+      });
+      expect.fail("should have thrown");
+    } catch (error) {
+      expect(isValidationError(error)).toBe(true);
+      if (isValidationError(error)) {
+        expect(error.code).toBe(ValidationErrorCode.InvalidInput);
+        expect(error.fieldErrors).toBeDefined();
+        expect(Object.keys(error.fieldErrors ?? {})).toContain("page");
+      }
+    }
   });
 });

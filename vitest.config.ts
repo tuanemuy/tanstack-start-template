@@ -6,12 +6,12 @@ export default defineConfig({
   test: {
     globals: true,
     environment: "node",
-    // Give integration tests more headroom for file-based SQLite setup
-    // (temp file creation + migrations + WAL pragma + cleanup) plus the
-    // RetryingUnitOfWorkProvider's exponential backoff which can stack up
-    // to ~4s across retries under contention. Unit tests (fakes, domain
-    // logic, property-based) complete well under 5s; this ceiling only
-    // matters for `*.integration.test.ts`.
+    // Give integration tests headroom for in-memory SQLite setup
+    // (migration apply + connection close) plus the Drizzle adapter's
+    // internal transient retry, which can stack exponential backoff up to
+    // ~4s under contention. Unit tests (fakes, domain logic,
+    // property-based) complete well under 5s; this ceiling only matters
+    // for `*.integration.test.ts`.
     testTimeout: 15_000,
     hookTimeout: 15_000,
   },

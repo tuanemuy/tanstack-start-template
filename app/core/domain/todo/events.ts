@@ -104,6 +104,16 @@ export const TodoEvents = {
  * always see branded types (`TodoId`, `TodoTitle`). Throws `BusinessRuleError`
  * on a malformed row — the relay worker catches per-row so one bad row does
  * not abort the whole batch.
+ *
+ * ## Coupling note
+ *
+ * The decoder reapplies value-object invariants (`TodoTitle.create` etc.) to
+ * stored payloads. If those invariants are *tightened* later (e.g. shorter max
+ * length, stricter regex), historical outbox rows that were valid at write
+ * time may start failing decode. Either keep invariant changes additive
+ * (looser) or introduce a new event type rather than mutating the existing
+ * shape — this is the same rule called out in the README for wire-format
+ * compatibility.
  */
 export const decodeTodoEvent: EventDecoder<TodoEvent> = (
   type,

@@ -10,8 +10,8 @@ concurrent / OCC 挙動を検証する integration 層を分けることで、�
 
 - **対象**: domain 層 + application 層のロジック。
 - **依存**: in-memory fake repository (`app/core/application/__tests__/fakes/`)。
-  `FakeTodoRepository` / `FakeOutboxWriter` / `FakeOutboxWorkerRepository` /
-  `FakeUnitOfWorkProvider` を提供する。
+  `FakeTodoRepository` / `FakeOutboxRepository` / `FakeUnitOfWorkProvider` /
+  `FakeClock` / `FakeLogger` を提供する。
 - **狙い**: 振る舞いの確認、エラーコード分岐、イベント emit、バリデーション。
 - **速度**: 数ミリ秒〜十数ミリ秒。Vitest の `--exclude '**/*.integration.test.ts'` で
   integration をスキップする。
@@ -20,12 +20,14 @@ concurrent / OCC 挙動を検証する integration 層を分けることで、�
 ### Integration (`pnpm test:integration`)
 
 - **対象**: Drizzle SQLite アダプタ実装、adapter × application 連携、
-  concurrent / OCC（optimistic concurrency control）シナリオ、worker の
-  lease 挙動。
-- **依存**: 実 SQLite（tempfile + WAL モード）。`setupTestContainer()` が
-  migration を流した上でコンテナを組み、afterEach で tempfile を削除する。
-- **狙い**: transaction rollback、`SQLITE_BUSY` リトライ、`OptimisticLockFailure`、
-  outbox の `claimPending` / `markProcessed` をリアルに確認する。
+  concurrent / OCC（optimistic concurrency control）シナリオ、outbox の
+  poll / dispatch 挙動。
+- **依存**: 実 SQLite（in-memory）。`setupTestContainer()` が
+  `:memory:` 上に migration を流したコンテナを組み、afterEach で client を
+  close する。
+- **狙い**: transaction rollback、adapter 内蔵の `SQLITE_BUSY` リトライ、
+  `OptimisticLockFailure`、outbox の `listPending` / `markProcessed` を
+  リアルに確認する。
 - **速度**: unit の 10 倍程度。普段は `pnpm test:unit` で回し、adapter を
   触ったときや PR 前に `pnpm test:integration` を流す。
 - **命名**: `**/__tests__/<target>.integration.test.ts`（例: `todo.integration.test.ts`,
@@ -72,13 +74,13 @@ it("records a todo.created event", async () => {
 
 ## Real DB test（integration）方針
 
-- `setupTestContainer()` が temp SQLite file を作り、migration を流し、
-  `RetryingUnitOfWorkProvider(DrizzleSqliteUnitOfWorkProvider(db), isRetryableError)`
-  の production 相当ワイヤリングでコンテナを返す。
-- **WAL モード** + `PRAGMA busy_timeout=5000` を有効化済み。concurrent writer
-  テスト（outbox claim の並列実行、changeTodoStatus の OCC retry）が現実的に走る。
-- afterEach で temp file を `unlink`。retry decorator の指数バックオフが
-  乗るので `testTimeout: 15_000` を `vitest.config.ts` で設定している。
+- `setupTestContainer()` が `:memory:` SQLite client を作り、migration を流し、
+  `DrizzleSqliteUnitOfWorkProvider(db)` の production 相当ワイヤリングで
+  コンテナを返す。adapter は `SQLITE_BUSY` / `SQLITE_LOCKED` を内部で
+  retry するので、application 層は transient 失敗を意識しない。
+- afterEach で libsql client を close。adapter の transient retry の
+  指数バックオフが乗るので `testTimeout: 15_000` を `vitest.config.ts` で
+  設定している。
 - concurrent / OCC を意識したテストを書くときは、`Promise.all` で
   `run` を同時発火させて `OptimisticLockFailure` を観測する、
   などのパターンを使う。
@@ -95,9 +97,9 @@ it("records a todo.created event", async () => {
 
 - `vitest.config.ts` は `testTimeout: 15_000`, `hookTimeout: 15_000`。
   unit は数百ミリ秒で終わるのでこの上限は実質 integration 専用。
-- `RetryingUnitOfWorkProvider` のバックオフが stack すると 1 テストで
+- adapter 内蔵の transient retry のバックオフが stack すると 1 テストで
   数秒消費しうる。flaky を感じたら個別に `test.extend` / `vi.useFakeTimers` で
-  時計を固定する前に、まず claim の lease 時間とバックオフ設定を確認する。
+  時計を固定する前に、まず adapter のリトライ設定を確認する。
 - 再試行のないテスト（単純な CRUD 成功パス等）がタイムアウトする場合は
   `SQLITE_BUSY` が潜んでいることが多い。integration の方で再現するか確認する。
 

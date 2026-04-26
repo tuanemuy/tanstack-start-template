@@ -10,12 +10,8 @@ import "@tanstack/react-start/server-only";
 
 import { getDatabase } from "@/core/adapters/drizzleSqlite/client";
 import { DrizzleSqliteOutboxRepository } from "@/core/adapters/drizzleSqlite/repositories/outboxRepository";
-import {
-  DrizzleSqliteUnitOfWorkProvider,
-  isRetryableError,
-} from "@/core/adapters/drizzleSqlite/unitOfWork";
+import { DrizzleSqliteUnitOfWorkProvider } from "@/core/adapters/drizzleSqlite/unitOfWork";
 import type { OutboxRepository } from "@/core/domain/common/ports/outboxRepository";
-import { RetryingUnitOfWorkProvider } from "../execution/retryingUnitOfWork";
 import type { UnitOfWorkProvider } from "../execution/unitOfWork";
 import { type Clock, SystemClock } from "../ports/clock";
 import { ConsoleLogger, type Logger } from "../ports/logger";
@@ -63,11 +59,14 @@ export type ServerConfig = {
 };
 
 /**
- * Read server configuration from environment variables. Invoked lazily so
- * tooling that imports application modules without a full runtime env (e.g.
- * `drizzle-kit` generating migrations) does not fail at import time.
+ * Read server configuration from environment variables.
+ *
+ * Validated eagerly at module load (see below) so that a missing `SQLITE_URL`
+ * or `APP_URL` fails on startup instead of silently waiting for the first
+ * server-function call. Skipped under `NODE_ENV === "test"` because tests
+ * inject their own config through `createContainer({...})`.
  */
-function getServerConfig(): ServerConfig {
+function readServerConfig(): ServerConfig {
   const databaseUrl = process.env.SQLITE_URL;
   const appUrl = process.env.APP_URL;
 
@@ -78,6 +77,12 @@ function getServerConfig(): ServerConfig {
   return { databaseUrl, appUrl };
 }
 
+// Eagerly validate at import time so a missing env var aborts startup,
+// not the first request. Tests (`NODE_ENV === "test"`) inject their own
+// config, so we skip the check there.
+const _serverConfig: ServerConfig | null =
+  process.env.NODE_ENV === "test" ? null : readServerConfig();
+
 /**
  * Build a DI container from the given configuration. Tests and one-off scripts
  * call this directly with a custom config; production / SSR uses
@@ -87,17 +92,9 @@ export async function createContainer(
   config: ServerConfig,
 ): Promise<Container> {
   const db = await getDatabase(config.databaseUrl);
-  // Wrap the bare adapter with the retry decorator so transient SQLITE_BUSY
-  // contention is absorbed transparently. The `isRetryable` predicate is
-  // adapter-specific (SQLite codes) — keeping retry as a decorator means
-  // swapping drivers only requires supplying a new predicate.
-  const unitOfWorkProvider = new RetryingUnitOfWorkProvider(
-    new DrizzleSqliteUnitOfWorkProvider(db),
-    isRetryableError,
-  );
   return {
     config: { appUrl: config.appUrl },
-    unitOfWorkProvider,
+    unitOfWorkProvider: new DrizzleSqliteUnitOfWorkProvider(db),
     outboxRepository: new DrizzleSqliteOutboxRepository(db),
     clock: SystemClock,
     logger: ConsoleLogger,
@@ -114,6 +111,10 @@ export async function createContainer(
 let _containerPromise: Promise<Container> | null = null;
 export function getContainer(): Promise<Container> {
   if (_containerPromise !== null) return _containerPromise;
-  _containerPromise = createContainer(getServerConfig());
+  // `_serverConfig` is null only under NODE_ENV=test, in which case the
+  // production runtime path should never be exercised. Read fresh just in
+  // case (also lets a test that drops the test env fall back gracefully).
+  const config = _serverConfig ?? readServerConfig();
+  _containerPromise = createContainer(config);
   return _containerPromise;
 }

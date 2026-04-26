@@ -40,6 +40,12 @@ export async function changeTodoStatus({
 }: ServiceArgs<ChangeTodoStatusInput>): Promise<ChangeTodoStatusOutput> {
   const id = TodoId.create(input.id);
 
+  // Capture "now" once per usecase invocation, before the retry loop, so
+  // every attempt — and the eventual successful write — agrees on the same
+  // timestamp by construction. The application's notion of "this command's
+  // instant" should not jitter between OCC retries.
+  const now = container.clock.now();
+
   let attemptsRun = 1;
   try {
     const next = await retry(
@@ -54,10 +60,6 @@ export async function changeTodoStatus({
               );
             }
 
-            // Resolve "now" inside the retry body so each attempt gets a
-            // fresh timestamp. Hoisting it would lie about when the
-            // eventual successful mutation actually happened.
-            const now = container.clock.now();
             const { entity: next, events } = setStatusIfNeeded(
               current,
               input.status,

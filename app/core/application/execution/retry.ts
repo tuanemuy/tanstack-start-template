@@ -43,9 +43,10 @@ export type RetryOptions = Readonly<{
  * caught value.
  *
  * The callback is re-executed from the top on every retry, so callers should
- * only wrap operations that are safe to run more than once. See
- * `RetryingUnitOfWorkProvider` for the side-effect warning that applies to
- * any retried callback.
+ * only wrap operations that are safe to run more than once. Anything
+ * external to the database transaction (HTTP, telemetry, cache mutation)
+ * runs again on each attempt — keep the callback pure with respect to
+ * external systems.
  *
  * `RangeError` is thrown up front for a non-positive-integer `maxAttempts`:
  * that is a programming bug, not a runtime condition the caller should
