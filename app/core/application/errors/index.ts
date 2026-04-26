@@ -255,43 +255,17 @@ export function zodIssuesToFieldErrors(
   return acc;
 }
 
-export const SystemErrorCode = {
-  InternalServerError: "INTERNAL_SERVER_ERROR",
-  DatabaseError: "DATABASE_ERROR",
-  NetworkError: "NETWORK_ERROR",
-  StorageError: "STORAGE_ERROR",
-  DocumentGenerationError: "DOCUMENT_GENERATION_ERROR",
-  ExternalApiError: "EXTERNAL_API_ERROR",
-} as const;
-export type SystemErrorCode =
-  (typeof SystemErrorCode)[keyof typeof SystemErrorCode];
-
 /**
- * Codes whose underlying failure is typically transient (external service
- * hiccup, network blip). Used to derive `retryable` on a `SystemError`.
+ * `SystemError` lives in `app/lib/systemError.ts` so adapter code can import
+ * it without reaching upward into the application layer (hexagonal: adapters
+ * depend on shared lib + domain ports, not on application-layer modules).
+ *
+ * Re-exported here so existing call sites that already think of "application
+ * errors" as a single bucket — `import { SystemError } from
+ * "@/core/application/errors"` — keep working without churn.
  */
-const RETRYABLE_SYSTEM_CODES: ReadonlySet<SystemErrorCode> =
-  new Set<SystemErrorCode>([
-    SystemErrorCode.NetworkError,
-    SystemErrorCode.ExternalApiError,
-  ]);
-
-export class SystemError extends ApplicationError<SystemErrorCode> {
-  override readonly name = "SystemError";
-  override get retryable(): boolean {
-    return RETRYABLE_SYSTEM_CODES.has(this.code);
-  }
-
-  override toSerialized(): SerializedError {
-    return {
-      kind: "system",
-      code: this.code,
-      message: this.message,
-      retryable: this.retryable,
-    };
-  }
-}
-
-export function isSystemError(error: unknown): error is SystemError {
-  return error instanceof SystemError;
-}
+export {
+  isSystemError,
+  SystemError,
+  SystemErrorCode,
+} from "@/lib/systemError";

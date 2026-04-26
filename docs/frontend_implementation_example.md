@@ -447,13 +447,23 @@ export function createValidator<TSchema extends ZodType>(schema: TSchema) {
 ```typescript
 // app/components/todo/actions.ts
 import { createServerFn } from "@tanstack/react-start";
+import { getContainer } from "@/core/application/di/server";
+import { createTodo } from "@/core/application/todo/createTodo";
+import { withErrorResponse } from "@/core/presentation/errorResponse";
 import { createValidator } from "@/core/presentation/validator";
-import { createTodoHandler } from "./actionHandlers";
 import { createTodoSchema } from "./schema";
 
+// `createServerFn(...).handler(...)` がそもそも server-only として実行されるので、
+// usecase は handler から直接呼ぶ。`actionHandlers.ts` のような中間ファイルは
+// 置かない（ラップが二段になるだけで意味が無い）。`withErrorResponse` で
+// 例外を `AppServerError` の wire envelope に畳む。
 export const createTodoFn = createServerFn({ method: "POST" })
   .inputValidator(createValidator(createTodoSchema))
-  .handler(({ data }) => createTodoHandler(data));
+  .handler(async ({ data }) =>
+    withErrorResponse(async () =>
+      createTodo({ container: await getContainer(), input: data }),
+    ),
+  );
 ```
 
 `TodoId` のように「validation が UUIDv7 形式チェックだけ」のようなケースは
@@ -566,8 +576,8 @@ const changeStatus = useServerAction(useServerFn(changeTodoStatusFn), {
   フォームコンポーネント内に `useState<string | null>` を用意しなくて済む。
 - `fieldErrors` を **フィールド単位で** 表示したい場合は `lastError?.kind === "validation"`
   を分岐するだけ。Conform + `parseWithZod` を別途導入しなくてもこの形で足りる。
-  wire validation 失敗（`wireValidator(...)` が `AppServerError` を投げたケース）と
-  ユースケース内で投げた `ValidationError` は **同じ envelope** で届くので、
+  transport 境界の validation 失敗（`createValidator(...)` が `AppServerError` を投げた
+  ケース）とユースケース内で投げた `ValidationError` は **同じ envelope** で届くので、
   client 側の表示コードは「どの層で失敗したか」を意識しなくてよい。
 
 ---

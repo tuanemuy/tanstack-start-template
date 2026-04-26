@@ -1,4 +1,3 @@
-import { v7 as uuidv7 } from "uuid";
 import { z } from "zod";
 import type { DomainEventBase, EventDecoder } from "@/core/domain/common/event";
 import { BusinessRuleError } from "@/core/domain/error";
@@ -45,19 +44,22 @@ export type TodoEvent =
 /**
  * Factories for fresh in-process `TodoEvent`s.
  *
- * Each factory takes `occurredAt: Date` so the domain stays clock-free.
- * Callers — typically the application layer — resolve `now` once at the
- * usecase entry and thread that value into both the entity and its emitted
- * events, so the entity's `updatedAt` and the event's `occurredAt` agree by
- * construction.
+ * Each factory takes `id` and `occurredAt` as required arguments so the
+ * domain stays free of ambient I/O — no `new Date()`, no `uuidv7()` at the
+ * bottom of the call stack. Callers (typically the application layer)
+ * resolve `now` once via `container.clock.now()` and mint the event id once
+ * via `container.idGenerator.next()`, then thread both values through every
+ * factory, so the entity's `updatedAt` and the event's `occurredAt` agree by
+ * construction and ids stay deterministic in tests.
  */
 export const TodoEvents = {
   created: (
+    id: string,
     todoId: TodoId,
     title: TodoTitle,
     occurredAt: Date,
   ): TodoCreatedEvent => ({
-    id: uuidv7(),
+    id,
     type: "todo.created",
     payload: { todoId, title },
     occurredAt,
@@ -65,11 +67,12 @@ export const TodoEvents = {
   }),
 
   toggled: (
+    id: string,
     todoId: TodoId,
     completed: boolean,
     occurredAt: Date,
   ): TodoToggledEvent => ({
-    id: uuidv7(),
+    id,
     type: "todo.toggled",
     payload: { todoId, completed },
     occurredAt,
@@ -77,19 +80,24 @@ export const TodoEvents = {
   }),
 
   renamed: (
+    id: string,
     todoId: TodoId,
     title: TodoTitle,
     occurredAt: Date,
   ): TodoRenamedEvent => ({
-    id: uuidv7(),
+    id,
     type: "todo.renamed",
     payload: { todoId, title },
     occurredAt,
     aggregateId: todoId,
   }),
 
-  deleted: (todoId: TodoId, occurredAt: Date): TodoDeletedEvent => ({
-    id: uuidv7(),
+  deleted: (
+    id: string,
+    todoId: TodoId,
+    occurredAt: Date,
+  ): TodoDeletedEvent => ({
+    id,
     type: "todo.deleted",
     payload: { todoId },
     occurredAt,

@@ -1,9 +1,12 @@
 import { and, asc, inArray, isNull } from "drizzle-orm";
-import type { DomainEvent } from "@/core/domain/common/event";
+// `OutboxRepository` is an application-layer port (the outbox is an
+// infrastructural delivery mechanism for cross-aggregate publishing, not a
+// domain concept). The adapter implements that port directly.
 import type {
   OutboxEntry,
   OutboxRepository,
-} from "@/core/domain/common/ports/outboxRepository";
+} from "@/core/application/ports/outboxRepository";
+import type { DomainEvent } from "@/core/domain/common/event";
 import type { Executor } from "../client";
 import { outboxEvents } from "../schema";
 import { mapDbError } from "./helpers";

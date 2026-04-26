@@ -1,4 +1,4 @@
-import { Todo } from "@/core/domain/todo/entity";
+import { TodoEvents } from "@/core/domain/todo/events";
 import { TodoId } from "@/core/domain/todo/valueObject";
 import { NotFoundError, NotFoundErrorCode } from "../errors";
 import type { ServiceArgs } from "../types";
@@ -16,6 +16,7 @@ export async function deleteTodo({
   // captured at the usecase entry rather than inside the domain — keeps the
   // domain pure, no `new Date()` at the bottom of the call stack.
   const now = container.clock.now();
+  const eventId = container.idGenerator.next();
 
   await container.unitOfWorkProvider.run(
     async ({ todoRepository, collectEvents }) => {
@@ -26,18 +27,18 @@ export async function deleteTodo({
           `Todo not found: ${id}`,
         );
       }
-      // `Todo.delete` returns `WithEvents<null, …>` — `entity: null` marks
-      // the aggregate as gone, per the `WithEvents` convention for deletion.
-      const { events } = Todo.delete(current, now);
       // Pass the version read above so the adapter's DELETE is guarded by
       // an optimistic-lock predicate (`WHERE version = ?`). A concurrent
       // writer that already advanced the version surfaces as
       // `ConflictError(OptimisticLockFailure)`.
       await todoRepository.delete(id, current.version);
-      // `Todo.delete` always emits a single `todo.deleted` event, so the
-      // `events.length === 0` guard used on idempotent mutations doesn't
-      // apply here — a successful delete must always publish.
-      collectEvents(events);
+      // Deletion produces no successor entity, so the usecase emits the
+      // `todo.deleted` event directly rather than going through a domain
+      // method that would just return `WithEvents<null, …>` with no logic
+      // of its own. Keeping this in the usecase layer (next to the
+      // `todoRepository.delete` call) makes the "what was published when"
+      // story trivially traceable.
+      collectEvents([TodoEvents.deleted(eventId, id, now)]);
     },
   );
 }

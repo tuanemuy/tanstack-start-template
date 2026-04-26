@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import * as schema from "@/core/adapters/drizzleSqlite/schema";
 import { TodoEvents } from "@/core/domain/todo/events";
 import { TodoId, TodoTitle } from "@/core/domain/todo/valueObject";
-import { FakeLogger } from "../../__tests__/fakes/fakeLogger";
+import { FakeIdGenerator, FakeLogger } from "../../__tests__/fakes";
 import { setupTestContainer } from "../../__tests__/helpers";
 import { changeTodoStatus } from "../../todo/changeTodoStatus";
 import { createTodo } from "../../todo/createTodo";
@@ -11,6 +11,13 @@ import { deleteTodo } from "../../todo/deleteTodo";
 import { type EventDispatcher, processOutboxEvents } from "../eventRelayWorker";
 
 const T0 = new Date(0);
+
+// A `FakeIdGenerator` shared across the file feeds deterministic ids to the
+// usecase + manual `TodoEvents.*` calls below — keeps assertions focused on
+// outbox behaviour rather than UUID minting.
+const ids = new FakeIdGenerator();
+const nextId = (): string => ids.next();
+const nextTodoId = (): TodoId => TodoId.create(nextId());
 
 describe("processOutboxEvents", () => {
   const getContainer = setupTestContainer();
@@ -76,13 +83,13 @@ describe("processOutboxEvents", () => {
 
   it("respects the batchSize option", async () => {
     const container = getContainer();
-    const id = TodoId.generate();
+    const id = nextTodoId();
     const title = TodoTitle.create("batched");
     await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
       collectEvents([
-        TodoEvents.created(id, title, T0),
-        TodoEvents.toggled(id, true, T0),
-        TodoEvents.deleted(id, T0),
+        TodoEvents.created(nextId(), id, title, T0),
+        TodoEvents.toggled(nextId(), id, true, T0),
+        TodoEvents.deleted(nextId(), id, T0),
       ]);
     });
 
@@ -159,7 +166,7 @@ describe("processOutboxEvents", () => {
     const container = getContainer();
 
     const badId = "01950000-0000-7000-8000-000000000002";
-    const goodId = TodoId.generate();
+    const goodId = nextTodoId();
     const goodTitle = TodoTitle.create("ok");
     await container.db.insert(schema.outboxEvents).values({
       id: badId,
@@ -169,7 +176,7 @@ describe("processOutboxEvents", () => {
       occurredAt: new Date(0),
     });
     await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
-      collectEvents([TodoEvents.created(goodId, goodTitle, T0)]);
+      collectEvents([TodoEvents.created(nextId(), goodId, goodTitle, T0)]);
     });
 
     const dispatch: EventDispatcher = vi.fn(async () => {});
@@ -192,13 +199,13 @@ describe("processOutboxEvents", () => {
   it("tolerates dispatcher failure on one row without dropping the rest of the batch", async () => {
     const container = getContainer();
 
-    const idA = TodoId.generate();
-    const idB = TodoId.generate();
+    const idA = nextTodoId();
+    const idB = nextTodoId();
     const title = TodoTitle.create("allSettled");
     await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
       collectEvents([
-        TodoEvents.created(idA, title, T0),
-        TodoEvents.created(idB, title, T0),
+        TodoEvents.created(nextId(), idA, title, T0),
+        TodoEvents.created(nextId(), idB, title, T0),
       ]);
     });
 
@@ -224,10 +231,10 @@ describe("processOutboxEvents", () => {
   it("does not call markProcessed when every dispatch fails", async () => {
     const container = getContainer();
 
-    const id = TodoId.generate();
+    const id = nextTodoId();
     const title = TodoTitle.create("all-fail");
     await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
-      collectEvents([TodoEvents.created(id, title, T0)]);
+      collectEvents([TodoEvents.created(nextId(), id, title, T0)]);
     });
 
     const dispatch: EventDispatcher = vi.fn(async () => {
@@ -246,10 +253,10 @@ describe("processOutboxEvents", () => {
   it("accepts a caller-supplied decoder registry", async () => {
     const container = getContainer();
 
-    const id = TodoId.generate();
+    const id = nextTodoId();
     const title = TodoTitle.create("custom-registry");
     await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
-      collectEvents([TodoEvents.created(id, title, T0)]);
+      collectEvents([TodoEvents.created(nextId(), id, title, T0)]);
     });
 
     const dispatch: EventDispatcher = vi.fn(async () => {});

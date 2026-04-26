@@ -9,7 +9,7 @@ import { TodoId, TodoTitle } from "../valueObject";
  *
  * Complements the example-based tests in `valueObject.test.ts` by asserting
  * invariants over broad input distributions — length boundaries, whitespace
- * normalization, UUIDv7 uniqueness.
+ * normalization, UUIDv7 acceptance.
  */
 
 const TODO_TITLE_MAX_LENGTH = 140;
@@ -116,40 +116,84 @@ describe("TodoTitle.create (property)", () => {
   });
 });
 
-describe("TodoId.generate / create (property)", () => {
-  it("generates values that round-trip through TodoId.create", () => {
+describe("TodoId.create (property)", () => {
+  // Hex digit arbitrary used to assemble valid UUIDv7 strings.
+  const hexArb = fc.stringMatching(/^[0-9a-f]$/);
+
+  function buildUuidV7(rest: string[], variantNibble: string): string {
+    // Canonical form: 8-4-4-4-12 with version `7` at the start of the third
+    // group and variant `8|9|a|b` at the start of the fourth.
+    const seg = (n: number, start: number) =>
+      rest.slice(start, start + n).join("");
+    return [
+      seg(8, 0),
+      seg(4, 8),
+      `7${seg(3, 12)}`,
+      `${variantNibble}${seg(3, 15)}`,
+      seg(12, 18),
+    ].join("-");
+  }
+
+  it("accepts any well-formed UUIDv7 string", () => {
     fc.assert(
-      fc.property(fc.integer({ min: 1, max: 50 }), (_n) => {
-        const generated = TodoId.generate();
-        // Must survive a round-trip without throwing.
-        const reparsed = TodoId.create(generated);
-        expect(reparsed).toBe(generated);
-      }),
+      fc.property(
+        fc.array(hexArb, { minLength: 30, maxLength: 30 }),
+        fc.constantFrom("8", "9", "a", "b"),
+        (rest, variant) => {
+          const raw = buildUuidV7(rest, variant);
+          const id = TodoId.create(raw);
+          // Brand erases at runtime, value round-trips.
+          expect(id as unknown as string).toBe(raw);
+        },
+      ),
     );
   });
 
-  it("produces unique ids across a batch", () => {
-    // UUIDv7 encodes a millisecond timestamp plus a random payload, so
-    // `1000` calls in a row are astronomically unlikely to collide. This
-    // property protects against accidental regressions such as "freeze
-    // the randomness source" in a future refactor.
-    const count = 1000;
-    const seen = new Set<string>();
-    for (let i = 0; i < count; i++) {
-      seen.add(TodoId.generate());
-    }
-    expect(seen.size).toBe(count);
-  });
-
-  it("matches the UUIDv7 pattern (version 7 nibble, RFC4122 variant)", () => {
+  it("rejects UUIDs with the wrong version nibble", () => {
     fc.assert(
-      fc.property(fc.integer({ min: 1, max: 100 }), (_n) => {
-        const id = TodoId.generate() as unknown as string;
-        // Version nibble is at position 14 (0-indexed) of the canonical form.
-        expect(id[14]).toBe("7");
-        // Variant nibble at position 19 must be one of 8, 9, a, b.
-        expect(["8", "9", "a", "b"]).toContain(id[19]?.toLowerCase());
-      }),
+      fc.property(
+        fc.array(hexArb, { minLength: 30, maxLength: 30 }),
+        fc.constantFrom("8", "9", "a", "b"),
+        // Anything in 0..f except '7'.
+        fc.constantFrom(
+          "0",
+          "1",
+          "2",
+          "3",
+          "4",
+          "5",
+          "6",
+          "8",
+          "9",
+          "a",
+          "b",
+          "c",
+          "d",
+          "e",
+          "f",
+        ),
+        (rest, variant, badVersion) => {
+          // Same shape as buildUuidV7 but with a forced wrong version nibble.
+          const seg = (n: number, start: number) =>
+            rest.slice(start, start + n).join("");
+          const raw = [
+            seg(8, 0),
+            seg(4, 8),
+            `${badVersion}${seg(3, 12)}`,
+            `${variant}${seg(3, 15)}`,
+            seg(12, 18),
+          ].join("-");
+          try {
+            TodoId.create(raw);
+            expect.fail(`expected throw for version=${badVersion}`);
+          } catch (error) {
+            expect(isBusinessRuleError(error)).toBe(true);
+            if (isBusinessRuleError(error)) {
+              expect(error.code).toBe(TodoErrorCode.InvalidId);
+            }
+          }
+        },
+      ),
     );
   });
 });

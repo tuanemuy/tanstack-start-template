@@ -1,7 +1,7 @@
 import type { DomainEvent, EventDecoder } from "@/core/domain/common/event";
-import type { OutboxEntry } from "@/core/domain/common/ports/outboxRepository";
 import { decodeTodoEvent } from "@/core/domain/todo/events";
 import type { Container } from "../di/server";
+import type { OutboxEntry } from "../ports/outboxRepository";
 
 /**
  * EventRelayWorker

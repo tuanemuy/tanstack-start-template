@@ -8,14 +8,20 @@ concurrent / OCC 挙動を検証する integration 層を分けることで、�
 
 ### Unit (`pnpm test:unit`)
 
-- **対象**: domain 層 + application 層のロジック。
-- **依存**: in-memory fake repository (`app/core/application/__tests__/fakes/`)。
-  `FakeTodoRepository` / `FakeOutboxRepository` / `FakeUnitOfWorkProvider` /
-  `FakeClock` / `FakeLogger` を提供する。
-- **狙い**: 振る舞いの確認、エラーコード分岐、イベント emit、バリデーション。
+- **対象**: domain 層 + application 層のロジック（pure な部分）。
+- **依存**: 在庫している fake は `app/core/application/__tests__/fakes/` 以下の
+  `FakeIdGenerator`（決定論的 UUIDv7 ストリーム）と `FakeLogger`（記録用 Logger）
+  の 2 つだけ。`Clock` はフリースタンディング関数として `now: Date` を usecase に
+  渡せば良いし、リポジトリ系の fake は意図的に置いていない（in-memory fake で
+  transaction / OCC を模倣しても integration の代替にはならないという判断）。
+  application 層のロジックを fake で網羅することは目指さず、振る舞い検証は
+  integration test に寄せる。
+- **狙い**: domain 層（value object / entity / events のデコード）の不変条件、
+  エラーコード分岐、`retry()` のような application-層ヘルパーの挙動確認。
 - **速度**: 数ミリ秒〜十数ミリ秒。Vitest の `--exclude '**/*.integration.test.ts'` で
   integration をスキップする。
-- **命名**: `**/__tests__/<target>.test.ts`（例: `todo.test.ts`）。
+- **命名**: `**/__tests__/<target>.test.ts`（例: `entity.test.ts`, `events.test.ts`,
+  `retry.test.ts`）。
 
 ### Integration (`pnpm test:integration`)
 
@@ -38,39 +44,37 @@ concurrent / OCC 挙動を検証する integration 層を分けることで、�
 - **対象**: value object の不変条件、entity の状態遷移、ランダム入力で
   落ちるエッジケース。
 - **依存**: `fast-check`（devDependency）。
-- **狙い**: 「trim 後に長さが 1-140 なら必ず受理される」「toggle を 2 回
-  かけると元の状態に戻る」「change status が同じ入力で冪等」等を数百サンプルで自動検証する。
+- **狙い**: 「trim 後に長さが 1-140 なら必ず受理される」「`complete` → `reopen`
+  で元の active 状態に戻る」「change status が同じ入力で冪等」等を数百サンプルで
+  自動検証する。
 - **使う場面**: 境界値（TitleEmpty / TitleTooLong）、状態遷移（active ⇄
   completed）、不変条件（`version` の単調増加）。独自の arbitrary は必要最小限に
   とどめ、`fc.string()` / `fc.integer()` の組み合わせで書けるものはそれで済ます。
 - **命名**: `**/__tests__/<target>.property.test.ts`（例:
   `valueObject.property.test.ts`, `entity.property.test.ts`）。
 
-## Fake repository 方針
+## Fake 方針
 
-`app/core/application/__tests__/fakes/` に在庫する。
+`app/core/application/__tests__/fakes/` に在庫しているのは現状以下の 2 つ：
 
-- **実装の形**: `Map<Id, Entity>` + 配列で outbox 行を保持する素朴な in-memory
-  実装。port interface にだけ合わせる。
-- **制約**: transaction を **模倣しない**。`run` のコールバック内で
-  throw しても、既に書いた Map 変更は巻き戻らない（即 commit 等価）。concurrent
-  writer レース、`SQLITE_BUSY`、OCC violation などアダプタ起因の挙動は再現
-  できない。
-- **使う場面**: application service 層のロジックテスト、event emit の検証、
-  入力バリデーション確認。rollback や並行性の検証は integration 層に寄せる。
-- **セットアップ**: `setupFakeTestContainer()` が `beforeEach` で
-  `FakeUnitOfWorkProvider` を差し込んだコンテナを用意する。afterEach は不要
-  （毎テスト丸ごと再構築する）。
+- **`FakeIdGenerator`** — カウンタを UUIDv7 のテンプレに埋め込む形で決定論的な
+  id を返す。出力は `TodoId.create` のバリデーション（UUIDv7 正規表現）を通る。
+  `seed` で開始番号を固定でき、生成 id がテストの outbox 行よりも後に並ぶよう
+  prefix を `f0...` にしてある（`(createdAt, id)` ソート時にテスト固定の
+  `01950000-...` 系より後に来る）。
+- **`FakeLogger`** — `info` / `warn` / `error` の各呼び出しを `entries` 配列に
+  記録するだけ。`byLevel("error")` で取り出して relay worker / usecase の観測性
+  挙動を assert する。
 
-```typescript
-const getContainer = setupFakeTestContainer();
+リポジトリ・UoW・Clock 用の fake は意図的に持たない。
 
-it("records a todo.created event", async () => {
-  const container = getContainer();
-  await createTodo({ container, input: { title: "foo" } });
-  expect(container.fakeUow.getRecordedEvents()).toHaveLength(1);
-});
-```
+- リポジトリ / UoW を in-memory で fake にしても transaction、`SQLITE_BUSY`
+  retry、`OptimisticLockFailure` のような adapter 由来の本質的挙動は再現できない。
+  application service のロジックテストは integration 層（実 SQLite）で行う方が
+  実害をカバーできる。
+- `Clock` は単なる `() => Date` なので、テスト内で `new Date(0)` などの定数を
+  作って usecase / domain に渡せば足りる。port のオブジェクトとして fake 化する
+  必要は無い。
 
 ## Real DB test（integration）方針
 
@@ -88,8 +92,9 @@ it("records a todo.created event", async () => {
 ## Property-based 方針
 
 - fast-check を採用しているのは **境界値 + 不変条件** の確認が主目的。
-- ドメインの各 value object ファクトリ、entity の state transition、`toggle`
-  の involution（2 回かけると元に戻る）、set 系 usecase の冪等性のような性質検査に有用。
+- ドメインの各 value object ファクトリ、entity の state transition
+  （`complete` → `reopen` で active 状態に戻る、`rename` を同じ値で繰り返しても
+  version が増えない冪等性、など）、set 系 usecase の冪等性のような性質検査に有用。
 - custom arbitrary を書く前に、既存の `fc.string()` / `fc.integer()` と `filter`
   で足りるか検討する。ドメインを fast-check に過度に依存させない。
 
@@ -119,9 +124,10 @@ it("records a todo.created event", async () => {
 
 - **Domain**: ~100% を狙う。ロジックが局所的で FF 化しやすく、テスト漏れが
   そのまま不変条件崩壊に直結する。
-- **Application (unit)**: ~80%。主要なハッピーパス + 主要なエラー分岐。
-  orchestration の冗長分岐はカバレッジより「動作検証した」ことを重視する。
-- **Adapter (integration)**: "代表パス" 単位。OCC 成功 / OCC 失敗、claim
-  成功 / lease 失効後の再 claim、upsert の新規 / 更新など経路ごとに 1 本は用意。
+- **Application + Adapter (integration)**: "代表パス" 単位。OCC 成功 / OCC 失敗、
+  outbox の同一 tx 配置、relay worker の decode 失敗 per-row 隔離、concurrent
+  delete のレースなど、経路ごとに 1 本は用意する。usecase の orchestration
+  カバレッジは fake で網羅するより integration で「実 DB 上で動いた」ことを
+  重視する。
 - **Frontend**: 必要最小限。server function の wire 型境界と UI ロジックは
   Conform / Zod と `useServerAction` の挙動で大枠カバーされる。

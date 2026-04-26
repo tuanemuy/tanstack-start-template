@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { FakeIdGenerator } from "@/core/application/__tests__/fakes";
 import { setupTestContainer } from "@/core/application/__tests__/helpers";
 import { ConflictErrorCode, isConflictError } from "@/core/application/errors";
 import { Todo } from "@/core/domain/todo/entity";
@@ -13,6 +14,10 @@ import * as schema from "../schema";
  * - End-to-end row encoding/decoding through `toTodo`.
  * - Database-level version increment on the optimistic-lock UPDATE.
  * - Real SQLite pagination / ordering semantics.
+ *
+ * Aggregate ids and event ids are produced by a `FakeIdGenerator` rather
+ * than the (now-removed) `TodoId.generate()` — id minting moved to the
+ * application-layer port; the domain only consumes finished strings.
  */
 
 describe("DrizzleSqliteTodoRepository (integration)", () => {
@@ -21,9 +26,15 @@ describe("DrizzleSqliteTodoRepository (integration)", () => {
   // etc.) are exercised separately by passing per-row dates into seed inserts.
   const NOW = new Date("2026-01-01T00:00:00.000Z");
 
+  const ids = new FakeIdGenerator();
+  const nextId = () => ids.next();
+  const nextTodoId = () => TodoId.create(nextId());
+  const make = (title: string) =>
+    Todo.create({ id: nextTodoId(), eventId: nextId(), title }, NOW);
+
   it("save → findById round-trips an ActiveTodo with all fields intact", async () => {
     const container = getContainer();
-    const { entity: created } = Todo.create({ title: "round-trip" }, NOW);
+    const { entity: created } = make("round-trip");
 
     await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
       await todoRepository.save(created);
@@ -51,12 +62,12 @@ describe("DrizzleSqliteTodoRepository (integration)", () => {
 
   it("save → findById lifts the completed flag into a CompletedTodo variant", async () => {
     const container = getContainer();
-    const { entity: active } = Todo.create({ title: "lift" }, NOW);
+    const { entity: active } = make("lift");
     await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
       await todoRepository.save(active);
     });
 
-    const { entity: completed } = Todo.complete(active, NOW);
+    const { entity: completed } = Todo.complete(active, nextId(), NOW);
     await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
       await todoRepository.save(completed);
     });
@@ -70,14 +81,14 @@ describe("DrizzleSqliteTodoRepository (integration)", () => {
 
   it("increments the stored version column on each successful save", async () => {
     const container = getContainer();
-    const { entity: active } = Todo.create({ title: "version" }, NOW);
+    const { entity: active } = make("version");
     await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
       await todoRepository.save(active);
     });
 
-    const { entity: toggled } = Todo.toggle(active, NOW);
+    const { entity: completed } = Todo.complete(active, nextId(), NOW);
     await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
-      await todoRepository.save(toggled);
+      await todoRepository.save(completed);
     });
 
     const rows = await container.db.select().from(schema.todos);
@@ -87,21 +98,21 @@ describe("DrizzleSqliteTodoRepository (integration)", () => {
 
   it("raises ConflictError(OptimisticLockFailure) when expectedVersion does not match", async () => {
     const container = getContainer();
-    const { entity: active } = Todo.create({ title: "occ" }, NOW);
+    const { entity: active } = make("occ");
     await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
       await todoRepository.save(active);
     });
 
-    // Someone else toggles the row, advancing DB version to 1.
-    const { entity: toggled } = Todo.toggle(active, NOW);
+    // Someone else completes the row, advancing DB version to 1.
+    const { entity: completedFirst } = Todo.complete(active, nextId(), NOW);
     await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
-      await todoRepository.save(toggled);
+      await todoRepository.save(completedFirst);
     });
 
     // A stale client tries to save a version-based update derived from the
     // original (version 0) read — predicate `WHERE version = 0` matches
     // nothing and the adapter surfaces a ConflictError.
-    const { entity: stale } = Todo.toggle(active, NOW);
+    const { entity: stale } = Todo.complete(active, nextId(), NOW);
     let caught: unknown;
     try {
       await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
@@ -119,7 +130,7 @@ describe("DrizzleSqliteTodoRepository (integration)", () => {
 
   it("delete with mismatched expectedVersion raises ConflictError", async () => {
     const container = getContainer();
-    const { entity: active } = Todo.create({ title: "del-occ" }, NOW);
+    const { entity: active } = make("del-occ");
     await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
       await todoRepository.save(active);
     });
@@ -146,7 +157,7 @@ describe("DrizzleSqliteTodoRepository (integration)", () => {
 
   it("delete against a non-existent id raises ConflictError (no silent no-op)", async () => {
     const container = getContainer();
-    const ghostId = TodoId.generate();
+    const ghostId = nextTodoId();
 
     let caught: unknown;
     try {
@@ -164,8 +175,8 @@ describe("DrizzleSqliteTodoRepository (integration)", () => {
     const container = getContainer();
     const base = new Date("2026-02-01T00:00:00.000Z").getTime();
     // Seed rows directly with staggered timestamps so the ORDER BY is
-    // unambiguous — `Todo.create` uses `new Date()` internally which would
-    // cluster within a single millisecond and confuse stable ordering.
+    // unambiguous. Bypassing the usecase here also lets us pick exact ids
+    // that anchor the assertion on `row-N` titles below.
     for (let i = 0; i < 5; i++) {
       const at = new Date(base + i * 1000);
       await container.db.insert(schema.todos).values({
@@ -201,13 +212,13 @@ describe("DrizzleSqliteTodoRepository (integration)", () => {
   it("findAll returns todos in descending createdAt order", async () => {
     const container = getContainer();
     const base = new Date("2026-03-01T00:00:00.000Z").getTime();
-    const ids = [
+    const seedIds = [
       "019db000-0000-7000-8000-000000000011",
       "019db000-0000-7000-8000-000000000012",
       "019db000-0000-7000-8000-000000000013",
     ];
-    for (let i = 0; i < ids.length; i++) {
-      const id = ids[i];
+    for (let i = 0; i < seedIds.length; i++) {
+      const id = seedIds[i];
       if (!id) continue;
       const at = new Date(base + i * 2000);
       await container.db.insert(schema.todos).values({
@@ -222,7 +233,7 @@ describe("DrizzleSqliteTodoRepository (integration)", () => {
     const all = await container.unitOfWorkProvider.run(
       async ({ todoRepository }) => todoRepository.findAll(),
     );
-    expect(all.map((t) => t.id)).toEqual([ids[2], ids[1], ids[0]]);
+    expect(all.map((t) => t.id)).toEqual([seedIds[2], seedIds[1], seedIds[0]]);
   });
 
   it("rowToTodo re-validates value-object invariants (corrupt id → SystemError)", async () => {

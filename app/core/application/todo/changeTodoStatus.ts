@@ -1,7 +1,8 @@
+import type { Container } from "@/core/application/di/server";
 import { Todo } from "@/core/domain/todo/entity";
+import type { TodoEvent } from "@/core/domain/todo/events";
 import { TodoId } from "@/core/domain/todo/valueObject";
 import {
-  ConflictError,
   ConflictErrorCode,
   isConflictError,
   NotFoundError,
@@ -30,9 +31,9 @@ const MAX_OCC_ATTEMPTS = 2;
  * "Set status to X" is idempotent — re-reading and re-writing on an OCC
  * conflict is safe — so the local retry loop sits inside the usecase
  * rather than surfacing the conflict to the caller. After exhausting the
- * budget we translate the underlying `ConflictError(OptimisticLockFailure)`
- * into one whose message names the attempt count, so operators can tell
- * "concurrent writers, retried" apart from a first-attempt conflict.
+ * budget, the underlying `ConflictError(OptimisticLockFailure)` propagates
+ * verbatim; callers (and observability) get the original error with its
+ * cause chain intact rather than a re-wrapped duplicate.
  */
 export async function changeTodoStatus({
   container,
@@ -46,54 +47,36 @@ export async function changeTodoStatus({
   // instant" should not jitter between OCC retries.
   const now = container.clock.now();
 
-  let attemptsRun = 1;
-  try {
-    const next = await retry(
-      () =>
-        container.unitOfWorkProvider.run(
-          async ({ todoRepository, collectEvents }) => {
-            const current = await todoRepository.findById(id);
-            if (!current) {
-              throw new NotFoundError(
-                NotFoundErrorCode.TodoNotFound,
-                `Todo not found: ${id}`,
-              );
-            }
+  const next = await retry(() => attempt(container, id, input.status, now), {
+    maxAttempts: MAX_OCC_ATTEMPTS,
+    shouldRetry: isOptimisticLockFailure,
+  });
+  return { todo: toTodoView(next) };
+}
 
-            const { entity: next, events } = setStatusIfNeeded(
-              current,
-              input.status,
-              now,
-            );
-            if (events.length === 0) return current;
-            await todoRepository.save(next);
-            collectEvents(events);
-            return next;
-          },
-        ),
-      {
-        maxAttempts: MAX_OCC_ATTEMPTS,
-        shouldRetry: isOptimisticLockFailure,
-        onRetry: (attempt) => {
-          attemptsRun = attempt + 1;
-        },
-      },
-    );
-    return { todo: toTodoView(next) };
-  } catch (error) {
-    if (
-      attemptsRun >= MAX_OCC_ATTEMPTS &&
-      isOptimisticLockFailure(error) &&
-      isConflictError(error)
-    ) {
-      throw new ConflictError(
-        ConflictErrorCode.OptimisticLockFailure,
-        `Failed to change todo status after ${attemptsRun} attempts due to concurrent writers`,
-        error,
-      );
-    }
-    throw error;
-  }
+async function attempt(
+  container: Container,
+  id: TodoId,
+  status: TodoStatusInput,
+  now: Date,
+): Promise<Todo> {
+  return container.unitOfWorkProvider.run(
+    async ({ todoRepository, collectEvents }) => {
+      const current = await todoRepository.findById(id);
+      if (!current) {
+        throw new NotFoundError(
+          NotFoundErrorCode.TodoNotFound,
+          `Todo not found: ${id}`,
+        );
+      }
+
+      const transition = setStatusIfNeeded(container, current, status, now);
+      if (transition === null) return current;
+      await todoRepository.save(transition.entity);
+      collectEvents(transition.events);
+      return transition.entity;
+    },
+  );
 }
 
 function isOptimisticLockFailure(error: unknown): boolean {
@@ -103,17 +86,22 @@ function isOptimisticLockFailure(error: unknown): boolean {
   );
 }
 
+/**
+ * Returns the next state + events when the status actually needs to change,
+ * or `null` for an already-in-target-state no-op. Mints the event id from
+ * the container's `IdGenerator` only when a transition is happening — keeps
+ * id consumption tight to actual emissions.
+ */
 function setStatusIfNeeded(
+  container: Container,
   todo: Todo,
   status: TodoStatusInput,
   now: Date,
-): ReturnType<typeof Todo.complete> | ReturnType<typeof Todo.reopen> {
+): { entity: Todo; events: readonly TodoEvent[] } | null {
   if (status === "completed") {
-    return Todo.isCompleted(todo)
-      ? { entity: todo, events: [] }
-      : Todo.complete(todo, now);
+    if (Todo.isCompleted(todo)) return null;
+    return Todo.complete(todo, container.idGenerator.next(), now);
   }
-  return Todo.isActive(todo)
-    ? { entity: todo, events: [] }
-    : Todo.reopen(todo, now);
+  if (Todo.isActive(todo)) return null;
+  return Todo.reopen(todo, container.idGenerator.next(), now);
 }

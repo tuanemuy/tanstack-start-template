@@ -1,4 +1,9 @@
-import { SystemError, SystemErrorCode } from "@/core/application/errors";
+// Adapters import `SystemError` from `app/lib/` directly — the application
+// layer's errors module re-exports the same class for usecase callers, but
+// reaching across into `core/application/` from an adapter would invert the
+// hexagonal dependency direction. The shared lib is the legitimate "below
+// every layer" home.
+import { SystemError, SystemErrorCode } from "@/lib/systemError";
 
 /**
  * Wrap a database operation so that any thrown value surfaces as a

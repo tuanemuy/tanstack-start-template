@@ -3,8 +3,9 @@
  *
  * Runs outside the server runtime (invoked via `pnpm db:seed` → `tsx`), so
  * it does not go through the server DI's `server-only` path. Instead we
- * reuse `createContainer` to build a container on-demand from a direct env
- * read.
+ * reuse `readServerConfig` + `createContainer` so this script reads env the
+ * same way the running server does — no parallel "fallback to localhost"
+ * defaults that could drift from production behaviour.
  *
  * Each seed entry flows through the real `createTodo` usecase so that the
  * resulting rows (and their outbox events) look identical to what the
@@ -13,7 +14,10 @@
 
 import "dotenv/config";
 
-import { createContainer } from "@/core/application/di/server";
+import {
+  createContainer,
+  readServerConfig,
+} from "@/core/application/di/server";
 import { createTodo } from "@/core/application/todo/createTodo";
 
 type SeedTodo = { title: string };
@@ -25,13 +29,10 @@ const SEED_TODOS: readonly SeedTodo[] = [
 ];
 
 async function main(): Promise<void> {
-  const databaseUrl = process.env.SQLITE_URL;
-  const appUrl = process.env.APP_URL ?? "http://localhost:3000";
-  if (!databaseUrl) {
-    throw new Error("SQLITE_URL environment variable is not set");
-  }
-
-  const container = await createContainer({ databaseUrl, appUrl });
+  // Single env-read implementation. If `APP_URL` / `SQLITE_URL` are missing,
+  // `readServerConfig` throws the same error users see on server startup.
+  const config = readServerConfig();
+  const container = await createContainer(config);
 
   for (const seed of SEED_TODOS) {
     const { todo } = await createTodo({

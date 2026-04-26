@@ -81,17 +81,17 @@ describe("TodoId", () => {
     }
   });
 
-  it("round-trips a freshly generated UUIDv7", () => {
-    const generated = TodoId.generate();
-    const reparsed = TodoId.create(generated);
-    expect(reparsed).toBe(generated);
+  it("accepts a valid UUIDv7 string and returns a branded TodoId", () => {
+    const raw = "01950000-0000-7000-8000-000000000001";
+    const created = TodoId.create(raw);
+    // Brand types erase to string at runtime — the underlying value is preserved.
+    expect(created as unknown as string).toBe(raw);
   });
 
-  it("generates unique values across successive calls", () => {
-    const ids = new Set<string>();
-    for (let i = 0; i < 20; i++) {
-      ids.add(TodoId.generate());
-    }
-    expect(ids.size).toBe(20);
+  it("is referentially equal across successive create calls with the same input", () => {
+    const raw = "01950000-0000-7000-8000-000000000abc";
+    const a = TodoId.create(raw);
+    const b = TodoId.create(raw);
+    expect(a).toBe(b);
   });
 });

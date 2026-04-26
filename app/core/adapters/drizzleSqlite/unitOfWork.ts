@@ -4,6 +4,10 @@ import type {
   UnitOfWorkProvider,
 } from "@/core/application/execution/unitOfWork";
 import type { DomainEvent } from "@/core/domain/common/event";
+// Importing the port file is what loads its `declare module` augmentation
+// (the `todoRepository: TodoRepository` slot on `UnitOfWorkContext`). Without
+// this side-effect import the assignment below would not type-check.
+import "@/core/domain/todo/ports/todoRepository";
 import type { Database, Executor } from "./client";
 import { DrizzleSqliteOutboxRepository } from "./repositories/outboxRepository";
 import { DrizzleSqliteTodoRepository } from "./repositories/todoRepository";

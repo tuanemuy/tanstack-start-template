@@ -1,6 +1,6 @@
 import type { WithEvents } from "@/core/domain/common/event";
 import { type TodoEvent, TodoEvents } from "./events";
-import { TodoId, TodoTitle } from "./valueObject";
+import { type TodoId, TodoTitle } from "./valueObject";
 
 type TodoBase = Readonly<{
   id: TodoId;
@@ -22,7 +22,9 @@ type TodoBase = Readonly<{
  * An open todo — still pending completion.
  *
  * Transitions: `complete` → `CompletedTodo`, `rename` → `ActiveTodo`,
- * `delete` → gone.
+ * deletion → gone (modelled as a `todo.deleted` event emitted from the
+ * usecase layer; there is no `Todo.delete` because the aggregate produces
+ * no state of its own at deletion time).
  */
 export type ActiveTodo = TodoBase & Readonly<{ status: "active" }>;
 
@@ -30,7 +32,7 @@ export type ActiveTodo = TodoBase & Readonly<{ status: "active" }>;
  * A todo that has been marked done.
  *
  * Transitions: `reopen` → `ActiveTodo`, `rename` → `CompletedTodo`,
- * `delete` → gone.
+ * deletion → gone.
  */
 export type CompletedTodo = TodoBase & Readonly<{ status: "completed" }>;
 
@@ -49,10 +51,13 @@ export type Todo = ActiveTodo | CompletedTodo;
  * `now` is taken as a parameter (rather than reaching for `new Date()`) so
  * the function stays pure: callers (typically the application layer) resolve
  * the current time once via the `Clock` port and thread that value into every
- * domain operation that should "happen at the same instant".
+ * domain operation that should "happen at the same instant". Likewise
+ * `eventId` is supplied by the caller (via the `IdGenerator` port) — the
+ * domain layer never mints ids itself.
  */
 function complete(
   todo: ActiveTodo,
+  eventId: string,
   now: Date,
 ): WithEvents<CompletedTodo, TodoEvent> {
   const next: CompletedTodo = {
@@ -63,16 +68,17 @@ function complete(
   };
   return {
     entity: next,
-    events: [TodoEvents.toggled(next.id, true, now)],
+    events: [TodoEvents.toggled(eventId, next.id, true, now)],
   };
 }
 
 /**
  * Reopen a completed todo. Compile-time-guarded: cannot be called on an
- * `ActiveTodo`. See {@link complete} for the rationale on `now`.
+ * `ActiveTodo`. See {@link complete} for the rationale on `now` / `eventId`.
  */
 function reopen(
   todo: CompletedTodo,
+  eventId: string,
   now: Date,
 ): WithEvents<ActiveTodo, TodoEvent> {
   const next: ActiveTodo = {
@@ -83,41 +89,8 @@ function reopen(
   };
   return {
     entity: next,
-    events: [TodoEvents.toggled(next.id, false, now)],
+    events: [TodoEvents.toggled(eventId, next.id, false, now)],
   };
-}
-
-/**
- * Flip between `active` and `completed`. Declared as an overloaded function
- * so that the result type preserves the opposite variant at compile time —
- * `toggle(ActiveTodo, now)` is typed as `WithEvents<CompletedTodo, …>` and
- * vice versa. Callers that pass the union fall back to `WithEvents<Todo, …>`.
- *
- * The runtime implementation dispatches on `status` so the
- * "illegal transition" invariants of `complete` / `reopen` stay intact.
- */
-function toggle(
-  todo: ActiveTodo,
-  now: Date,
-): WithEvents<CompletedTodo, TodoEvent>;
-function toggle(
-  todo: CompletedTodo,
-  now: Date,
-): WithEvents<ActiveTodo, TodoEvent>;
-function toggle(todo: Todo, now: Date): WithEvents<Todo, TodoEvent>;
-function toggle(todo: Todo, now: Date): WithEvents<Todo, TodoEvent> {
-  switch (todo.status) {
-    case "active":
-      return complete(todo, now);
-    case "completed":
-      return reopen(todo, now);
-    default: {
-      // Exhaustiveness: adding a new `status` variant becomes a compile
-      // error here because `_exhaustive: never` would no longer hold.
-      const _exhaustive: never = todo;
-      return _exhaustive;
-    }
-  }
 }
 
 export const Todo = {
@@ -129,48 +102,22 @@ export const Todo = {
     todo.status === "completed",
 
   /**
-   * Exhaustive pattern match over the `status` union.
-   *
-   * Use when both variants need distinct handling and the compiler should
-   * enforce that every case is covered (adding a new variant would become
-   * a compile error here until handled).
-   */
-  match: <R>(
-    todo: Todo,
-    handlers: {
-      active: (t: ActiveTodo) => R;
-      completed: (t: CompletedTodo) => R;
-    },
-  ): R => {
-    switch (todo.status) {
-      case "active":
-        return handlers.active(todo);
-      case "completed":
-        return handlers.completed(todo);
-      default: {
-        // Exhaustiveness sentinel: adding a new `status` variant becomes a
-        // compile error here until this switch is updated.
-        const _exhaustive: never = todo;
-        return _exhaustive;
-      }
-    }
-  },
-
-  /**
    * Create a new todo aggregate. Always starts in the `active` state with
    * `version = 0`.
    *
-   * `now` is required and is used for both `createdAt` and `updatedAt` plus
-   * the emitted event's `occurredAt`, so the aggregate and its first
-   * event share an instant by construction.
+   * `id` and the event id are supplied by the caller (via the application
+   * layer's `IdGenerator` port) so the domain stays deterministic — no
+   * `uuidv7()` at the bottom of the call stack. `now` is used for both
+   * `createdAt` / `updatedAt` and the emitted event's `occurredAt`, so the
+   * aggregate and its first event share an instant by construction.
    */
   create: (
-    params: { title: string },
+    params: { id: TodoId; eventId: string; title: string },
     now: Date,
   ): WithEvents<ActiveTodo, TodoEvent> => {
     const todo: ActiveTodo = {
       status: "active",
-      id: TodoId.generate(),
+      id: params.id,
       title: TodoTitle.create(params.title),
       version: 0,
       createdAt: now,
@@ -178,7 +125,7 @@ export const Todo = {
     };
     return {
       entity: todo,
-      events: [TodoEvents.created(todo.id, todo.title, now)],
+      events: [TodoEvents.created(params.eventId, todo.id, todo.title, now)],
     };
   },
 
@@ -194,6 +141,7 @@ export const Todo = {
   rename: <T extends Todo>(
     todo: T,
     newTitle: string,
+    eventId: string,
     now: Date,
   ): WithEvents<T, TodoEvent> => {
     // Validate before the idempotency short-circuit: an invalid input is not
@@ -212,26 +160,11 @@ export const Todo = {
     } as T;
     return {
       entity: next,
-      events: [TodoEvents.renamed(next.id, title, now)],
+      events: [TodoEvents.renamed(eventId, next.id, title, now)],
     };
   },
 
   complete,
 
   reopen,
-
-  toggle,
-
-  /**
-   * Delete a todo aggregate.
-   *
-   * Delete is terminal, so `entity` is `null` — `WithEvents<null, …>` is the
-   * documented convention for aggregate removal. Callers must still route
-   * the emitted `todo.deleted` event through `collectEvents` so that outbox
-   * delivery is guaranteed.
-   */
-  delete: (todo: Todo, now: Date): WithEvents<null, TodoEvent> => ({
-    entity: null,
-    events: [TodoEvents.deleted(todo.id, now)],
-  }),
 };

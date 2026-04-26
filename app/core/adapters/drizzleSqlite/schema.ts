@@ -32,6 +32,12 @@ export const todos = sqliteTable("todos", {
  *
  * Delivery guarantee: AT-LEAST-ONCE. Consumers must be idempotent (typically
  * keyed on `id`).
+ *
+ * Operational note: rows with `processed_at IS NOT NULL` are retained for
+ * audit/debugging and are NOT cleaned up automatically — left unattended,
+ * this table grows without bound. Schedule a periodic prune (e.g. a daily
+ * cron that deletes rows where `processed_at < now() - INTERVAL N DAYS`)
+ * sized to your retention requirements before going to production.
  */
 export const outboxEvents = sqliteTable(
   "outbox_events",

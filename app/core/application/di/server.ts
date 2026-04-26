@@ -11,10 +11,11 @@ import "@tanstack/react-start/server-only";
 import { getDatabase } from "@/core/adapters/drizzleSqlite/client";
 import { DrizzleSqliteOutboxRepository } from "@/core/adapters/drizzleSqlite/repositories/outboxRepository";
 import { DrizzleSqliteUnitOfWorkProvider } from "@/core/adapters/drizzleSqlite/unitOfWork";
-import type { OutboxRepository } from "@/core/domain/common/ports/outboxRepository";
 import type { UnitOfWorkProvider } from "../execution/unitOfWork";
 import { type Clock, SystemClock } from "../ports/clock";
+import { type IdGenerator, UuidV7Generator } from "../ports/idGenerator";
 import { ConsoleLogger, type Logger } from "../ports/logger";
+import type { OutboxRepository } from "../ports/outboxRepository";
 
 export type AppConfig = {
   appUrl: string;
@@ -47,6 +48,13 @@ export type Container = {
    */
   clock: Clock;
   /**
+   * Id-minting port. Usecases call `container.idGenerator.next()` for each
+   * fresh id (aggregate, event) and pass the resulting string into the
+   * domain factory. Same convention as `clock`: ambient I/O lives behind a
+   * port; the domain only sees the resolved string.
+   */
+  idGenerator: IdGenerator;
+  /**
    * Structured logger for cross-cutting observability (worker decode /
    * dispatch failures, etc.). Domain and usecase happy paths do not log.
    */
@@ -65,8 +73,12 @@ export type ServerConfig = {
  * or `APP_URL` fails on startup instead of silently waiting for the first
  * server-function call. Skipped under `NODE_ENV === "test"` because tests
  * inject their own config through `createContainer({...})`.
+ *
+ * Exported so that out-of-band entry points (the seed script, ad-hoc CLIs)
+ * read env exactly the same way as the server runtime — avoids drift where
+ * one entry point would accept a different fallback than the others.
  */
-function readServerConfig(): ServerConfig {
+export function readServerConfig(): ServerConfig {
   const databaseUrl = process.env.SQLITE_URL;
   const appUrl = process.env.APP_URL;
 
@@ -97,6 +109,7 @@ export async function createContainer(
     unitOfWorkProvider: new DrizzleSqliteUnitOfWorkProvider(db),
     outboxRepository: new DrizzleSqliteOutboxRepository(db),
     clock: SystemClock,
+    idGenerator: UuidV7Generator,
     logger: ConsoleLogger,
   };
 }

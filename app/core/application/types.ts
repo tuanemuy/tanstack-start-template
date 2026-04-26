@@ -1,11 +1,13 @@
 import type { Container } from "./di/server";
 
 /**
- * Arguments for an application service that does not need request-scoped
- * HTTP context (headers, auth, etc.).
+ * Arguments for an application service.
  *
- * Prefer this over {@link AuthedServiceArgs} for any usecase that can execute
- * in a vacuum: list/get queries, side-job workers, seed scripts, etc.
+ * Every usecase receives the DI container plus its typed input. If a future
+ * usecase needs request-scoped HTTP context (session cookies, Authorization
+ * header, tracing), introduce a dedicated args type alongside an `auth` port
+ * at that point — the template intentionally does not ship a placeholder
+ * `AuthedServiceArgs` to avoid an unused abstraction.
  *
  * Example:
  * ```ts
@@ -17,34 +19,5 @@ import type { Container } from "./di/server";
  */
 export type ServiceArgs<T = undefined> = {
   container: Container;
-  input: T;
-};
-
-/**
- * Arguments for an application service that needs the caller's HTTP headers
- * (session cookies, Authorization header, tracing, etc.).
- *
- * Usecases that implement authorization, audit logging keyed on the current
- * user, or request tracing should accept this instead of {@link ServiceArgs}.
- * The presentation layer is expected to obtain headers via
- * `getRequestHeaders()` from `@tanstack/react-start/server` and pass them
- * through unchanged.
- *
- * Example (with a hypothetical `authProvider` port):
- * ```ts
- * export async function createPost({
- *   container,
- *   headers,
- *   input,
- * }: AuthedServiceArgs<CreatePostInput>): Promise<CreatePostOutput> {
- *   const user = await container.authProvider.getCurrentUser(headers);
- *   if (!user) throw new UnauthenticatedError(...);
- *   // ...
- * }
- * ```
- */
-export type AuthedServiceArgs<T = undefined> = {
-  container: Container;
-  headers: Headers;
   input: T;
 };

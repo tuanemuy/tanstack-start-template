@@ -138,8 +138,17 @@ describe("concurrent changeTodoStatus", () => {
 
     // Fixed instant — the mutation is rejected before its `updatedAt` lands
     // anywhere observable, so any value would do; keep it stable for clarity.
-    const { entity: staleMutation } = Todo.toggle(
+    // `stale` is `ActiveTodo` (read before the status change above), so we
+    // can call `Todo.complete` on it directly. The synthetic event id is a
+    // valid UUIDv7 string but is never published — the OCC failure aborts
+    // before `collectEvents`.
+    if (!Todo.isActive(stale)) {
+      expect.fail("expected stale read to still be active");
+      return;
+    }
+    const { entity: staleMutation } = Todo.complete(
       stale,
+      "f0000000-0000-7000-8000-000000000001",
       new Date("2026-01-01T00:00:00.000Z"),
     );
 

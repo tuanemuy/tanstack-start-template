@@ -1,4 +1,13 @@
-import type { DomainEvent } from "../event";
+import type { DomainEvent } from "@/core/domain/common/event";
+
+/**
+ * Outbox port — application-layer (NOT domain).
+ *
+ * The outbox is an infrastructural delivery mechanism for cross-aggregate
+ * publishing, not a domain concept. Domain code never imports this port; the
+ * only legitimate writers are the application layer's UoW flush (via
+ * `collectEvents`) and the event relay worker.
+ */
 
 /**
  * A pending entry stored in the outbox table.

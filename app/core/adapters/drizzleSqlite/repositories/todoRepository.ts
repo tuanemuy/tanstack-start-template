@@ -1,10 +1,5 @@
 import { and, desc, eq, sql } from "drizzle-orm";
-import {
-  ConflictError,
-  ConflictErrorCode,
-  SystemError,
-  SystemErrorCode,
-} from "@/core/application/errors";
+import { ConflictError, ConflictErrorCode } from "@/core/application/errors";
 import type {
   Pagination,
   PaginationResult,
@@ -17,6 +12,10 @@ import type {
 } from "@/core/domain/todo/entity";
 import type { TodoRepository } from "@/core/domain/todo/ports/todoRepository";
 import { TodoId, TodoTitle } from "@/core/domain/todo/valueObject";
+// `SystemError` is the one application-layer-shaped error adapters can throw
+// directly. Imported from `app/lib/` (its real home) rather than from
+// `core/application/errors` to keep the adapter free of upward dependencies.
+import { SystemError, SystemErrorCode } from "@/lib/systemError";
 import type { Executor } from "../client";
 import { todos } from "../schema";
 import { mapDbError } from "./helpers";

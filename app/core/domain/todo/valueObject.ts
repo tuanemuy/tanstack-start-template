@@ -1,4 +1,3 @@
-import { v7 as uuidv7 } from "uuid";
 import { z } from "zod";
 import { BusinessRuleError } from "@/core/domain/error";
 import { TodoErrorCode } from "./errorCode";
@@ -27,10 +26,18 @@ declare const todoTitleBrand: unique symbol;
  * Branded identifier for the `Todo` aggregate.
  *
  * Intentionally strict: we only accept UUIDv7 strings. Aggregate ids are
- * server-generated (`TodoId.generate`) and never come from client input, so
- * any non-UUIDv7 value reaching `TodoId.create` indicates corrupt storage or
- * a programming error. Rejecting up front prevents malformed ids from
- * leaking through the system.
+ * server-minted (via the application layer's `IdGenerator` port — never from
+ * client input), so any non-UUIDv7 value reaching `TodoId.create` indicates
+ * corrupt storage or a programming error. Rejecting up front prevents
+ * malformed ids from leaking through the system.
+ *
+ * ## Why no `generate` here
+ *
+ * Id minting is ambient I/O (depends on a clock + entropy source) and the
+ * project's convention is that ambient I/O lives behind a port. The
+ * `IdGenerator` port in `core/application/ports/idGenerator.ts` is the
+ * single mint point — domain code only ever sees a fully-formed string and
+ * round-trips it through `TodoId.create` to attach the brand.
  */
 export type TodoId = string & { readonly [todoIdBrand]: true };
 
@@ -41,16 +48,6 @@ export const TodoId = {
     }
     return id as TodoId;
   },
-  /**
-   * Server-side UUIDv7 generation for the aggregate id.
-   *
-   * Ids are minted by the domain (never by client input) so callers can rely
-   * on monotonic time-ordered uniqueness without introducing an id-generation
-   * port. If a future deployment wants deterministic ids for tests or custom
-   * ordering, route it through a wrapper rather than replacing this with a
-   * Port abstraction — keeping generation inline is deliberate YAGNI.
-   */
-  generate: (): TodoId => uuidv7() as TodoId,
 };
 
 export type TodoTitle = string & { readonly [todoTitleBrand]: true };

@@ -1,5 +1,6 @@
 import { eq, isNull } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
+import { FakeIdGenerator } from "@/core/application/__tests__/fakes";
 import { setupTestContainer } from "@/core/application/__tests__/helpers";
 import { TodoEvents } from "@/core/domain/todo/events";
 import { TodoId, TodoTitle } from "@/core/domain/todo/valueObject";
@@ -14,16 +15,24 @@ import * as schema from "../schema";
  *   write time.
  * - `listPending` skips already-processed rows and returns FIFO order.
  * - `markProcessed` only updates pending rows.
+ *
+ * Ids are minted from a `FakeIdGenerator` so the tests stay deterministic
+ * (same id sequence across runs) — the domain layer no longer ships a
+ * `TodoId.generate()`, ids come from the application port.
  */
+
+const ids = new FakeIdGenerator();
+const nextId = (): string => ids.next();
+const nextTodoId = () => TodoId.create(nextId());
 
 describe("DrizzleSqliteOutboxRepository.save (integration)", () => {
   const getContainer = setupTestContainer();
 
   it("writes payload / eventType / aggregateId to the correct columns", async () => {
     const container = getContainer();
-    const todoId = TodoId.generate();
+    const todoId = nextTodoId();
     const title = TodoTitle.create("persistence");
-    const event = TodoEvents.created(todoId, title, new Date());
+    const event = TodoEvents.created(nextId(), todoId, title, new Date());
 
     await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
       collectEvents([event]);
@@ -52,10 +61,10 @@ describe("DrizzleSqliteOutboxRepository.listPending (integration)", () => {
 
   it("returns only unprocessed entries in FIFO order", async () => {
     const container = getContainer();
-    const todoId = TodoId.generate();
+    const todoId = nextTodoId();
     const title = TodoTitle.create("claim");
-    const a = TodoEvents.created(todoId, title, new Date(0));
-    const b = TodoEvents.toggled(todoId, true, new Date(1000));
+    const a = TodoEvents.created(nextId(), todoId, title, new Date(0));
+    const b = TodoEvents.toggled(nextId(), todoId, true, new Date(1000));
     await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
       collectEvents([a, b]);
     });
@@ -73,19 +82,20 @@ describe("DrizzleSqliteOutboxRepository.listPending (integration)", () => {
 
   it("returns rows in insertion order when occurredAt is identical", async () => {
     const container = getContainer();
-    const todoId = TodoId.generate();
+    const todoId = nextTodoId();
     const title = TodoTitle.create("ordered");
     const sameTime = new Date(0);
-    const a = TodoEvents.created(todoId, title, sameTime);
-    const b = TodoEvents.toggled(todoId, true, sameTime);
-    const c = TodoEvents.deleted(todoId, sameTime);
+    const a = TodoEvents.created(nextId(), todoId, title, sameTime);
+    const b = TodoEvents.toggled(nextId(), todoId, true, sameTime);
+    const c = TodoEvents.deleted(nextId(), todoId, sameTime);
     await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
       collectEvents([a, b, c]);
     });
 
     const pending = await container.outboxRepository.listPending(10);
-    // UUIDv7 ids sort time-monotonically, so insertion-order is preserved
-    // by the (createdAt, id) ordering even when occurredAt ties.
+    // FakeIdGenerator hands out monotonically increasing ids, so insertion
+    // order is preserved by the (createdAt, id) ordering even when
+    // occurredAt ties.
     expect(pending.map((entry) => entry.id)).toEqual([a.id, b.id, c.id]);
   });
 });
@@ -95,10 +105,10 @@ describe("DrizzleSqliteOutboxRepository.markProcessed (integration)", () => {
 
   it("only marks the given ids and stamps processedAt", async () => {
     const container = getContainer();
-    const todoId = TodoId.generate();
+    const todoId = nextTodoId();
     const title = TodoTitle.create("scoped-mark");
-    const a = TodoEvents.created(todoId, title, new Date());
-    const b = TodoEvents.toggled(todoId, true, new Date());
+    const a = TodoEvents.created(nextId(), todoId, title, new Date());
+    const b = TodoEvents.toggled(nextId(), todoId, true, new Date());
     await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
       collectEvents([a, b]);
     });
@@ -115,10 +125,10 @@ describe("DrizzleSqliteOutboxRepository.markProcessed (integration)", () => {
 
   it("is a no-op when `ids` is empty", async () => {
     const container = getContainer();
-    const todoId = TodoId.generate();
+    const todoId = nextTodoId();
     const title = TodoTitle.create("empty-mark");
     await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
-      collectEvents([TodoEvents.created(todoId, title, new Date())]);
+      collectEvents([TodoEvents.created(nextId(), todoId, title, new Date())]);
     });
 
     await container.outboxRepository.markProcessed([], new Date());

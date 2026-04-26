@@ -7,6 +7,7 @@ import * as schema from "@/core/adapters/drizzleSqlite/schema";
 import { DrizzleSqliteUnitOfWorkProvider } from "@/core/adapters/drizzleSqlite/unitOfWork";
 import type { Container } from "@/core/application/di/server";
 import { SystemClock } from "@/core/application/ports/clock";
+import { UuidV7Generator } from "@/core/application/ports/idGenerator";
 import { ConsoleLogger } from "@/core/application/ports/logger";
 
 // Migrations directory is resolved from CWD (project root) since vitest
@@ -83,6 +84,10 @@ export async function createTestContainer(
     unitOfWorkProvider: new DrizzleSqliteUnitOfWorkProvider(db),
     outboxRepository: new DrizzleSqliteOutboxRepository(db),
     clock: SystemClock,
+    // Default to the production id generator so integration tests exercise
+    // the same code path as production. Tests that need deterministic ids
+    // can override `idGenerator` via spread on the returned container.
+    idGenerator: UuidV7Generator,
     logger: ConsoleLogger,
     db,
     cleanup: async () => {
