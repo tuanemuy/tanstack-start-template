@@ -149,6 +149,8 @@ export const Todo = {
     // current (already-normalized) title would also let unnormalized inputs
     // slip past the short-circuit (e.g. "  foo  " vs "foo").
     const title = TodoTitle.create(newTitle);
+    // `===` here is value equality: `TodoTitle` is a primitive `string` at
+    // runtime (the brand is type-only), not a wrapper object.
     if (title === todo.title) {
       return { entity: todo, events: [] };
     }

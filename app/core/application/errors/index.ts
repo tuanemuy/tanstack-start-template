@@ -1,4 +1,4 @@
-import { AnyError } from "@/lib/error";
+import { CodedError } from "@/lib/error";
 import type { SerializedError } from "@/lib/serializedError";
 
 // Re-export the shared transport types so existing imports
@@ -12,16 +12,21 @@ import type { FieldErrors } from "@/lib/serializedError";
 /**
  * Base application-layer error.
  *
+ * Thin alias over the shared {@link CodedError} base in `app/lib/error.ts`.
+ * The base owns the typed `code` field, the default `retryable: false`
+ * getter, and the abstract `toSerialized()` contract — the same three-field
+ * shape that `SystemError` and `BusinessRuleError` also expose. Keeping the
+ * base in `app/lib/` lets every layer extend it without violating the
+ * hexagonal direction (see the comment on `CodedError`).
+ *
  * `TCode extends string` lets each subclass narrow `code` to its own literal
  * union so that `if (error.code === NotFoundErrorCode.TodoNotFound)` narrows
  * correctly at the call site.
  *
  * Subclasses expose a `retryable` metadata flag (defaulting to `false`) that
  * callers can consult without having to maintain an ambient "which codes
- * are safe to retry?" table. The retry decorator in the adapter layer is
- * free to ignore this hint — it already has its own driver-level predicate
- * — but cross-boundary code (e.g. server functions mapping errors to HTTP
- * status + retry advice) can rely on it.
+ * are safe to retry?" table. Cross-boundary code (e.g. server functions
+ * mapping errors to HTTP status + retry advice) can rely on it.
  *
  * Subclasses also expose a `toSerialized()` method so the presentation layer
  * can convert any thrown value into a wire envelope through a single
@@ -30,31 +35,8 @@ import type { FieldErrors } from "@/lib/serializedError";
  */
 export abstract class ApplicationError<
   TCode extends string = string,
-> extends AnyError {
+> extends CodedError<TCode> {
   override readonly name: string = "ApplicationError";
-
-  constructor(
-    public readonly code: TCode,
-    message: string,
-    cause?: unknown,
-  ) {
-    super(message, cause);
-  }
-
-  /**
-   * Whether the caller can safely retry the operation that produced this
-   * error. Subclasses that represent transient conditions override this to
-   * return `true`.
-   */
-  get retryable(): boolean {
-    return false;
-  }
-
-  /**
-   * Lift this error into the wire envelope used by the presentation layer.
-   * Concrete subclasses pin the discriminant `kind`.
-   */
-  abstract toSerialized(): SerializedError;
 }
 
 export const NotFoundErrorCode = {

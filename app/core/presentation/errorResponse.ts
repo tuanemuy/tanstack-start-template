@@ -51,33 +51,13 @@ export function serializeError(error: unknown): SerializedError {
 /**
  * Error wrapper used to carry a {@link SerializedError} across the server
  * function boundary.
- *
- * `serialized` is defined as an own, enumerable property so that even after
- * the runtime reduces this instance to a plain object (e.g. during JSON
- * round-trip) clients can still introspect it via
- * {@link extractSerializedError}.
  */
 export class AppServerError extends Error {
   override readonly name = "AppServerError";
-  // Assigned exactly once, via `Object.defineProperty` below. The `!`
-  // assertion tells TypeScript that the field is installed before the
-  // constructor returns — we cannot use a normal assignment because that
-  // would clobber the non-writable descriptor we want here.
-  readonly serialized!: SerializedError;
 
-  constructor(serialized: SerializedError) {
+  // `serialized` is the wire envelope; survives JSON / structured-clone.
+  constructor(public readonly serialized: SerializedError) {
     super(serialized.message);
-    // Single assignment path: a non-writable / non-configurable /
-    // enumerable own property. Enumerability is what lets the field
-    // survive structured cloning / JSON serialization, so clients can
-    // still introspect it via {@link extractSerializedError} after the
-    // instance is reduced to a plain object.
-    Object.defineProperty(this, "serialized", {
-      value: serialized,
-      enumerable: true,
-      writable: false,
-      configurable: false,
-    });
   }
 
   /**

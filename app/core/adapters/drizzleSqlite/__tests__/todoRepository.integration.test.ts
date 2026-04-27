@@ -209,6 +209,53 @@ describe("DrizzleSqliteTodoRepository (integration)", () => {
     expect(page3.items[0]?.title).toBe("row-0");
   });
 
+  it("findPage returns a stable id-ordered sequence across pages when createdAt is identical", async () => {
+    const container = getContainer();
+    // Seed multiple rows that share the *same* createdAt so the secondary
+    // sort key (id desc) is the only thing that differentiates them. Without
+    // a stable tiebreaker, paging would be free to interleave these rows and
+    // either drop or duplicate them.
+    const sameInstant = new Date("2026-04-01T00:00:00.000Z");
+    const seedIds = [
+      "019db000-0000-7000-8000-000000000021",
+      "019db000-0000-7000-8000-000000000022",
+      "019db000-0000-7000-8000-000000000023",
+      "019db000-0000-7000-8000-000000000024",
+      "019db000-0000-7000-8000-000000000025",
+    ];
+    for (const id of seedIds) {
+      await container.db.insert(schema.todos).values({
+        id,
+        title: `same-${id.slice(-2)}`,
+        completed: false,
+        version: 0,
+        createdAt: sameInstant,
+        updatedAt: sameInstant,
+      });
+    }
+
+    const page1 = await container.unitOfWorkProvider.run(
+      async ({ todoRepository }) =>
+        todoRepository.findPage({ page: 1, limit: 2 }),
+    );
+    const page2 = await container.unitOfWorkProvider.run(
+      async ({ todoRepository }) =>
+        todoRepository.findPage({ page: 2, limit: 2 }),
+    );
+    const page3 = await container.unitOfWorkProvider.run(
+      async ({ todoRepository }) =>
+        todoRepository.findPage({ page: 3, limit: 2 }),
+    );
+
+    const collected = [...page1.items, ...page2.items, ...page3.items].map(
+      (t) => t.id,
+    );
+    // Deterministic descending id order — and no overlaps / no gaps.
+    const expected = [...seedIds].sort().reverse();
+    expect(collected).toEqual(expected);
+    expect(new Set(collected).size).toBe(seedIds.length);
+  });
+
   it("findAll returns todos in descending createdAt order", async () => {
     const container = getContainer();
     const base = new Date("2026-03-01T00:00:00.000Z").getTime();

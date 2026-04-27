@@ -95,10 +95,12 @@ export class DrizzleSqliteTodoRepository implements TodoRepository {
 
   findAll(): Promise<Todo[]> {
     return mapDbError("Failed to list todos", async () => {
+      // `desc(todos.id)` is a stable secondary sort: UUIDv7 is monotonic, so
+      // rows with identical `createdAt` get a deterministic order.
       const rows = await this.executor
         .select()
         .from(todos)
-        .orderBy(desc(todos.createdAt));
+        .orderBy(desc(todos.createdAt), desc(todos.id));
       return rows.map(toTodo);
     });
   }
@@ -106,10 +108,12 @@ export class DrizzleSqliteTodoRepository implements TodoRepository {
   findPage(pagination: Pagination): Promise<PaginationResult<Todo>> {
     return mapDbError("Failed to page todos", async () => {
       const offset = (pagination.page - 1) * pagination.limit;
+      // Tiebreak on `id` so rows with identical `createdAt` get a stable order
+      // across pages — without this, pagination can drop or duplicate rows.
       const items = await this.executor
         .select()
         .from(todos)
-        .orderBy(desc(todos.createdAt))
+        .orderBy(desc(todos.createdAt), desc(todos.id))
         .limit(pagination.limit)
         .offset(offset);
       const countRows = await this.executor

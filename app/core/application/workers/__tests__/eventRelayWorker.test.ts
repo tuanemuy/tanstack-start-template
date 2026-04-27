@@ -107,7 +107,7 @@ describe("processOutboxEvents", () => {
     expect(pending).toHaveLength(1);
   });
 
-  it("skips events whose prefix has no registered decoder, keeps batch moving", async () => {
+  it("skips events whose type has no registered decoder, keeps batch moving", async () => {
     const container = getContainer();
 
     await container.db.insert(schema.outboxEvents).values({
@@ -267,5 +267,32 @@ describe("processOutboxEvents", () => {
     errorSpy.mockRestore();
     expect(processed).toBe(0);
     expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("matches by full event type, not by domain prefix", async () => {
+    // Lookup is keyed on the full `event.type` (e.g. `todo.created`), not on
+    // the `"todo"` prefix. A registry that only holds the prefix should NOT
+    // match an event whose type starts with that prefix.
+    const container = getContainer();
+
+    const id = nextTodoId();
+    const title = TodoTitle.create("prefix-not-match");
+    await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
+      collectEvents([TodoEvents.created(nextId(), id, title, T0)]);
+    });
+
+    const dispatch: EventDispatcher = vi.fn(async () => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { processed } = await processOutboxEvents(container, dispatch, {
+      // A bare `"todo"` key would have matched under the old prefix-based
+      // lookup; under the full-event-type registry it does not.
+      decoderRegistry: { todo: () => ({}) as never },
+    });
+    errorSpy.mockRestore();
+
+    expect(processed).toBe(0);
+    expect(dispatch).not.toHaveBeenCalled();
+    const rows = await container.db.select().from(schema.outboxEvents);
+    expect(rows[0]?.processedAt).toBeNull();
   });
 });

@@ -64,4 +64,18 @@ export interface OutboxRepository {
    * successful dispatch. Safe to call with an empty array.
    */
   markProcessed(ids: readonly string[], now: Date): Promise<void>;
+
+  /**
+   * Delete already-processed rows whose `processedAt` is strictly older than
+   * `olderThan`. Pending rows (`processedAt IS NULL`) are never touched.
+   *
+   * Returns the number of rows deleted so callers can log / report. Safe to
+   * run concurrently with the relay worker — a row only becomes a prune
+   * candidate after `markProcessed` has stamped it.
+   *
+   * The cutoff is policy that lives at the call site (typically
+   * `pruneOutbox` in `app/core/application/workers/outboxPrune.ts`). The
+   * repository merely executes the SQL.
+   */
+  pruneProcessed(olderThan: Date): Promise<{ deleted: number }>;
 }

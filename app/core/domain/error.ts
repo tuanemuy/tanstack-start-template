@@ -1,4 +1,4 @@
-import { AnyError } from "@/lib/error";
+import { CodedError } from "@/lib/error";
 import type { SerializedError } from "@/lib/serializedError";
 
 /**
@@ -17,10 +17,22 @@ export type BusinessRuleErrorCode = string;
  * Represents a violation of business rules in the domain layer.
  * Thrown when domain logic determines an operation cannot proceed.
  *
+ * Extends the shared {@link CodedError} base in `app/lib/error.ts`, which
+ * owns the typed `code` field plus the default `retryable: false` getter.
+ * Business-rule violations are never transient — fixing the underlying
+ * input is the caller's responsibility — so the inherited default is
+ * exactly right and `BusinessRuleError` does not override `retryable`.
+ *
  * `TCode extends string` lets each domain narrow `code` to its own literal
  * union at the throw site so that `if (error.code === TodoErrorCode.TitleTooLong)`
- * narrows correctly at the catch site. The default `<TCode extends string = string>`
- * keeps unparameterized uses (`BusinessRuleError`) assignable to the generic type.
+ * narrows correctly at the catch site. The default is intentionally
+ * `never` rather than `string`: an unparameterized `BusinessRuleError`
+ * would let `code` widen back to `string` and silently lose narrowing at
+ * every catch site, defeating the point of the generic. Forcing callers
+ * to supply a concrete `TCode` (e.g. `BusinessRuleError<TodoErrorCode>`)
+ * makes catch-site exhaustiveness checks meaningful. `instanceof
+ * BusinessRuleError` checks remain valid because they don't depend on
+ * the type parameter.
  *
  * ## Usage pattern
  *
@@ -28,9 +40,6 @@ export type BusinessRuleErrorCode = string;
  * error codes (`const TodoErrorCode = { ... } as const;` + `type TodoErrorCode
  * = (typeof TodoErrorCode)[keyof typeof TodoErrorCode]`) and to instantiate
  * `BusinessRuleError<TodoErrorCode>` rather than the unparameterized form.
- * This makes catch-site narrowing meaningful — a free `TCode = string`
- * gives no more info than `unknown`, while a narrow literal union lets the
- * compiler check that every code was handled.
  *
  * ## Wire serialization
  *
@@ -40,18 +49,12 @@ export type BusinessRuleErrorCode = string;
  * presentation closed to extension: adding a new domain or error variant
  * does not require editing the serializer.
  */
-export class BusinessRuleError<TCode extends string = string> extends AnyError {
+export class BusinessRuleError<
+  TCode extends string = never,
+> extends CodedError<TCode> {
   override readonly name = "BusinessRuleError";
 
-  constructor(
-    public readonly code: TCode,
-    message: string,
-    cause?: unknown,
-  ) {
-    super(message, cause);
-  }
-
-  toSerialized(): SerializedError {
+  override toSerialized(): SerializedError {
     return {
       kind: "business",
       code: this.code,
@@ -61,8 +64,16 @@ export class BusinessRuleError<TCode extends string = string> extends AnyError {
   }
 }
 
+/**
+ * Runtime guard for `BusinessRuleError`. The narrowed type uses `string` for
+ * `TCode` (rather than the `BusinessRuleError` default of `never`) so that
+ * `error.code` remains a string at the catch site even when the caller
+ * doesn't know which domain's code union to expect. Catch sites that do
+ * know the domain should narrow further by comparing against their own
+ * `TodoErrorCode.*` constants.
+ */
 export function isBusinessRuleError(
   error: unknown,
-): error is BusinessRuleError {
+): error is BusinessRuleError<string> {
   return error instanceof BusinessRuleError;
 }

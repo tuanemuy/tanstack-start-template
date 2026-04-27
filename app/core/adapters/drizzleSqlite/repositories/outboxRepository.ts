@@ -1,4 +1,4 @@
-import { and, asc, inArray, isNull } from "drizzle-orm";
+import { and, asc, inArray, isNotNull, isNull, lt } from "drizzle-orm";
 // `OutboxRepository` is an application-layer port (the outbox is an
 // infrastructural delivery mechanism for cross-aggregate publishing, not a
 // domain concept). The adapter implements that port directly.
@@ -73,5 +73,22 @@ export class DrizzleSqliteOutboxRepository implements OutboxRepository {
           ),
         ),
     );
+  }
+
+  async pruneProcessed(olderThan: Date): Promise<{ deleted: number }> {
+    return mapDbError("Failed to prune processed outbox events", async () => {
+      // `.returning({ id })` lets us count exactly the rows deleted without
+      // an extra round-trip. libSQL/SQLite supports DELETE ... RETURNING.
+      const rows = await this.executor
+        .delete(outboxEvents)
+        .where(
+          and(
+            isNotNull(outboxEvents.processedAt),
+            lt(outboxEvents.processedAt, olderThan),
+          ),
+        )
+        .returning({ id: outboxEvents.id });
+      return { deleted: rows.length };
+    });
   }
 }

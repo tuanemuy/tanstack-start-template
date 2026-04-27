@@ -1,5 +1,5 @@
 import type { DomainEvent, EventDecoder } from "@/core/domain/common/event";
-import { decodeTodoEvent } from "@/core/domain/todo/events";
+import { todoEventDecoders } from "@/core/domain/todo/events";
 import type { Container } from "../di/server";
 import type { OutboxEntry } from "../ports/outboxRepository";
 
@@ -34,14 +34,35 @@ import type { OutboxEntry } from "../ports/outboxRepository";
 export type EventDispatcher = (event: DomainEvent) => Promise<void>;
 
 /**
- * Maps an event-type prefix (the token before the first `.`, e.g. `"todo"`
- * for `"todo.created"`) to the decoder that owns that domain's events. Add
- * a new domain by registering its decoder here.
+ * Decoder registry keyed by the **full** `event.type` string (e.g.
+ * `"todo.created"`, not just `"todo"`).
+ *
+ * ## Convention
+ *
+ * Each domain exports a per-domain map typed as
+ * `Record<DomainEvent["type"], EventDecoder<DomainEvent>>` (e.g.
+ * `todoEventDecoders` in `app/core/domain/todo/events.ts`). The worker
+ * merges those maps into a single registry. Adding a new event variant to
+ * a domain's union without registering its decoder is a compile-time
+ * error rather than a runtime "no decoder registered" surprise.
+ *
+ * To add a new domain: export `<domain>EventDecoders` from that domain's
+ * events file and spread it into {@link defaultEventDecoderRegistry}
+ * below — that is the only edit the worker needs.
  */
-export type EventDecoderRegistry = Readonly<Record<string, EventDecoder>>;
+export type EventDecoderRegistry = Readonly<
+  Record<string, EventDecoder<DomainEvent>>
+>;
 
+/**
+ * Default registry — merge of every domain's per-event decoder map.
+ *
+ * The spread is intentional: each domain's map is itself
+ * compile-time-checked for exhaustiveness over its own union, and
+ * spreading composes them without weakening that check on either side.
+ */
 export const defaultEventDecoderRegistry: EventDecoderRegistry = {
-  todo: decodeTodoEvent,
+  ...todoEventDecoders,
 };
 
 export type ProcessOutboxEventsOptions = {
@@ -60,9 +81,7 @@ function decodeEntry(
   entry: OutboxEntry,
   registry: EventDecoderRegistry,
 ): DomainEvent {
-  const dot = entry.type.indexOf(".");
-  const prefix = dot < 0 ? entry.type : entry.type.slice(0, dot);
-  const decoder = registry[prefix];
+  const decoder = registry[entry.type];
   if (!decoder) {
     throw new Error(`No decoder registered for event type "${entry.type}"`);
   }

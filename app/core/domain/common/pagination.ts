@@ -1,5 +1,3 @@
-import { z } from "zod";
-
 /**
  * Request shape for paginated reads.
  *
@@ -10,11 +8,6 @@ export type Pagination = Readonly<{
   page: number;
   limit: number;
 }>;
-
-export const paginationSchema = z.object({
-  page: z.number().int().min(1),
-  limit: z.number().int().min(1).max(200),
-});
 
 /**
  * Response shape for paginated reads. `items` holds the current page and

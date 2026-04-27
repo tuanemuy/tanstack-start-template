@@ -106,79 +106,104 @@ export const TodoEvents = {
 };
 
 /**
- * Reconstruct a typed `TodoEvent` from its wire representation.
+ * Per-event decoders for the Todo domain.
  *
- * Re-runs the payload through the domain's value-object factories so consumers
- * always see branded types (`TodoId`, `TodoTitle`). Throws `BusinessRuleError`
- * on a malformed row — the relay worker catches per-row so one bad row does
- * not abort the whole batch.
+ * Keyed by the full `event.type` string so the relay worker can look up
+ * exactly the decoder for a row without parsing prefixes. Typed as
+ * `Record<TodoEvent["type"], EventDecoder<TodoEvent>>` so adding a new
+ * variant to the `TodoEvent` union without registering its decoder fails
+ * `pnpm typecheck` rather than blowing up at runtime.
+ *
+ * Each entry re-runs the payload through the domain's value-object
+ * factories so consumers always see branded types (`TodoId`, `TodoTitle`).
+ * The decoder throws on a malformed row — the relay worker catches per-row
+ * so one bad row does not abort the whole batch.
  *
  * ## Coupling note
  *
- * The decoder reapplies value-object invariants (`TodoTitle.create` etc.) to
- * stored payloads. If those invariants are *tightened* later (e.g. shorter max
- * length, stricter regex), historical outbox rows that were valid at write
- * time may start failing decode. Either keep invariant changes additive
- * (looser) or introduce a new event type rather than mutating the existing
- * shape — this is the same rule called out in the README for wire-format
- * compatibility.
+ * Decoders reapply value-object invariants (`TodoTitle.create` etc.) to
+ * stored payloads. If those invariants are *tightened* later (e.g. shorter
+ * max length, stricter regex), historical outbox rows that were valid at
+ * write time may start failing decode. Either keep invariant changes
+ * additive (looser) or introduce a new event type rather than mutating the
+ * existing shape — this is the same rule called out in the README for
+ * wire-format compatibility.
+ */
+export const todoEventDecoders: Readonly<
+  Record<TodoEvent["type"], EventDecoder<TodoEvent>>
+> = {
+  "todo.created": (_type, payload, meta) => {
+    const parsed = todoCreatedPayloadSchema.parse(payload);
+    return {
+      id: meta.id,
+      occurredAt: meta.occurredAt,
+      aggregateId: meta.aggregateId,
+      type: "todo.created",
+      payload: {
+        todoId: TodoId.create(parsed.todoId),
+        title: TodoTitle.create(parsed.title),
+      },
+    };
+  },
+  "todo.toggled": (_type, payload, meta) => {
+    const parsed = todoToggledPayloadSchema.parse(payload);
+    return {
+      id: meta.id,
+      occurredAt: meta.occurredAt,
+      aggregateId: meta.aggregateId,
+      type: "todo.toggled",
+      payload: {
+        todoId: TodoId.create(parsed.todoId),
+        completed: parsed.completed,
+      },
+    };
+  },
+  "todo.renamed": (_type, payload, meta) => {
+    const parsed = todoRenamedPayloadSchema.parse(payload);
+    return {
+      id: meta.id,
+      occurredAt: meta.occurredAt,
+      aggregateId: meta.aggregateId,
+      type: "todo.renamed",
+      payload: {
+        todoId: TodoId.create(parsed.todoId),
+        title: TodoTitle.create(parsed.title),
+      },
+    };
+  },
+  "todo.deleted": (_type, payload, meta) => {
+    const parsed = todoDeletedPayloadSchema.parse(payload);
+    return {
+      id: meta.id,
+      occurredAt: meta.occurredAt,
+      aggregateId: meta.aggregateId,
+      type: "todo.deleted",
+      payload: { todoId: TodoId.create(parsed.todoId) },
+    };
+  },
+};
+
+/**
+ * Reconstruct a typed `TodoEvent` from its wire representation.
+ *
+ * Thin dispatcher over {@link todoEventDecoders}. Kept exported for
+ * call-sites that want a single function (tests / ad-hoc decoding). The
+ * relay worker registry uses the per-event map directly because that gives
+ * compile-time exhaustiveness across the union.
  */
 export const decodeTodoEvent: EventDecoder<TodoEvent> = (
   type,
   payload,
   meta,
 ) => {
-  const base = {
-    id: meta.id,
-    occurredAt: meta.occurredAt,
-    aggregateId: meta.aggregateId,
-  };
-  switch (type) {
-    case "todo.created": {
-      const parsed = todoCreatedPayloadSchema.parse(payload);
-      return {
-        ...base,
-        type: "todo.created",
-        payload: {
-          todoId: TodoId.create(parsed.todoId),
-          title: TodoTitle.create(parsed.title),
-        },
-      };
-    }
-    case "todo.toggled": {
-      const parsed = todoToggledPayloadSchema.parse(payload);
-      return {
-        ...base,
-        type: "todo.toggled",
-        payload: {
-          todoId: TodoId.create(parsed.todoId),
-          completed: parsed.completed,
-        },
-      };
-    }
-    case "todo.renamed": {
-      const parsed = todoRenamedPayloadSchema.parse(payload);
-      return {
-        ...base,
-        type: "todo.renamed",
-        payload: {
-          todoId: TodoId.create(parsed.todoId),
-          title: TodoTitle.create(parsed.title),
-        },
-      };
-    }
-    case "todo.deleted": {
-      const parsed = todoDeletedPayloadSchema.parse(payload);
-      return {
-        ...base,
-        type: "todo.deleted",
-        payload: { todoId: TodoId.create(parsed.todoId) },
-      };
-    }
-    default:
-      throw new BusinessRuleError(
-        TodoErrorCode.UnknownEventType,
-        `Unknown todo event type: ${type}`,
-      );
+  const decoder = (
+    todoEventDecoders as Record<string, EventDecoder<TodoEvent>>
+  )[type];
+  if (!decoder) {
+    throw new BusinessRuleError(
+      TodoErrorCode.UnknownEventType,
+      `Unknown todo event type: ${type}`,
+    );
   }
+  return decoder(type, payload, meta);
 };

@@ -26,7 +26,7 @@ app/core/
 │       ├── valueObject.ts
 │       ├── events.ts
 │       ├── errorCode.ts
-│       └── ports/${domain}Repository.ts   port + UoW augmentation (declare module)
+│       └── ports/${domain}Repository.ts   port インターフェース（UoW スロットは中央で enumerate）
 ├── application/
 │   ├── di/server.ts               Container, createContainer, getContainer, readServerConfig
 │   ├── ports/
@@ -36,9 +36,11 @@ app/core/
 │   │   └── outboxRepository.ts    Outbox は application 層（infrastructural）
 │   ├── errors/index.ts            NotFound / Conflict / Validation / ... + SystemError 再export
 │   ├── execution/
-│   │   ├── unitOfWork.ts          UnitOfWorkContext は { collectEvents } のみ宣言
+│   │   ├── unitOfWork.ts          UnitOfWorkContext がリポジトリスロットを直接 enumerate
 │   │   └── retry.ts
-│   ├── workers/eventRelayWorker.ts
+│   ├── workers/
+│   │   ├── eventRelayWorker.ts
+│   │   └── outboxPrune.ts         pruneOutbox(container, { retentionMs })
 │   ├── types.ts                   ServiceArgs<T>
 │   └── ${domain}/
 │       ├── view.ts                Aggregate → DTO 射影
@@ -53,7 +55,7 @@ app/core/
     └── drizzleSqlite/
         ├── client.ts
         ├── schema.ts
-        ├── unitOfWork.ts          augmentation の side-effect import + repo 配線
+        ├── unitOfWork.ts          tx 内で各リポジトリを new して UoW context を組む
         ├── repositories/
         │   ├── helpers.ts         mapDbError
         │   ├── ${domain}Repository.ts
@@ -61,7 +63,7 @@ app/core/
         └── migrations/
 
 app/lib/
-├── error.ts                       AnyError, formatErrorMessage
+├── error.ts                       AnyError, CodedError, formatErrorMessage
 ├── serializedError.ts             SerializedError 等の wire contract
 └── systemError.ts                 SystemError（adapter から直接 import 可能な位置）
 ```
@@ -156,33 +158,57 @@ export const FooEvents = {
   }),
 };
 
+// 完全な event.type をキーにした per-event decoder map。
+// `Record<FooEvent["type"], EventDecoder<FooEvent>>` で型付けすることで、
+// union に variant を足したのに decoder を登録し忘れた場合は pnpm typecheck
+// で落ちる（runtime に "no decoder" ログを出すのではなく compile-time error）。
+export const fooEventDecoders: Readonly<
+  Record<FooEvent["type"], EventDecoder<FooEvent>>
+> = {
+  "foo.created": (_type, payload, meta) => {
+    const parsed = fooCreatedPayloadSchema.parse(payload);
+    return {
+      ...meta,
+      type: "foo.created",
+      payload: { fooId: FooId.create(parsed.fooId) },
+    };
+  },
+  "foo.deleted": (_type, payload, meta) => {
+    const parsed = fooDeletedPayloadSchema.parse(payload);
+    return {
+      ...meta,
+      type: "foo.deleted",
+      payload: { fooId: FooId.create(parsed.fooId) },
+    };
+  },
+};
+
+// 単発呼び出し用の薄い dispatcher（テスト等で便利）。
+// relay worker は map を直接 spread して使うのでこちらは経由しない。
 export const decodeFooEvent: EventDecoder<FooEvent> = (type, payload, meta) => {
-  switch (type) {
-    case "foo.created": {
-      const parsed = fooCreatedPayloadSchema.parse(payload);
-      return {
-        ...meta,
-        type: "foo.created",
-        payload: { fooId: FooId.create(parsed.fooId) },
-      };
-    }
-    default:
-      throw new BusinessRuleError(FooErrorCode.UnknownEventType, `Unknown: ${type}`);
+  const decoder = (
+    fooEventDecoders as Record<string, EventDecoder<FooEvent>>
+  )[type];
+  if (!decoder) {
+    throw new BusinessRuleError(FooErrorCode.UnknownEventType, `Unknown: ${type}`);
   }
+  return decoder(type, payload, meta);
 };
 ```
 
 ポイント:
 - factory は `id` を引数で受ける（usecase が `container.idGenerator.next()` でミントして渡す）
-- decoder は throw する（relay worker が per-row catch してログに流す）
+- decoder map のキーは **完全な `event.type` 文字列**（`"foo.created"`）。prefix-on-dot のような暗黙ルールは無い
+- map 自体を `Record<FooEvent["type"], EventDecoder<FooEvent>>` で型付けして網羅性を強制
+- 各 entry は throw する（relay worker が per-row catch してログに流す）
 - payload schema は `z.object(...).strict()` で extra field を拒否
 - ブランド型は decoder で `FooId.create(parsed.fooId)` を経由して再構築
 
-### Repository Port + UoW Augmentation
+### Repository Port
 
-ポート定義と同じファイルで `UnitOfWorkContext` に declaration merging で
-リポジトリのスロットを追加する。新しいドメインを足すときは自分のドメインフォルダに
-閉じる（中央の `unitOfWork.ts` は触らなくて良い）。
+ポート定義は単独のインターフェースとして書く。`UnitOfWorkContext` への
+スロット追加は中央 (`app/core/application/execution/unitOfWork.ts`) で
+直接 enumerate する（declaration merging は使わない）。
 
 ```ts
 // app/core/domain/${domain}/ports/${domain}Repository.ts
@@ -196,15 +222,28 @@ export interface FooRepository {
   save(foo: Foo): Promise<void>;                   // OCC: WHERE version = old
   delete(id: FooId, expectedVersion: number): Promise<void>;
 }
+```
 
-// declaration merging で UoW context を拡張する。adapter 側はこのファイルを
-// side-effect import することで augmentation を読み込む。
-declare module "@/core/application/execution/unitOfWork" {
-  interface UnitOfWorkContext {
-    fooRepository: FooRepository;
-  }
+新しいドメインを足すときは:
+
+1. `UnitOfWorkContext` にスロットを 1 行追加する（`app/core/application/execution/unitOfWork.ts`）
+2. Drizzle adapter (`app/core/adapters/drizzleSqlite/unitOfWork.ts`) で tx 内に
+   リポジトリインスタンスを生成し context に詰める
+
+```ts
+// app/core/application/execution/unitOfWork.ts
+export interface UnitOfWorkContext {
+  todoRepository: TodoRepository;
+  fooRepository: FooRepository;          // ← 追加
+  collectEvents(events: readonly DomainEvent[]): void;
 }
 ```
+
+declaration merging を使わずに直接書くのは、テンプレートの規模では「中央 1 ファイル
++ adapter 配線」で十分明示的・読みやすく、IDE の "go to definition" で context 全体が
+1 画面に映るほうが嬉しいから。`Pagination` / `PaginationResult` は
+`app/core/domain/common/pagination.ts` の純粋型のみ（Zod schema は同居しない；
+ランタイム検証はそれを消費する application 境界に inline する）。
 
 ## Application Layer
 
@@ -327,19 +366,14 @@ async save(foo: Foo): Promise<void> {
 `app/core/adapters/drizzleSqlite/unitOfWork.ts` が `UnitOfWorkProvider.run(fn)` を実装する:
 
 1. `db.transaction(...)` を開く
-2. tx 内で repository / outbox インスタンスを構築
+2. tx 内で repository / outbox インスタンスを構築し、`UnitOfWorkContext` に詰める
 3. `collectEvents` のバッファを集めるコンテキストを fn に渡す
 4. fn 解決後、collected events を outbox に save（同一 tx）
 
-各ドメインの port ファイル（`app/core/domain/${domain}/ports/...`）に書いた
-`declare module "@/core/application/execution/unitOfWork"` の augmentation を
-読み込むため、adapter ファイル冒頭で **side-effect import** を入れる：
-
-```ts
-// app/core/adapters/drizzleSqlite/unitOfWork.ts
-import "@/core/domain/todo/ports/todoRepository";
-// ...新ドメインを足したら同じ場所に import を 1 行足す
-```
+新ドメインを足したときは、(a) 中央の `app/core/application/execution/unitOfWork.ts` で
+`UnitOfWorkContext` にスロットを追加し、(b) この adapter ファイル内で対応する
+リポジトリインスタンスを `runOnce` の中で `new` して context に詰める、の 2 箇所だけ。
+declaration merging も side-effect import も不要。
 
 `SQLITE_BUSY` / `SQLITE_LOCKED` は driver-level の implementation detail なので、adapter が `run()` 内部で `retry()` を使って exponential backoff retry する。application 層・他の adapter へ leak させない。アプリ側の OCC retry（`changeTodoStatus` 内の `ConflictError(OptimisticLockFailure)` retry）とは別レイヤー・別エラークラスなので二重 retry は起きない。
 
@@ -358,7 +392,37 @@ await processOutboxEvents(container, async (event) => {
 - consumer は `event.id` ベースで冪等に書く（at-least-once delivery）
 - decode / dispatch 失敗は logger に出して row を pending のまま残す（次の poll で再試行）
 
-新しいドメインの decoder は `defaultEventDecoderRegistry` に prefix で登録すれば自動的に拾われる。
+新しいドメインを足したら、その events ファイルから `<domain>EventDecoders` を export し、
+`eventRelayWorker.ts` の `defaultEventDecoderRegistry` に spread で 1 行追加する：
+
+```ts
+export const defaultEventDecoderRegistry: EventDecoderRegistry = {
+  ...todoEventDecoders,
+  ...fooEventDecoders,        // ← 追加
+};
+```
+
+各 map の型 (`Record<DomainEvent["type"], EventDecoder<DomainEvent>>`) が
+domain 単位で網羅性を担保しているので、spread で composing しても弱まらない。
+
+### Outbox Prune
+
+`processed_at IS NOT NULL` の行は audit/debug 用に残るので、運用では適宜削除する：
+
+```ts
+import { pruneOutbox } from "@/core/application/workers/outboxPrune";
+
+await pruneOutbox(container, { retentionMs: 7 * 86_400_000 }); // 7 日保持
+```
+
+`retentionMs` は raw milliseconds（canonical unit）。`days * 86_400_000` のような
+shorthand は call site で組む。`pruneOutbox` は `clock.now() - retentionMs` を
+cutoff にして `outboxRepository.pruneProcessed(cutoff)` を呼ぶ。pending な行
+（`processed_at IS NULL`）には触らない。relay worker と並行して走らせて安全
+（`markProcessed` でスタンプされて初めて prune 候補になる）。
+
+スケジュール（毎日 / 毎時）はテンプレートでは決め打ちしない — cron / queue worker
+など環境のランナーに合わせて呼ぶ。
 
 ## エラー設計
 
@@ -370,10 +434,23 @@ await processOutboxEvents(container, async (event) => {
 | Adapter | 上記を throw | `mapDbError(...)` で wrap | OCC 失敗 → `ConflictError`、DB 例外 → `SystemError(DatabaseError)` |
 | Presentation | `AppServerError` でラップして wire 化 | `app/core/presentation/errorResponse.ts` | `withErrorResponse` |
 
-`SystemError` だけ `app/lib/` に置いてあるのは、adapter 層から
-**application 層を上向きに import せずに** throw できるようにするため
-（hexagonal: adapter は domain port + 共通 lib にしか依存しない）。
-application 層には re-export があるので、application 側の import パスは
-従来どおりで良い。
+`SystemError` / `ApplicationError` / `BusinessRuleError` はいずれも
+`app/lib/error.ts` の抽象基底 `CodedError<TCode extends string>` を継承する。
+基底クラスが `code: TCode` フィールド・デフォルトの `retryable: false` getter・
+抽象メソッド `toSerialized()` を所有し、各サブクラスは `retryable` を必要に
+応じて override し、`toSerialized()` で `kind` discriminant を pin する。
+基底を `app/lib/` に置いているのは、adapter / application / domain のどの層も
+**上向き import 無しで** 同じ基底を継承できるようにするため（hexagonal:
+adapter は domain port + 共通 lib にしか依存しない）。
+
+`SystemError` だけ `app/lib/systemError.ts` に居るのも同じ理由で、application 層に
+re-export があるので application 側の import パスは従来どおりで良い。
+
+`BusinessRuleError<TCode extends string = never>` のデフォルトは `never`。
+未パラメータ化の `BusinessRuleError` を許すと catch 時に `code` が `string` まで
+広がってドメイン固有 union への narrowing が黙って消えるので、
+`BusinessRuleError<TodoErrorCode>` のように throw 側でドメインの literal union を
+渡すことを強制している。`isBusinessRuleError(...)` は `BusinessRuleError<string>` に
+narrow するので、ドメインを問わない catch 句でも `error.code` は string として読める。
 
 各エラークラスは `toSerialized(): SerializedError` を実装する（structural な `SerializableError` プロトコル）。新しいエラー型を足しても presentation の `serializeError` は触らなくて良い。

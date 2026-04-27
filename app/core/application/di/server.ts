@@ -69,14 +69,14 @@ export type ServerConfig = {
 /**
  * Read server configuration from environment variables.
  *
- * Validated eagerly at module load (see below) so that a missing `SQLITE_URL`
- * or `APP_URL` fails on startup instead of silently waiting for the first
- * server-function call. Skipped under `NODE_ENV === "test"` because tests
- * inject their own config through `createContainer({...})`.
+ * Lazy: only invoked from {@link getContainer} (the production HTTP boot path)
+ * or from out-of-band entry points (the seed script, ad-hoc CLIs) that
+ * deliberately need server env. Importing this module does NOT trigger env
+ * validation, so build-time analyzers and test harnesses can load the DI
+ * surface without `SQLITE_URL` / `APP_URL` set.
  *
- * Exported so that out-of-band entry points (the seed script, ad-hoc CLIs)
- * read env exactly the same way as the server runtime — avoids drift where
- * one entry point would accept a different fallback than the others.
+ * Exported so out-of-band entry points read env exactly the same way as the
+ * server runtime — no parallel "fallback to localhost" defaults that drift.
  */
 export function readServerConfig(): ServerConfig {
   const databaseUrl = process.env.SQLITE_URL;
@@ -88,12 +88,6 @@ export function readServerConfig(): ServerConfig {
 
   return { databaseUrl, appUrl };
 }
-
-// Eagerly validate at import time so a missing env var aborts startup,
-// not the first request. Tests (`NODE_ENV === "test"`) inject their own
-// config, so we skip the check there.
-const _serverConfig: ServerConfig | null =
-  process.env.NODE_ENV === "test" ? null : readServerConfig();
 
 /**
  * Build a DI container from the given configuration. Tests and one-off scripts
@@ -117,6 +111,12 @@ export async function createContainer(
 /**
  * Lazily-constructed, memoized container for server runtime use.
  *
+ * Env validation happens here (not at import time) so that tools that touch
+ * the DI module — CLIs, scripts, build-time analyzers — don't need
+ * `SQLITE_URL` / `APP_URL` set. The "fail fast on missing env" guarantee is
+ * scoped to the first call from HTTP boot, not module load. Skipped under
+ * `NODE_ENV === "test"` so tests can call {@link createContainer} directly.
+ *
  * Memoizing the `Promise<Container>` (rather than the resolved value) ensures
  * concurrent callers during startup share a single initialization — no
  * duplicate DB connections, no duplicate WAL PRAGMA round-trips.
@@ -124,10 +124,11 @@ export async function createContainer(
 let _containerPromise: Promise<Container> | null = null;
 export function getContainer(): Promise<Container> {
   if (_containerPromise !== null) return _containerPromise;
-  // `_serverConfig` is null only under NODE_ENV=test, in which case the
-  // production runtime path should never be exercised. Read fresh just in
-  // case (also lets a test that drops the test env fall back gracefully).
-  const config = _serverConfig ?? readServerConfig();
-  _containerPromise = createContainer(config);
+  if (process.env.NODE_ENV === "test") {
+    throw new Error(
+      "getContainer() is not available under NODE_ENV=test; tests must call createContainer({...}) directly",
+    );
+  }
+  _containerPromise = createContainer(readServerConfig());
   return _containerPromise;
 }

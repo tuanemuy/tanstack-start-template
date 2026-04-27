@@ -100,6 +100,101 @@ describe("DrizzleSqliteOutboxRepository.listPending (integration)", () => {
   });
 });
 
+describe("DrizzleSqliteOutboxRepository.pruneProcessed (integration)", () => {
+  const getContainer = setupTestContainer();
+
+  it("deletes only processed rows older than the cutoff and returns the count", async () => {
+    const container = getContainer();
+    const todoId = nextTodoId();
+    const title = TodoTitle.create("prune");
+
+    // Three rows: a (processed long ago), b (processed recently),
+    // c (still pending). Cutoff between (a) and (b).
+    const a = TodoEvents.created(nextId(), todoId, title, new Date(0));
+    const b = TodoEvents.toggled(nextId(), todoId, true, new Date(0));
+    const c = TodoEvents.deleted(nextId(), todoId, new Date(0));
+    await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
+      collectEvents([a, b, c]);
+    });
+
+    const oldProcessedAt = new Date("2020-01-01T00:00:00Z");
+    const recentProcessedAt = new Date("2030-01-01T00:00:00Z");
+    await container.db
+      .update(schema.outboxEvents)
+      .set({ processedAt: oldProcessedAt })
+      .where(eq(schema.outboxEvents.id, a.id));
+    await container.db
+      .update(schema.outboxEvents)
+      .set({ processedAt: recentProcessedAt })
+      .where(eq(schema.outboxEvents.id, b.id));
+
+    const cutoff = new Date("2025-01-01T00:00:00Z");
+    const { deleted } = await container.outboxRepository.pruneProcessed(cutoff);
+    expect(deleted).toBe(1);
+
+    const remaining = await container.db.select().from(schema.outboxEvents);
+    const remainingIds = remaining.map((row) => row.id);
+    // a is gone; b (processed but newer than cutoff) and c (pending) remain.
+    expect(remainingIds).not.toContain(a.id);
+    expect(remainingIds).toContain(b.id);
+    expect(remainingIds).toContain(c.id);
+  });
+
+  it("never deletes pending rows even when the cutoff is in the far future", async () => {
+    const container = getContainer();
+    const todoId = nextTodoId();
+    const title = TodoTitle.create("prune-pending");
+
+    const a = TodoEvents.created(nextId(), todoId, title, new Date(0));
+    await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
+      collectEvents([a]);
+    });
+
+    // Cutoff that would catch every conceivable processedAt — pending row
+    // (processedAt IS NULL) must still survive.
+    const farFuture = new Date("9999-01-01T00:00:00Z");
+    const { deleted } =
+      await container.outboxRepository.pruneProcessed(farFuture);
+
+    expect(deleted).toBe(0);
+    const rows = await container.db.select().from(schema.outboxEvents);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.id).toBe(a.id);
+    expect(rows[0]?.processedAt).toBeNull();
+  });
+
+  it("returns 0 when there are no eligible rows", async () => {
+    const container = getContainer();
+
+    const { deleted } = await container.outboxRepository.pruneProcessed(
+      new Date("2025-01-01T00:00:00Z"),
+    );
+    expect(deleted).toBe(0);
+  });
+
+  it("treats the cutoff as strict less-than (a row processedAt === cutoff stays)", async () => {
+    const container = getContainer();
+    const todoId = nextTodoId();
+    const title = TodoTitle.create("cutoff-boundary");
+
+    const a = TodoEvents.created(nextId(), todoId, title, new Date(0));
+    await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
+      collectEvents([a]);
+    });
+
+    const exact = new Date("2025-01-01T00:00:00Z");
+    await container.db
+      .update(schema.outboxEvents)
+      .set({ processedAt: exact })
+      .where(eq(schema.outboxEvents.id, a.id));
+
+    const { deleted } = await container.outboxRepository.pruneProcessed(exact);
+    expect(deleted).toBe(0);
+    const rows = await container.db.select().from(schema.outboxEvents);
+    expect(rows).toHaveLength(1);
+  });
+});
+
 describe("DrizzleSqliteOutboxRepository.markProcessed (integration)", () => {
   const getContainer = setupTestContainer();
 

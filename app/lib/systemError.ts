@@ -1,4 +1,4 @@
-import { AnyError } from "@/lib/error";
+import { CodedError } from "@/lib/error";
 import type { SerializedError } from "@/lib/serializedError";
 
 /**
@@ -13,15 +13,22 @@ import type { SerializedError } from "@/lib/serializedError";
  * ports + shared lib" rule.
  *
  * `app/lib/` is the right home because it sits below every layer in the
- * dependency graph (alongside the wire-contract `serializedError.ts` and the
- * `AnyError` base). The application layer re-exports `SystemError` so that
- * existing imports keep working and so that workflow code that already
- * thinks of "application-layer errors" as a single bucket does not need
- * to special-case the import path.
+ * dependency graph (alongside the wire-contract `serializedError.ts`, the
+ * `AnyError` base, and the shared `CodedError` base). The application layer
+ * re-exports `SystemError` so that existing imports keep working and so that
+ * workflow code that already thinks of "application-layer errors" as a
+ * single bucket does not need to special-case the import path.
  *
- * A separate file (rather than folding into `error.ts`) keeps `error.ts`
- * focused on the truly minimal `AnyError` base; `SystemError` carries its
- * own code union plus retry classification, which would crowd the base file.
+ * ## Relationship to `CodedError`
+ *
+ * `SystemError` extends the shared `CodedError<SystemErrorCode>` base in
+ * `app/lib/error.ts`. The base owns the typed `code` field, the default
+ * `retryable: false` getter, and the abstract `toSerialized()` contract.
+ * `SystemError` overrides `retryable` with a code-set predicate and
+ * implements `toSerialized()` with `kind: "system"`. This eliminates the
+ * earlier duck-typed parallel between `SystemError` and `ApplicationError`
+ * — both now extend the same base — without forcing `SystemError` to
+ * import from the application layer.
  */
 
 export const SystemErrorCode = {
@@ -45,31 +52,14 @@ const RETRYABLE_SYSTEM_CODES: ReadonlySet<SystemErrorCode> =
     SystemErrorCode.ExternalApiError,
   ]);
 
-/**
- * SystemError is structurally compatible with the application-layer
- * `ApplicationError` base (carries a string `code`, a `retryable` getter, and
- * `toSerialized()`). It does not extend `ApplicationError` directly to avoid
- * a circular dependency: `ApplicationError` lives in the application layer,
- * and `SystemError` lives below it. The shared `SerializableError` structural
- * contract (in `app/lib/serializedError.ts`) is what the presentation layer
- * relies on, so this duck-typing is sufficient.
- */
-export class SystemError extends AnyError {
+export class SystemError extends CodedError<SystemErrorCode> {
   override readonly name = "SystemError";
 
-  constructor(
-    public readonly code: SystemErrorCode,
-    message: string,
-    cause?: unknown,
-  ) {
-    super(message, cause);
-  }
-
-  get retryable(): boolean {
+  override get retryable(): boolean {
     return RETRYABLE_SYSTEM_CODES.has(this.code);
   }
 
-  toSerialized(): SerializedError {
+  override toSerialized(): SerializedError {
     return {
       kind: "system",
       code: this.code,
