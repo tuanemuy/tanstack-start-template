@@ -1,5 +1,7 @@
 import type { Container } from "@/core/application/di/server";
+import { BusinessRuleError } from "@/core/domain/error";
 import { Todo } from "@/core/domain/todo/entity";
+import { TodoErrorCode } from "@/core/domain/todo/errorCode";
 import type { TodoEvent } from "@/core/domain/todo/events";
 import { TodoId } from "@/core/domain/todo/valueObject";
 import {
@@ -7,6 +9,8 @@ import {
   isConflictError,
   NotFoundError,
   NotFoundErrorCode,
+  ValidationError,
+  ValidationErrorCode,
 } from "../errors";
 import { retry } from "../execution/retry";
 import type { ServiceArgs } from "../types";
@@ -25,6 +29,25 @@ export type ChangeTodoStatusOutput = {
 
 const MAX_OCC_ATTEMPTS = 2;
 
+function parseId(rawId: string): TodoId {
+  try {
+    return TodoId.create(rawId);
+  } catch (error) {
+    if (
+      error instanceof BusinessRuleError &&
+      error.code === TodoErrorCode.InvalidId
+    ) {
+      throw new ValidationError(
+        ValidationErrorCode.InvalidInput,
+        "Invalid id",
+        error,
+        { id: ["Invalid id format"] },
+      );
+    }
+    throw error;
+  }
+}
+
 /**
  * Set a todo's status to `active` or `completed`.
  *
@@ -39,7 +62,7 @@ export async function changeTodoStatus({
   container,
   input,
 }: ServiceArgs<ChangeTodoStatusInput>): Promise<ChangeTodoStatusOutput> {
-  const id = TodoId.create(input.id);
+  const id = parseId(input.id);
 
   // Capture "now" once per usecase invocation, before the retry loop, so
   // every attempt — and the eventual successful write — agrees on the same

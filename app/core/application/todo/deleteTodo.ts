@@ -1,7 +1,33 @@
+import { BusinessRuleError } from "@/core/domain/error";
+import { TodoErrorCode } from "@/core/domain/todo/errorCode";
 import { TodoEvents } from "@/core/domain/todo/events";
 import { TodoId } from "@/core/domain/todo/valueObject";
-import { NotFoundError, NotFoundErrorCode } from "../errors";
+import {
+  NotFoundError,
+  NotFoundErrorCode,
+  ValidationError,
+  ValidationErrorCode,
+} from "../errors";
 import type { ServiceArgs } from "../types";
+
+function parseId(rawId: string): TodoId {
+  try {
+    return TodoId.create(rawId);
+  } catch (error) {
+    if (
+      error instanceof BusinessRuleError &&
+      error.code === TodoErrorCode.InvalidId
+    ) {
+      throw new ValidationError(
+        ValidationErrorCode.InvalidInput,
+        "Invalid id",
+        error,
+        { id: ["Invalid id format"] },
+      );
+    }
+    throw error;
+  }
+}
 
 export type DeleteTodoInput = {
   id: string;
@@ -11,7 +37,7 @@ export async function deleteTodo({
   container,
   input,
 }: ServiceArgs<DeleteTodoInput>): Promise<void> {
-  const id = TodoId.create(input.id);
+  const id = parseId(input.id);
   // Resolve "now" once per call so the deletion event's `occurredAt` is
   // captured at the usecase entry rather than inside the domain — keeps the
   // domain pure, no `new Date()` at the bottom of the call stack.

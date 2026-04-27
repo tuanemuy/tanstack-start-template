@@ -93,6 +93,56 @@ function reopen(
   };
 }
 
+/**
+ * Rename a todo. Variant-preserving: renaming an `ActiveTodo` yields an
+ * `ActiveTodo`, renaming a `CompletedTodo` yields a `CompletedTodo`.
+ *
+ * Idempotent: if the normalized `newTitle` equals the current title, the
+ * existing entity is returned unchanged with no events and no version bump.
+ * This prevents spurious outbox traffic and useless `updatedAt` churn when a
+ * client re-submits the same value.
+ */
+function rename(
+  todo: ActiveTodo,
+  newTitle: string,
+  eventId: string,
+  now: Date,
+): WithEvents<ActiveTodo, TodoEvent>;
+function rename(
+  todo: CompletedTodo,
+  newTitle: string,
+  eventId: string,
+  now: Date,
+): WithEvents<CompletedTodo, TodoEvent>;
+function rename(
+  todo: Todo,
+  newTitle: string,
+  eventId: string,
+  now: Date,
+): WithEvents<Todo, TodoEvent>;
+function rename(
+  todo: Todo,
+  newTitle: string,
+  eventId: string,
+  now: Date,
+): WithEvents<Todo, TodoEvent> {
+  // Validate before the idempotency short-circuit: an invalid input is not
+  // "the same as current", it is malformed. Comparing raw input against the
+  // current (already-normalized) title would also let unnormalized inputs
+  // slip past the short-circuit (e.g. "  foo  " vs "foo").
+  const title = TodoTitle.create(newTitle);
+  // `===` here is value equality: `TodoTitle` is a primitive `string` at
+  // runtime (the brand is type-only), not a wrapper object.
+  if (title === todo.title) {
+    return { entity: todo, events: [] };
+  }
+  const next: Todo = { ...todo, title, version: todo.version + 1, updatedAt: now };
+  return {
+    entity: next,
+    events: [TodoEvents.renamed(eventId, next.id, title, now)],
+  };
+}
+
 export const Todo = {
   /** Type guard: the todo is still active (pending). */
   isActive: (todo: Todo): todo is ActiveTodo => todo.status === "active",
@@ -138,33 +188,7 @@ export const Todo = {
    * bump. This prevents spurious outbox traffic and useless `updatedAt`
    * churn when a client re-submits the same value.
    */
-  rename: <T extends Todo>(
-    todo: T,
-    newTitle: string,
-    eventId: string,
-    now: Date,
-  ): WithEvents<T, TodoEvent> => {
-    // Validate before the idempotency short-circuit: an invalid input is not
-    // "the same as current", it is malformed. Comparing raw input against the
-    // current (already-normalized) title would also let unnormalized inputs
-    // slip past the short-circuit (e.g. "  foo  " vs "foo").
-    const title = TodoTitle.create(newTitle);
-    // `===` here is value equality: `TodoTitle` is a primitive `string` at
-    // runtime (the brand is type-only), not a wrapper object.
-    if (title === todo.title) {
-      return { entity: todo, events: [] };
-    }
-    const next = {
-      ...todo,
-      title,
-      version: todo.version + 1,
-      updatedAt: now,
-    } as T;
-    return {
-      entity: next,
-      events: [TodoEvents.renamed(eventId, next.id, title, now)],
-    };
-  },
+  rename,
 
   complete,
 

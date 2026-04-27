@@ -48,10 +48,6 @@ export type NotFoundErrorCode =
 
 export class NotFoundError extends ApplicationError<NotFoundErrorCode> {
   override readonly name = "NotFoundError";
-  // Missing resource — retrying would not change the outcome.
-  override get retryable(): boolean {
-    return false;
-  }
 
   override toSerialized(): SerializedError {
     return {
@@ -76,14 +72,6 @@ export type ConflictErrorCode =
 
 export class ConflictError extends ApplicationError<ConflictErrorCode> {
   override readonly name = "ConflictError";
-  // Conflict retry safety is command-specific. A stale-read conflict can be
-  // retried for an idempotent "set this value" command, but not for a
-  // non-idempotent "toggle" command. Usecases that know their command is safe
-  // should retry locally after re-reading state; the transport should not infer
-  // retryability from this error class alone.
-  override get retryable(): boolean {
-    return false;
-  }
 
   override toSerialized(): SerializedError {
     return {
@@ -103,19 +91,12 @@ export const UnauthenticatedErrorCode = {
   AuthenticationRequired: "AUTHENTICATION_REQUIRED",
   TokenExpired: "TOKEN_EXPIRED",
   InvalidToken: "INVALID_TOKEN",
-  UserNotFound: "USER_NOT_FOUND",
-  InvalidAuthType: "INVALID_AUTH_TYPE",
-  ProviderMismatch: "PROVIDER_MISMATCH",
-  InvalidCredentials: "INVALID_CREDENTIALS",
 } as const;
 export type UnauthenticatedErrorCode =
   (typeof UnauthenticatedErrorCode)[keyof typeof UnauthenticatedErrorCode];
 
 export class UnauthenticatedError extends ApplicationError<UnauthenticatedErrorCode> {
   override readonly name = "UnauthenticatedError";
-  override get retryable(): boolean {
-    return false;
-  }
 
   override toSerialized(): SerializedError {
     return {
@@ -141,9 +122,6 @@ export type ForbiddenErrorCode =
 
 export class ForbiddenError extends ApplicationError<ForbiddenErrorCode> {
   override readonly name = "ForbiddenError";
-  override get retryable(): boolean {
-    return false;
-  }
 
   override toSerialized(): SerializedError {
     return {
@@ -185,10 +163,6 @@ export class ValidationError extends ApplicationError<ValidationErrorCode> {
     if (fieldErrors !== undefined) {
       this.fieldErrors = fieldErrors;
     }
-  }
-
-  override get retryable(): boolean {
-    return false;
   }
 
   override toSerialized(): SerializedError {

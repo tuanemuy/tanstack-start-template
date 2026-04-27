@@ -35,8 +35,6 @@ export const SystemErrorCode = {
   InternalServerError: "INTERNAL_SERVER_ERROR",
   DatabaseError: "DATABASE_ERROR",
   NetworkError: "NETWORK_ERROR",
-  StorageError: "STORAGE_ERROR",
-  DocumentGenerationError: "DOCUMENT_GENERATION_ERROR",
   ExternalApiError: "EXTERNAL_API_ERROR",
 } as const;
 export type SystemErrorCode =

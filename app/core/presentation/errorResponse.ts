@@ -54,6 +54,7 @@ export function serializeError(error: unknown): SerializedError {
  */
 export class AppServerError extends Error {
   override readonly name = "AppServerError";
+  readonly _tag = "AppServerError" as const;
 
   // `serialized` is the wire envelope; survives JSON / structured-clone.
   constructor(public readonly serialized: SerializedError) {
@@ -73,14 +74,8 @@ export class AppServerError extends Error {
 
 export function isAppServerError(error: unknown): error is AppServerError {
   if (error instanceof AppServerError) return true;
-  if (typeof error === "object" && error !== null && "serialized" in error) {
-    const candidate = (error as { serialized?: unknown }).serialized;
-    return (
-      typeof candidate === "object" &&
-      candidate !== null &&
-      "kind" in candidate &&
-      "message" in candidate
-    );
+  if (typeof error === "object" && error !== null && "_tag" in error) {
+    return (error as { _tag?: unknown })._tag === "AppServerError";
   }
   return false;
 }
