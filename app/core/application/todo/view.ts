@@ -1,12 +1,8 @@
 import type { Todo } from "@/core/domain/todo/entity";
 
 /**
- * Application-layer projection of the `Todo` aggregate.
- *
- * Collapses the `active | completed` discriminated union into a boolean
- * `completed` field and unbrand value-object types so server functions can
- * serialize the result without the presentation layer needing to know about
- * domain branding.
+ * Cross-boundary projection of the `Todo` aggregate. Collapses the
+ * discriminated union into a boolean and unbrands value-object types.
  */
 export type TodoView = Readonly<{
   id: string;

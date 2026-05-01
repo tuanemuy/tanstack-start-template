@@ -7,16 +7,8 @@ export type FakeLogEntry = Readonly<{
 }>;
 
 /**
- * In-memory `Logger` that records every call so worker / usecase tests can
- * assert on observability behaviour without spying on `console`.
- *
- * Usage:
- *
- *   const logger = new FakeLogger();
- *   // ... run code under test ...
- *   const errors = logger.byLevel("error");
- *   expect(errors).toHaveLength(1);
- *   expect(errors[0]?.message).toMatch(/decode failed/);
+ * In-memory `Logger` that records every call so tests can assert on
+ * observability behaviour without spying on `console`.
  */
 export class FakeLogger implements Logger {
   readonly entries: FakeLogEntry[] = [];
@@ -46,8 +38,6 @@ export class FakeLogger implements Logger {
     message: string,
     meta: LogMeta | undefined,
   ): void {
-    // Persist `meta` only when defined so the snapshot matches the call site
-    // shape (`{ level, message }` vs `{ level, message, meta }`).
     if (meta === undefined) {
       this.entries.push({ level, message });
     } else {

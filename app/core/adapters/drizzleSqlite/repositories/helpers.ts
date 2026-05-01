@@ -1,18 +1,11 @@
-// Adapters import `SystemError` from `app/lib/` directly — the application
-// layer's errors module re-exports the same class for usecase callers, but
-// reaching across into `core/application/` from an adapter would invert the
-// hexagonal dependency direction. The shared lib is the legitimate "below
-// every layer" home.
-import { SystemError, SystemErrorCode } from "@/lib/systemError";
+import { SystemError, SystemErrorCode } from "@/core/application/errors";
 
 /**
- * Wrap a database operation so that any thrown value surfaces as a
- * `SystemError(DatabaseError)` with the given contextual message. Errors
- * that are already `SystemError` (e.g. thrown by a repository's own
- * row-to-entity conversion on a corrupt row) pass through untouched so the
- * original context is preserved. Application-level errors that callers need
- * to see (e.g. `ConflictError` from an optimistic-lock failure) are thrown
- * outside this helper, so they are not reached by the `catch` here.
+ * Wrap a database call so any thrown value surfaces as a
+ * `SystemError(DatabaseError)`. Errors already typed as `SystemError`
+ * (e.g. from a row-to-entity conversion on a corrupt row) pass through
+ * untouched. `ConflictError` from optimistic-lock predicates is thrown
+ * outside this helper and is therefore not reached by the catch.
  */
 export async function mapDbError<T>(
   message: string,

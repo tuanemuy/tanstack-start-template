@@ -1,21 +1,18 @@
+import { setResponseStatus } from "@tanstack/react-start/server";
 import type { ZodType, z } from "zod";
 import {
   ValidationError,
-  ValidationErrorCode,
   zodIssuesToFieldErrors,
 } from "@/core/application/errors";
 import { AppServerError } from "./errorResponse";
 
 /**
- * Wrap a Zod schema as a server-function input validator that converts a
- * parse failure into the same wire envelope the application layer emits
- * for a `ValidationError`. Failures arrive on the client as
- * `lastError.kind === "validation"` plus `lastError.fieldErrors` —
- * uniform with usecase-thrown `ValidationError`s, so the form rendering
- * code only has to know one shape.
+ * Wrap a Zod schema as a server-function input validator. Failures arrive
+ * on the client as `lastError.kind === "validation"` plus
+ * `lastError.fieldErrors`, uniform with usecase-thrown `ValidationError`s.
  *
  * The validator runs *before* the server-function handler, so it cannot
- * rely on `withErrorResponse` to wrap the throw; we emit `AppServerError`
+ * rely on `withErrorResponse` to wrap the throw — emit `AppServerError`
  * directly.
  */
 export function createValidator<TSchema extends ZodType>(schema: TSchema) {
@@ -25,11 +22,12 @@ export function createValidator<TSchema extends ZodType>(schema: TSchema) {
       return parsed.data as z.infer<TSchema>;
     }
     const error = new ValidationError(
-      ValidationErrorCode.InvalidInput,
+      "INVALID_INPUT",
       "Invalid input",
       parsed.error,
       zodIssuesToFieldErrors(parsed.error.issues),
     );
+    setResponseStatus(error.httpStatus);
     throw new AppServerError(error.toSerialized());
   };
 }

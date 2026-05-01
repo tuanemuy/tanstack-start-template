@@ -11,11 +11,6 @@ import {
   deleteTodoSchema,
 } from "./schema";
 
-// `createServerFn(...).handler(...)` already runs server-only, so we invoke
-// usecases directly from the handler. `withErrorResponse` wraps any thrown
-// value into the `AppServerError` wire envelope so the client can decode it
-// uniformly via `extractSerializedError`.
-
 export const createTodoFn = createServerFn({ method: "POST" })
   .inputValidator(createValidator(createTodoSchema))
   .handler(async ({ data }) =>

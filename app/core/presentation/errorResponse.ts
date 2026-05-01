@@ -1,13 +1,11 @@
 import { isNotFound, isRedirect } from "@tanstack/react-router";
+import { setResponseStatus } from "@tanstack/react-start/server";
+import { isApplicationError } from "@/core/application/errors";
 import {
   isSerializableError,
   type SerializedError,
 } from "@/lib/serializedError";
 
-// Re-export the wire-format types so existing presentation-layer imports
-// (`import { SerializedError } from "@/core/presentation/errorResponse"`)
-// keep working. The canonical home is `app/lib/serializedError.ts` because
-// the contract is shared with every error producer (domain / application).
 export type {
   FieldErrors,
   SerializableError,
@@ -24,18 +22,9 @@ function errorMessage(error: unknown): string {
 }
 
 /**
- * Classify any thrown value into a {@link SerializedError}.
- *
- * The classification protocol is **structural**: any value that exposes a
- * `toSerialized()` method (the `SerializableError` contract in
- * `app/lib/serializedError.ts`) is delegated to. Concrete error classes
- * (domain `BusinessRuleError`, application `NotFoundError`, …) own their
- * own serialization logic, so this function never enumerates them via
- * `instanceof`. Adding a new error class — even from a brand-new domain —
- * does not require editing presentation.
- *
- * Anything that does not satisfy the protocol is classified as
- * `kind: "unknown"`.
+ * Classify any thrown value into a {@link SerializedError}. The protocol
+ * is structural — anything that exposes `toSerialized()` is delegated to,
+ * so adding a new error class never requires editing this function.
  */
 export function serializeError(error: unknown): SerializedError {
   if (isSerializableError(error)) {
@@ -49,24 +38,17 @@ export function serializeError(error: unknown): SerializedError {
 }
 
 /**
- * Error wrapper used to carry a {@link SerializedError} across the server
- * function boundary.
+ * Wire-format error wrapper for the server-function boundary. The carried
+ * `serialized` envelope survives JSON / structured-clone.
  */
 export class AppServerError extends Error {
   override readonly name = "AppServerError";
   readonly _tag = "AppServerError" as const;
 
-  // `serialized` is the wire envelope; survives JSON / structured-clone.
   constructor(public readonly serialized: SerializedError) {
     super(serialized.message);
   }
 
-  /**
-   * Pass-through to the carried envelope. Lets `AppServerError` participate
-   * in the same structural `SerializableError` contract as domain /
-   * application errors so callers can route everything through
-   * {@link serializeError} without a special case.
-   */
   toSerialized(): SerializedError {
     return this.serialized;
   }
@@ -80,10 +62,6 @@ export function isAppServerError(error: unknown): error is AppServerError {
   return false;
 }
 
-/**
- * Best-effort recovery of a {@link SerializedError} from anything thrown by
- * a server function.
- */
 export function extractSerializedError(error: unknown): SerializedError {
   if (isAppServerError(error)) {
     return (error as AppServerError).serialized;
@@ -92,21 +70,21 @@ export function extractSerializedError(error: unknown): SerializedError {
 }
 
 /**
- * Helper for server function handlers: run the given callback and wrap any
- * non-{@link AppServerError} failure into one.
+ * Server-function handler wrapper. For application errors the HTTP status
+ * is derived from `error.httpStatus`; non-application errors fall through
+ * to the framework default (500-class). TanStack Router's `redirect()` /
+ * `notFound()` sentinels are re-thrown verbatim to drive navigation.
  */
 export async function withErrorResponse<T>(fn: () => Promise<T>): Promise<T> {
   try {
     return await fn();
   } catch (error) {
-    // TanStack Router's `redirect()` and `notFound()` throw sentinel values
-    // that the router machinery catches upstream to drive navigation. They
-    // are control flow, not errors — wrapping them in AppServerError would
-    // surface an error UI instead of navigating. Re-throw unchanged so the
-    // router sees them intact.
     if (isRedirect(error)) throw error;
     if (isNotFound(error)) throw error;
     if (isAppServerError(error)) throw error;
+    if (isApplicationError(error)) {
+      setResponseStatus(error.httpStatus);
+    }
     throw new AppServerError(serializeError(error));
   }
 }

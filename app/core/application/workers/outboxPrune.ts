@@ -1,32 +1,13 @@
 import type { Container } from "../di/server";
 
 /**
- * Outbox prune worker.
- *
- * The outbox table retains rows with `processed_at IS NOT NULL` for
- * audit/debugging — left unattended it grows without bound. Schedule this
- * function on a cron / queue runner sized to your retention policy; the
- * relay worker (`processOutboxEvents`) and the prune worker share the same
- * `OutboxRepository` and are safe to run concurrently because a row only
- * becomes a prune candidate after `markProcessed` has stamped it.
- *
- * ## What this is NOT
- *
- * Not a backup, not a "soft delete" — pruned rows are gone. If you need
- * long-term audit history, copy rows out to a separate audit table before
- * `processed_at < cutoff` becomes true.
+ * Delete processed outbox rows older than `clock.now() - retentionMs`.
+ * Schedule on a cron / queue runner sized to your retention policy. Safe
+ * to run concurrently with the relay worker — a row only becomes a prune
+ * candidate after `markProcessed` has stamped it.
  */
-
 export type PruneOutboxOptions = {
-  /**
-   * Retention window in milliseconds. Rows whose `processed_at` is strictly
-   * older than `clock.now() - retentionMs` are deleted. Pending rows are
-   * never touched.
-   *
-   * Caller computes this raw — milliseconds is the canonical unit. A
-   * `{ days }` shorthand can live at the call site:
-   * `pruneOutbox(c, { retentionMs: days * 86_400_000 })`.
-   */
+  /** Retention window in milliseconds. Caller composes `days * 86_400_000` etc. */
   retentionMs: number;
 };
 

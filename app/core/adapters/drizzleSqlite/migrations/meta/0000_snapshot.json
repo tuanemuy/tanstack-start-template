@@ -55,7 +55,7 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false,
-          "default": "(unixepoch())"
+          "default": "(CAST(unixepoch('subsec') * 1000 AS INTEGER))"
         }
       },
       "indexes": {
@@ -88,13 +88,12 @@
           "notNull": true,
           "autoincrement": false
         },
-        "completed": {
-          "name": "completed",
-          "type": "integer",
+        "status": {
+          "name": "status",
+          "type": "text",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false,
-          "default": false
+          "autoincrement": false
         },
         "version": {
           "name": "version",

@@ -2,42 +2,27 @@ import { sql } from "drizzle-orm";
 import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 /**
- * todos - Todo aggregate.
- *
- * Timestamps (`createdAt` / `updatedAt`) are populated by the domain layer —
- * the infrastructure layer does NOT supply a SQL default. Keeping timestamp
- * logic in the entity makes tests deterministic and keeps the infrastructure
- * layer free of implicit business behaviour.
- *
- * `version` implements optimistic concurrency control. New aggregates start
- * at version 0; every successful save increments it and updates are guarded
- * by the previous version so concurrent writers are rejected via
- * `ConflictError` rather than silently clobbering each other.
+ * `status` mirrors the discriminator on the `Todo` aggregate so adding a
+ * future variant is a domain change without a migration. `version`
+ * implements optimistic concurrency control.
  */
 export const todos = sqliteTable("todos", {
   id: text("id").primaryKey(),
   title: text("title").notNull(),
-  completed: integer("completed", { mode: "boolean" }).notNull().default(false),
+  status: text("status").notNull(),
   version: integer("version").notNull().default(0),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
 });
 
 /**
- * outbox_events - Transactional outbox for domain events.
+ * Transactional outbox for domain events. Delivery is at-least-once;
+ * consumers must be idempotent (typically keyed on `id`). Rows with
+ * `processed_at IS NOT NULL` are retained for audit and pruned by
+ * `pruneOutbox`.
  *
- * Events are inserted in the same transaction as the entity changes that
- * produced them, then the relay worker drains the table by polling
- * `processed_at IS NULL`.
- *
- * Delivery guarantee: AT-LEAST-ONCE. Consumers must be idempotent (typically
- * keyed on `id`).
- *
- * Operational note: rows with `processed_at IS NOT NULL` are retained for
- * audit/debugging and are NOT cleaned up automatically — left unattended,
- * this table grows without bound. Schedule a periodic prune (e.g. a daily
- * cron that deletes rows where `processed_at < now() - INTERVAL N DAYS`)
- * sized to your retention requirements before going to production.
+ * `created_at` is millisecond-precision so it agrees with `occurred_at`
+ * (domain timestamp) and the UUIDv7 monotonic ordering encoded into `id`.
  */
 export const outboxEvents = sqliteTable(
   "outbox_events",
@@ -46,11 +31,11 @@ export const outboxEvents = sqliteTable(
     eventType: text("event_type").notNull(),
     aggregateId: text("aggregate_id").notNull(),
     payload: text("payload", { mode: "json" }).notNull(),
-    occurredAt: integer("occurred_at", { mode: "timestamp" }).notNull(),
-    processedAt: integer("processed_at", { mode: "timestamp" }),
-    createdAt: integer("created_at", { mode: "timestamp" })
+    occurredAt: integer("occurred_at", { mode: "timestamp_ms" }).notNull(),
+    processedAt: integer("processed_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
       .notNull()
-      .default(sql`(unixepoch())`),
+      .default(sql`(CAST(unixepoch('subsec') * 1000 AS INTEGER))`),
   },
   (table) => [
     index("idx_outbox_pending")

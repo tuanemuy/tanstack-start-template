@@ -19,11 +19,8 @@ export const Route = createRootRoute({
     links: [{ rel: "stylesheet", href: appCss }],
   }),
   component: RootComponent,
-  // Last-resort error boundary. TanStack Router bubbles errors from the
-  // deepest matching route up toward the root: if a child route defines
-  // its own `errorComponent` it catches the error there and the root
-  // handler does not fire. Errors from the root route itself (loader,
-  // render, transport) or from unmatched paths land here.
+  // Last-resort error boundary; child routes with their own `errorComponent`
+  // catch errors first and prevent this from firing.
   errorComponent: ({ error }) => (
     <RootDocument>
       <div>

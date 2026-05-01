@@ -3,20 +3,19 @@ import type {
   PaginationResult,
 } from "@/core/domain/common/pagination";
 import type { Todo } from "../entity";
-import type { TodoId } from "../valueObject";
 
 /**
  * Persistence port for the Todo aggregate.
  *
- * `delete` is optimistic-lock-guarded by `expectedVersion` — adapters must
- * scope the DELETE to `WHERE id = ? AND version = expectedVersion` and
- * raise `ConflictError(OptimisticLockFailure)` on a zero-row delete so
- * concurrent writer/deleter races cannot lose updates silently.
+ * Lookup keys are plain `string` — branding to `TodoId` lives at the
+ * rehydration boundary (`toTodo` in the adapter, the event decoder). Both
+ * `save` and `delete` are guarded by the entity's `version` (OCC) — a
+ * stale write surfaces as `ConflictError("OPTIMISTIC_LOCK_FAILURE")`.
  */
 export interface TodoRepository {
-  findById(id: TodoId): Promise<Todo | null>;
+  findById(id: string): Promise<Todo | null>;
   findAll(): Promise<Todo[]>;
   findPage(pagination: Pagination): Promise<PaginationResult<Todo>>;
   save(todo: Todo): Promise<void>;
-  delete(id: TodoId, expectedVersion: number): Promise<void>;
+  delete(id: string, expectedVersion: number): Promise<void>;
 }

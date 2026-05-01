@@ -41,17 +41,6 @@ export type TodoEvent =
   | TodoRenamedEvent
   | TodoDeletedEvent;
 
-/**
- * Factories for fresh in-process `TodoEvent`s.
- *
- * Each factory takes `id` and `occurredAt` as required arguments so the
- * domain stays free of ambient I/O — no `new Date()`, no `uuidv7()` at the
- * bottom of the call stack. Callers (typically the application layer)
- * resolve `now` once via `container.clock.now()` and mint the event id once
- * via `container.idGenerator.next()`, then thread both values through every
- * factory, so the entity's `updatedAt` and the event's `occurredAt` agree by
- * construction and ids stay deterministic in tests.
- */
 export const TodoEvents = {
   created: (
     id: string,
@@ -106,28 +95,11 @@ export const TodoEvents = {
 };
 
 /**
- * Per-event decoders for the Todo domain.
- *
- * Keyed by the full `event.type` string so the relay worker can look up
- * exactly the decoder for a row without parsing prefixes. Typed as
- * `Record<TodoEvent["type"], EventDecoder<TodoEvent>>` so adding a new
- * variant to the `TodoEvent` union without registering its decoder fails
- * `pnpm typecheck` rather than blowing up at runtime.
- *
- * Each entry re-runs the payload through the domain's value-object
- * factories so consumers always see branded types (`TodoId`, `TodoTitle`).
- * The decoder throws on a malformed row — the relay worker catches per-row
- * so one bad row does not abort the whole batch.
- *
- * ## Coupling note
- *
- * Decoders reapply value-object invariants (`TodoTitle.create` etc.) to
- * stored payloads. If those invariants are *tightened* later (e.g. shorter
- * max length, stricter regex), historical outbox rows that were valid at
- * write time may start failing decode. Either keep invariant changes
- * additive (looser) or introduce a new event type rather than mutating the
- * existing shape — this is the same rule called out in the README for
- * wire-format compatibility.
+ * Per-event decoders keyed on the full `event.type`. Re-runs every payload
+ * through the domain's value-object factories so consumers see branded
+ * types. Tightening a value-object invariant can retroactively reject
+ * historical outbox rows — keep changes additive, or introduce a new event
+ * type rather than mutating the existing shape.
  */
 export const todoEventDecoders: Readonly<
   Record<TodoEvent["type"], EventDecoder<TodoEvent>>
@@ -183,14 +155,6 @@ export const todoEventDecoders: Readonly<
   },
 };
 
-/**
- * Reconstruct a typed `TodoEvent` from its wire representation.
- *
- * Thin dispatcher over {@link todoEventDecoders}. Kept exported for
- * call-sites that want a single function (tests / ad-hoc decoding). The
- * relay worker registry uses the per-event map directly because that gives
- * compile-time exhaustiveness across the union.
- */
 export const decodeTodoEvent: EventDecoder<TodoEvent> = (
   type,
   payload,

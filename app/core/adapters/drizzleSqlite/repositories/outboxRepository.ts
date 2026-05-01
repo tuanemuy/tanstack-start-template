@@ -1,7 +1,4 @@
 import { and, asc, inArray, isNotNull, isNull, lt } from "drizzle-orm";
-// `OutboxRepository` is an application-layer port (the outbox is an
-// infrastructural delivery mechanism for cross-aggregate publishing, not a
-// domain concept). The adapter implements that port directly.
 import type {
   OutboxEntry,
   OutboxRepository,
@@ -24,12 +21,8 @@ function rowToEntry(row: OutboxEventRow): OutboxEntry {
 }
 
 /**
- * Drizzle-backed `OutboxRepository`.
- *
- * Constructed with an `Executor` that may be either a transaction handle
- * (when the `UnitOfWorkProvider` is flushing collected events) or the bare
- * database (for the relay worker's polling reads / mark-processed updates).
- * Both paths use the same SQL — no separate writer/reader subclasses.
+ * Drizzle-backed `OutboxRepository`. The `Executor` may be a transaction
+ * handle (UoW flush) or the bare DB (relay worker reads / mark-processed).
  */
 export class DrizzleSqliteOutboxRepository implements OutboxRepository {
   constructor(private readonly executor: Executor) {}
@@ -77,8 +70,6 @@ export class DrizzleSqliteOutboxRepository implements OutboxRepository {
 
   async pruneProcessed(olderThan: Date): Promise<{ deleted: number }> {
     return mapDbError("Failed to prune processed outbox events", async () => {
-      // `.returning({ id })` lets us count exactly the rows deleted without
-      // an extra round-trip. libSQL/SQLite supports DELETE ... RETURNING.
       const rows = await this.executor
         .delete(outboxEvents)
         .where(

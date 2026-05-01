@@ -1,5 +1,9 @@
-import { and, desc, eq, sql } from "drizzle-orm";
-import { ConflictError, ConflictErrorCode } from "@/core/application/errors";
+import { and, desc, eq, getTableColumns, sql } from "drizzle-orm";
+import {
+  ConflictError,
+  SystemError,
+  SystemErrorCode,
+} from "@/core/application/errors";
 import type {
   Pagination,
   PaginationResult,
@@ -12,10 +16,6 @@ import type {
 } from "@/core/domain/todo/entity";
 import type { TodoRepository } from "@/core/domain/todo/ports/todoRepository";
 import { TodoId, TodoTitle } from "@/core/domain/todo/valueObject";
-// `SystemError` is the one application-layer-shaped error adapters can throw
-// directly. Imported from `app/lib/` (its real home) rather than from
-// `core/application/errors` to keep the adapter free of upward dependencies.
-import { SystemError, SystemErrorCode } from "@/lib/systemError";
 import type { Executor } from "../client";
 import { todos } from "../schema";
 import { mapDbError } from "./helpers";
@@ -23,13 +23,9 @@ import { mapDbError } from "./helpers";
 type TodoRow = typeof todos.$inferSelect;
 
 /**
- * Convert a raw persisted row into a `Todo` aggregate.
- *
- * Runs every column through its value-object factory so invariants are
- * re-checked on read. A `BusinessRuleError` from a VO factory means the
- * stored row violates a domain invariant — that is infrastructural
- * corruption, not a user-recoverable rule violation, so it is re-thrown as
- * `SystemError(DatabaseError)` with the original error in the cause chain.
+ * Re-validate every column on the way in. A `BusinessRuleError` from a VO
+ * factory means the stored row violates a domain invariant — that is
+ * infrastructural corruption, surfaced as `SystemError(DatabaseError)`.
  */
 function toTodo(row: TodoRow): Todo {
   try {
@@ -39,6 +35,12 @@ function toTodo(row: TodoRow): Todo {
         `Stored todo has invalid version: ${row.version}`,
       );
     }
+    if (row.status !== "active" && row.status !== "completed") {
+      throw new SystemError(
+        SystemErrorCode.DatabaseError,
+        `Stored todo has invalid status: ${row.status}`,
+      );
+    }
     const base = {
       id: TodoId.create(row.id),
       title: TodoTitle.create(row.title),
@@ -46,7 +48,7 @@ function toTodo(row: TodoRow): Todo {
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };
-    return row.completed
+    return row.status === "completed"
       ? ({ ...base, status: "completed" } satisfies CompletedTodo)
       : ({ ...base, status: "active" } satisfies ActiveTodo);
   } catch (error) {
@@ -60,28 +62,20 @@ function toTodo(row: TodoRow): Todo {
 }
 
 /**
- * Drizzle-backed `TodoRepository`.
+ * Drizzle-backed `TodoRepository` with optimistic concurrency control.
  *
- * Persists the aggregate using optimistic concurrency control:
+ * - `version === 0` → INSERT. PK collision is treated as a programming bug.
+ * - `version > 0`   → UPDATE with `WHERE id = ? AND version = ? - 1`. Zero
+ *   rows updated → `ConflictError(OPTIMISTIC_LOCK_FAILURE)`.
+ * - DELETE is similarly guarded by `expectedVersion`.
  *
- * - `version === 0` is a brand-new aggregate and issued as INSERT. A primary
- *   key collision surfaces as `SystemError` (the "double-create" case is an
- *   application bug, not a concurrent writer).
- * - `version > 0` is an update guarded by `WHERE id = ? AND version = ? - 1`.
- *   A zero-row update means another transaction wrote first and we raise
- *   `ConflictError(OptimisticLockFailure)`.
- *
- * Delete is similarly guarded by `expectedVersion`: a concurrent writer that
- * has already advanced the version causes the DELETE to match zero rows and
- * surface as `ConflictError(OptimisticLockFailure)`.
- *
- * Upsert (`ON CONFLICT DO UPDATE`) is deliberately NOT used — it would hide
- * lost updates by silently clobbering the stored version.
+ * Upsert is intentionally NOT used — it would silently clobber a stale
+ * version.
  */
 export class DrizzleSqliteTodoRepository implements TodoRepository {
   constructor(private readonly executor: Executor) {}
 
-  findById(id: TodoId): Promise<Todo | null> {
+  findById(id: string): Promise<Todo | null> {
     return mapDbError("Failed to find todo", async () => {
       const rows = await this.executor
         .select()
@@ -95,8 +89,6 @@ export class DrizzleSqliteTodoRepository implements TodoRepository {
 
   findAll(): Promise<Todo[]> {
     return mapDbError("Failed to list todos", async () => {
-      // `desc(todos.id)` is a stable secondary sort: UUIDv7 is monotonic, so
-      // rows with identical `createdAt` get a deterministic order.
       const rows = await this.executor
         .select()
         .from(todos)
@@ -108,21 +100,30 @@ export class DrizzleSqliteTodoRepository implements TodoRepository {
   findPage(pagination: Pagination): Promise<PaginationResult<Todo>> {
     return mapDbError("Failed to page todos", async () => {
       const offset = (pagination.page - 1) * pagination.limit;
-      // Tiebreak on `id` so rows with identical `createdAt` get a stable order
-      // across pages — without this, pagination can drop or duplicate rows.
-      const items = await this.executor
-        .select()
+      // Single round-trip: `COUNT(*) OVER()` ships the total alongside each
+      // row. Empty pages (past-end / empty table) need a fallback count
+      // because the window emits zero rows when the partition is empty.
+      const rows = await this.executor
+        .select({
+          ...getTableColumns(todos),
+          totalCount: sql<number>`COUNT(*) OVER()`.as("total_count"),
+        })
         .from(todos)
         .orderBy(desc(todos.createdAt), desc(todos.id))
         .limit(pagination.limit)
         .offset(offset);
-      const countRows = await this.executor
-        .select({ count: sql<number>`count(*)` })
-        .from(todos);
-      return {
-        items: items.map(toTodo),
-        count: Number(countRows[0]?.count ?? 0),
-      };
+
+      if (rows.length === 0) {
+        const countRows = await this.executor
+          .select({ count: sql<number>`count(*)` })
+          .from(todos);
+        return { items: [], count: Number(countRows[0]?.count ?? 0) };
+      }
+
+      const items = rows.map(({ totalCount: _totalCount, ...row }) =>
+        toTodo(row),
+      );
+      return { items, count: Number(rows[0]?.totalCount ?? 0) };
     });
   }
 
@@ -132,7 +133,7 @@ export class DrizzleSqliteTodoRepository implements TodoRepository {
         await this.executor.insert(todos).values({
           id: todo.id,
           title: todo.title,
-          completed: todo.status === "completed",
+          status: todo.status,
           version: todo.version,
           createdAt: todo.createdAt,
           updatedAt: todo.updatedAt,
@@ -147,7 +148,7 @@ export class DrizzleSqliteTodoRepository implements TodoRepository {
         .update(todos)
         .set({
           title: todo.title,
-          completed: todo.status === "completed",
+          status: todo.status,
           version: todo.version,
           updatedAt: todo.updatedAt,
         })
@@ -157,13 +158,13 @@ export class DrizzleSqliteTodoRepository implements TodoRepository {
 
     if (updated.length === 0) {
       throw new ConflictError(
-        ConflictErrorCode.OptimisticLockFailure,
+        "OPTIMISTIC_LOCK_FAILURE",
         `Optimistic lock failure while saving todo ${todo.id}: expected version ${previousVersion}`,
       );
     }
   }
 
-  async delete(id: TodoId, expectedVersion: number): Promise<void> {
+  async delete(id: string, expectedVersion: number): Promise<void> {
     const deleted = await mapDbError("Failed to delete todo", () =>
       this.executor
         .delete(todos)
@@ -172,7 +173,7 @@ export class DrizzleSqliteTodoRepository implements TodoRepository {
     );
     if (deleted.length === 0) {
       throw new ConflictError(
-        ConflictErrorCode.OptimisticLockFailure,
+        "OPTIMISTIC_LOCK_FAILURE",
         `Optimistic lock failure while deleting todo ${id}: expected version ${expectedVersion}`,
       );
     }

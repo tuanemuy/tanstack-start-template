@@ -4,29 +4,9 @@ import type { Container } from "../di/server";
 import type { OutboxEntry } from "../ports/outboxRepository";
 
 /**
- * EventRelayWorker
- *
- * Drains the outbox by polling pending entries, decoding each through the
- * domain-owned decoder, dispatching to the caller-supplied callback, and
- * marking successfully dispatched rows as processed.
- *
- * Intended to be scheduled by an external runner (cron, queue worker, etc.).
- *
- * ## Delivery semantics: at-least-once
- *
- * If dispatch succeeds but `markProcessed` fails — or the worker crashes
- * between the two — the row stays pending and the next run dispatches it
- * again. **Consumers MUST be idempotent**, typically keyed on `event.id`.
- *
- * ## Partial-failure handling
- *
- * Per-row failures do not abort the batch:
- *
- * 1. **Decode failure** — corrupt row (unknown type, malformed payload).
- *    Logged and skipped (NOT marked processed) so a future run can retry
- *    once the bad row is fixed. Marking processed would silently lose data.
- * 2. **Dispatch failure** — consumer threw. Logged and skipped for this
- *    batch; the next run picks the row up again.
+ * Drains the outbox: poll → decode → dispatch → mark processed. Per-row
+ * decode/dispatch failures are logged and skipped (NOT marked processed)
+ * so a future run can retry. Delivery is at-least-once.
  *
  * `Promise.allSettled` over dispatch keeps one failing consumer from
  * knocking the rest off the train.
@@ -34,44 +14,21 @@ import type { OutboxEntry } from "../ports/outboxRepository";
 export type EventDispatcher = (event: DomainEvent) => Promise<void>;
 
 /**
- * Decoder registry keyed by the **full** `event.type` string (e.g.
- * `"todo.created"`, not just `"todo"`).
- *
- * ## Convention
- *
- * Each domain exports a per-domain map typed as
- * `Record<DomainEvent["type"], EventDecoder<DomainEvent>>` (e.g.
- * `todoEventDecoders` in `app/core/domain/todo/events.ts`). The worker
- * merges those maps into a single registry. Adding a new event variant to
- * a domain's union without registering its decoder is a compile-time
- * error rather than a runtime "no decoder registered" surprise.
- *
- * To add a new domain: export `<domain>EventDecoders` from that domain's
- * events file and spread it into {@link defaultEventDecoderRegistry}
- * below — that is the only edit the worker needs.
+ * Decoder registry keyed by the **full** `event.type`. Each domain exports
+ * a per-event map typed `Record<DomainEvent["type"], EventDecoder>`, so
+ * adding a new variant without registering its decoder is a compile-time
+ * error rather than a runtime surprise.
  */
 export type EventDecoderRegistry = Readonly<
   Record<string, EventDecoder<DomainEvent>>
 >;
 
-/**
- * Default registry — merge of every domain's per-event decoder map.
- *
- * The spread is intentional: each domain's map is itself
- * compile-time-checked for exhaustiveness over its own union, and
- * spreading composes them without weakening that check on either side.
- */
 export const defaultEventDecoderRegistry: EventDecoderRegistry = {
   ...todoEventDecoders,
 };
 
 export type ProcessOutboxEventsOptions = {
-  /** Maximum number of entries to dispatch per invocation. Defaults to 100. */
   batchSize?: number;
-  /**
-   * Override the decoder registry for tests / specialised runners. Defaults
-   * to {@link defaultEventDecoderRegistry}.
-   */
   decoderRegistry?: EventDecoderRegistry;
 };
 

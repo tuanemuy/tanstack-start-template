@@ -231,7 +231,7 @@ import { getRequestHeaders } from "@tanstack/react-start/server";
 
 import { getContainer } from "@/core/application/di/server";
 import { getPost } from "@/core/application/post/getPost";
-import { isNotFoundError, isUnauthenticatedError } from "@/core/application/errors";
+import { isNotFoundError } from "@/core/application/errors";
 import { RelatedPosts } from "./RelatedPosts";
 
 // 同一リクエスト内で同じ postId を呼んでも 1 回だけフェッチする。
@@ -249,7 +249,6 @@ const loadPost = cache(async (postId: string) => {
       input: { postId },
     });
   } catch (e) {
-    if (isUnauthenticatedError(e)) throw redirect({ to: "/login" });
     if (isNotFoundError(e)) throw notFound();
     throw e;
   }
@@ -420,11 +419,7 @@ export const createTodoSchema = z.object({
 ```typescript
 // app/core/presentation/validator.ts
 import type { ZodType, z } from "zod";
-import {
-  ValidationError,
-  ValidationErrorCode,
-  zodIssuesToFieldErrors,
-} from "@/core/application/errors";
+import { ValidationError, zodIssuesToFieldErrors } from "@/core/application/errors";
 import { AppServerError } from "./errorResponse";
 
 // validator は handler の前に走るので withErrorResponse には頼れない →
@@ -434,7 +429,7 @@ export function createValidator<TSchema extends ZodType>(schema: TSchema) {
     const parsed = schema.safeParse(input);
     if (parsed.success) return parsed.data as z.infer<TSchema>;
     const error = new ValidationError(
-      ValidationErrorCode.InvalidInput,
+      "INVALID_INPUT",
       "Invalid input",
       parsed.error,
       zodIssuesToFieldErrors(parsed.error.issues),
@@ -473,9 +468,9 @@ presentation 側で `z.string().min(1)` だけにとどめ、本格的な検証�
 ### useServerAction で呼ぶ
 
 `useServerAction(fn, options)` は server function 呼び出しに **router
-invalidation + transition + エラー kind 分岐 + オートリトライ** を一枚で
-被せるフック。戻り値の `lastError: SerializedError | null` を使うと、
-`validation` エラーの `fieldErrors` をそのまま UI に流し込める。
+invalidation + transition + エラー kind 分岐** を一枚で被せるフック。戻り
+値の `lastError: SerializedError | null` を使うと、`validation` エラーの
+`fieldErrors` をそのまま UI に流し込める。
 
 ```tsx
 // app/components/todo/CreateTodoForm.tsx
@@ -545,23 +540,19 @@ export function CreateTodoForm() {
 }
 ```
 
-### オートリトライ（retryable 系エラー）
+### Conflict などの失敗
 
-`useServerAction` の `autoRetry` は `SerializedError.retryable === true`
-のときだけ発動する。これは network / external API のように transport 境界で
-再実行しても意味が変わらない失敗向け。`ConflictError` はデフォルトでは
-retryable ではない。OCC conflict の安全な再試行可否はコマンド次第なので、
-`changeTodoStatus({ id, status })` のような冪等 usecase が内部で再読込して
-処理する。
+`ConflictError` 等の失敗はそのままクライアントに伝播する。UI は
+`onError` の `conflict` ハンドラで「再試行してください」と表示するか、
+`useServerAction` を呼び直す。
 
 ```tsx
 const changeStatus = useServerAction(useServerFn(changeTodoStatusFn), {
   onError: {
     notFound: () => setErrorMessage("このTodoは既に削除されています"),
+    conflict: () => setErrorMessage("他の操作と競合しました。もう一度お試しください"),
     default: (error) => setErrorMessage(displayError(error)),
   },
-  // OCC conflict は usecase 側で安全に扱う。UI は「反転」ではなく
-  // 「この状態にしたい」という status 値を送る。
 });
 ```
 

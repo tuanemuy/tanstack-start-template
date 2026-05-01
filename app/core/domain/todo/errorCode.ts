@@ -1,10 +1,3 @@
-/**
- * Error codes owned by the Todo domain.
- *
- * `as const` keeps the literal union usable both as a type
- * (`BusinessRuleError<TodoErrorCode>`) and a value
- * (`error.code === TodoErrorCode.TitleTooLong`).
- */
 export const TodoErrorCode = {
   InvalidId: "TODO_INVALID_ID",
   TitleEmpty: "TODO_TITLE_EMPTY",

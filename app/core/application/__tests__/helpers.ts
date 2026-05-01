@@ -10,14 +10,7 @@ import { SystemClock } from "@/core/application/ports/clock";
 import { UuidV7Generator } from "@/core/application/ports/idGenerator";
 import { ConsoleLogger } from "@/core/application/ports/logger";
 
-// Migrations directory is resolved from CWD (project root) since vitest
-// always runs from there. Using a static path keeps this file free of
-// `import.meta.url` / `fileURLToPath` plumbing.
 const MIGRATIONS_FOLDER = "app/core/adapters/drizzleSqlite/migrations";
-
-// ============================================
-// Test Database (real SQLite, in-memory)
-// ============================================
 
 export type TestDatabase = ReturnType<typeof drizzle<typeof schema>>;
 export type TestDatabaseWithCleanup = {
@@ -26,15 +19,10 @@ export type TestDatabaseWithCleanup = {
 };
 
 /**
- * Each call creates a fresh in-memory SQLite database.
- *
- * `cache=shared` is required because libsql opens a new physical connection
- * per `transaction()` call (see `Sqlite3Client.transaction` in the libsql
- * source); without shared cache every transaction would target an empty
- * database. Vitest's default `forks` pool runs each test file in its own
- * process, so the shared in-memory DB is naturally scoped per file —
- * sibling tests within one file are isolated by `cleanup` truncating the
- * tables, not by separate databases.
+ * Each call creates a fresh in-memory SQLite database. `cache=shared` is
+ * required because libsql opens a new physical connection per
+ * `transaction()` call; without shared cache every transaction would
+ * target an empty database.
  */
 export async function createTestDatabase(): Promise<TestDatabaseWithCleanup> {
   const client = createClient({ url: "file::memory:?cache=shared" });
@@ -44,21 +32,14 @@ export async function createTestDatabase(): Promise<TestDatabaseWithCleanup> {
   return {
     db,
     cleanup: async () => {
-      // Truncate user tables so the next test starts clean. We do NOT
-      // close the client — closing the last connection would drop the
-      // shared in-memory DB and force the next `migrate` call to re-run.
-      // Schema tables (`__drizzle_migrations`) are intentionally left
-      // alone so subsequent `migrate` calls within the same process see
-      // them and skip re-running.
+      // Truncate user tables so the next test starts clean. Closing the
+      // last connection would drop the shared in-memory DB and force the
+      // next `migrate` call to re-run.
       await db.delete(schema.outboxEvents);
       await db.delete(schema.todos);
     },
   };
 }
-
-// ============================================
-// Drizzle-backed Test Container (integration tests)
-// ============================================
 
 export type TestContainerOptions = {
   config?: Partial<Container["config"]>;
@@ -84,9 +65,6 @@ export async function createTestContainer(
     unitOfWorkProvider: new DrizzleSqliteUnitOfWorkProvider(db),
     outboxRepository: new DrizzleSqliteOutboxRepository(db),
     clock: SystemClock,
-    // Default to the production id generator so integration tests exercise
-    // the same code path as production. Tests that need deterministic ids
-    // can override `idGenerator` via spread on the returned container.
     idGenerator: UuidV7Generator,
     logger: ConsoleLogger,
     db,
@@ -96,19 +74,6 @@ export async function createTestContainer(
   };
 }
 
-/**
- * beforeEach/afterEach helper that builds a fresh Drizzle-backed container
- * per test and tears it down on completion.
- *
- * @example
- * ```typescript
- * const getContainer = setupTestContainer();
- * it("does something", async () => {
- *   const container = getContainer();
- *   // ...
- * });
- * ```
- */
 export function setupTestContainer(
   options: TestContainerOptions = {},
 ): () => TestContainer {
@@ -121,10 +86,6 @@ export function setupTestContainer(
   });
   return () => container;
 }
-
-// ============================================
-// Mock Headers
-// ============================================
 
 export function createMockHeaders(headers?: Record<string, string>): Headers {
   const h = new Headers();

@@ -1,4 +1,3 @@
-import { type RetryOptions, retry } from "@/core/application/execution/retry";
 import type {
   UnitOfWorkContext,
   UnitOfWorkProvider,
@@ -8,12 +7,6 @@ import type { Database, Executor } from "./client";
 import { DrizzleSqliteOutboxRepository } from "./repositories/outboxRepository";
 import { DrizzleSqliteTodoRepository } from "./repositories/todoRepository";
 
-/**
- * SQLite error codes the write path treats as transient contention worth
- * retrying internally (see `retryConfig` below). These are driver-level
- * implementation details that should never leak to application code, so the
- * adapter handles them itself rather than exposing a decorator.
- */
 const RETRYABLE_SQLITE_CODES: ReadonlySet<string> = new Set([
   "SQLITE_BUSY",
   "SQLITE_LOCKED",
@@ -26,7 +19,6 @@ function isRetryableError(error: unknown): boolean {
 }
 
 export type DrizzleSqliteUnitOfWorkRetryConfig = Readonly<{
-  /** Maximum number of attempts including the initial try. */
   maxAttempts: number;
   baseDelayMs: number;
   maxDelayMs: number;
@@ -47,50 +39,35 @@ function calculateDelay(
   return Math.min(exponential + jitter, config.maxDelayMs);
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /**
- * Drizzle-backed `UnitOfWorkProvider`.
- *
- * Each `run` call opens a transaction, hands the callback a context that
- * exposes the domain repositories plus `collectEvents`, and flushes the
- * collected events to the outbox in the same transaction once the callback
- * resolves.
- *
- * ## Transient retry (SQLite-internal)
- *
- * `SQLITE_BUSY` / `SQLITE_LOCKED` failures from write-lock contention are
- * retried inside `run()` with exponential backoff. This is a driver-level
- * concern — application code never sees these codes — so the retry lives
- * here rather than as a decorator at the application layer.
- *
- * Application-level OCC retry (`ConflictError(OptimisticLockFailure)`) is
- * a different error class and is handled by the usecase that knows the
- * mutation is idempotent (e.g. `changeTodoStatus`). The two layers compose
- * without double-retry.
- *
- * ## Side-effect warning
- *
- * A retry re-executes the callback from the top. Only DB work inside the
- * transaction (repository writes, events from `collectEvents`) is rolled
- * back. Any external side effect performed by the callback (HTTP, telemetry,
- * cache mutation) will run again on each attempt — keep the callback pure
- * with respect to external systems.
+ * Drizzle-backed `UnitOfWorkProvider`. SQLITE_BUSY / SQLITE_LOCKED failures
+ * are retried internally with exponential backoff so application code never
+ * sees those codes. A retry re-executes the callback from the top — keep it
+ * pure with respect to external side effects.
  */
 export class DrizzleSqliteUnitOfWorkProvider implements UnitOfWorkProvider {
-  private readonly retryOptions: RetryOptions;
-
   constructor(
     private readonly db: Database,
-    retryConfig: DrizzleSqliteUnitOfWorkRetryConfig = DEFAULT_RETRY_CONFIG,
-  ) {
-    this.retryOptions = {
-      maxAttempts: retryConfig.maxAttempts,
-      shouldRetry: isRetryableError,
-      delayMs: (attempt) => calculateDelay(attempt, retryConfig),
-    };
-  }
+    private readonly retryConfig: DrizzleSqliteUnitOfWorkRetryConfig = DEFAULT_RETRY_CONFIG,
+  ) {}
 
-  run<T>(fn: (ctx: UnitOfWorkContext) => Promise<T>): Promise<T> {
-    return retry(() => this.runOnce(fn), this.retryOptions);
+  async run<T>(fn: (ctx: UnitOfWorkContext) => Promise<T>): Promise<T> {
+    const { maxAttempts } = this.retryConfig;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        return await this.runOnce(fn);
+      } catch (error) {
+        if (!isRetryableError(error) || attempt >= maxAttempts) {
+          throw error;
+        }
+        await sleep(calculateDelay(attempt, this.retryConfig));
+      }
+    }
+    throw new Error("unreachable: retry loop exited without returning");
   }
 
   private runOnce<T>(fn: (ctx: UnitOfWorkContext) => Promise<T>): Promise<T> {

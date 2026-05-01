@@ -1,15 +1,7 @@
 /**
- * Database seed script.
- *
- * Runs outside the server runtime (invoked via `pnpm db:seed` → `tsx`), so
- * it does not go through the server DI's `server-only` path. Instead we
- * reuse `readServerConfig` + `createContainer` so this script reads env the
- * same way the running server does — no parallel "fallback to localhost"
- * defaults that could drift from production behaviour.
- *
- * Each seed entry flows through the real `createTodo` usecase so that the
- * resulting rows (and their outbox events) look identical to what the
- * running application would produce.
+ * Database seed script. Runs outside the server runtime (`pnpm db:seed` →
+ * `tsx`), reusing `readServerConfig` + `createContainer` so it reads env
+ * the same way the running server does.
  */
 
 import "dotenv/config";
@@ -29,8 +21,6 @@ const SEED_TODOS: readonly SeedTodo[] = [
 ];
 
 async function main(): Promise<void> {
-  // Single env-read implementation. If `APP_URL` / `SQLITE_URL` are missing,
-  // `readServerConfig` throws the same error users see on server startup.
   const config = readServerConfig();
   const container = await createContainer(config);
 
