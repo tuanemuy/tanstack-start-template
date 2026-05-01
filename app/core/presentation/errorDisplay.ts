@@ -1,14 +1,7 @@
 import {
   extractSerializedError,
   type SerializedError,
-  type SerializedErrorKind,
 } from "@/core/presentation/errorResponse";
-
-type KindHandlers = {
-  [K in SerializedErrorKind]: (
-    error: Extract<SerializedError, { kind: K }>,
-  ) => string;
-};
 
 function formatFieldErrors(
   fieldErrors: Readonly<Record<string, readonly string[]>>,
@@ -22,24 +15,26 @@ function formatFieldErrors(
   return parts.length > 0 ? parts.join(" / ") : null;
 }
 
-const handlers: KindHandlers = {
-  business: (error) => error.message,
-  notFound: () => "対象が見つかりません",
-  conflict: () => "他の操作と競合しました。もう一度お試しください",
-  validation: (error) => {
-    if (error.fieldErrors !== undefined) {
-      const formatted = formatFieldErrors(error.fieldErrors);
-      if (formatted !== null) return formatted;
-    }
-    return error.message;
-  },
-  system: () => "システムエラーが発生しました",
-  unknown: () => "エラーが発生しました",
-};
-
 export function renderErrorMessage(error: SerializedError): string {
-  const handler = handlers[error.kind] as (error: SerializedError) => string;
-  return handler(error);
+  switch (error.kind) {
+    case "business":
+      return error.message;
+    case "notFound":
+      return "対象が見つかりません";
+    case "conflict":
+      return "他の操作と競合しました。もう一度お試しください";
+    case "validation": {
+      if (error.fieldErrors !== undefined) {
+        const formatted = formatFieldErrors(error.fieldErrors);
+        if (formatted !== null) return formatted;
+      }
+      return error.message;
+    }
+    case "system":
+      return "システムエラーが発生しました";
+    case "unknown":
+      return "エラーが発生しました";
+  }
 }
 
 export function displayError(error: unknown): string {

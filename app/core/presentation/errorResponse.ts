@@ -14,21 +14,10 @@ export type {
   SerializedErrorBase,
 } from "@/lib/error";
 
-/**
- * Catch-all variant for thrown values that don't implement
- * `SerializableError`. Owned by the presentation layer because this is
- * the boundary where "unknown thrown thing" must be normalized into the
- * wire envelope.
- */
 export type SerializedUnknownError = SerializedErrorBase & {
   kind: "unknown";
 };
 
-/**
- * Full discriminated union of every wire-format error variant. Assembled
- * here because presentation is the only layer that needs to see every
- * `kind` at once (HTTP status mapping, renderer dispatch, hook callbacks).
- */
 export type SerializedError =
   | SerializedBusinessError
   | SerializedNotFoundError
@@ -39,25 +28,47 @@ export type SerializedError =
 
 export type SerializedErrorKind = SerializedError["kind"];
 
+const SERIALIZED_ERROR_KINDS = {
+  business: true,
+  notFound: true,
+  conflict: true,
+  validation: true,
+  system: true,
+  unknown: true,
+} as const satisfies Record<SerializedErrorKind, true>;
+
+function isSerializedError(
+  value: SerializedErrorBase & { kind: string },
+): value is SerializedError {
+  return Object.hasOwn(SERIALIZED_ERROR_KINDS, value.kind);
+}
+
+const SYSTEM_ERROR_PUBLIC_MESSAGE = "System error";
+
+function redactSystem(serialized: SerializedError): SerializedError {
+  return serialized.kind === "system"
+    ? { ...serialized, message: SYSTEM_ERROR_PUBLIC_MESSAGE }
+    : serialized;
+}
+
 function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === "string") return error;
   return "Unexpected error";
 }
 
-/**
- * Classify any thrown value into a {@link SerializedError}. The protocol
- * is structural — anything that exposes `toSerialized()` is delegated to,
- * so adding a new error class never requires editing this function.
- */
 export function serializeError(error: unknown): SerializedError {
-  if (isSerializableError(error)) {
-    return error.toSerialized() as SerializedError;
+  if (!isSerializableError(error)) {
+    return { kind: "unknown", code: null, message: errorMessage(error) };
+  }
+  const serialized = error.toSerialized();
+  if (isSerializedError(serialized)) {
+    return redactSystem(serialized);
   }
   return {
     kind: "unknown",
-    code: null,
-    message: errorMessage(error),
+    code: serialized.code,
+    message: serialized.message,
   };
 }
 
@@ -67,18 +78,11 @@ const HTTP_STATUS_BY_KIND: Partial<Record<SerializedErrorKind, number>> = {
   validation: 422,
 };
 
-/**
- * Map a serialized error kind to its HTTP status. Returning `null` lets the
- * framework fall through to its default (500-class for thrown errors).
- */
+// Returns null so the framework falls through to its default 500-class.
 export function httpStatusFor(serialized: SerializedError): number | null {
   return HTTP_STATUS_BY_KIND[serialized.kind] ?? null;
 }
 
-/**
- * Wire-format error wrapper for the server-function boundary. The carried
- * `serialized` envelope survives JSON / structured-clone.
- */
 export class AppServerError extends Error {
   override readonly name = "AppServerError";
 
