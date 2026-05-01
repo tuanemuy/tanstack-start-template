@@ -1,4 +1,3 @@
-import { z } from "zod";
 import { BusinessRuleError } from "@/core/domain/error";
 import { TodoErrorCode } from "./errorCode";
 
@@ -10,11 +9,6 @@ const UUID_V7_PATTERN =
 declare const todoIdBrand: unique symbol;
 declare const todoTitleBrand: unique symbol;
 
-/**
- * Branded `TodoId`. Aggregate ids are server-minted via `IdGenerator`, so
- * any non-UUIDv7 value reaching `TodoId.create` indicates corrupt storage
- * or a programming bug.
- */
 export type TodoId = string & { readonly [todoIdBrand]: true };
 
 export const TodoId = {
@@ -28,26 +22,21 @@ export const TodoId = {
 
 export type TodoTitle = string & { readonly [todoTitleBrand]: true };
 
-const todoTitleSchema = z.string().trim().min(1).max(TODO_TITLE_MAX_LENGTH);
-
-function mapTitleIssueToErrorCode(
-  issue: { readonly code?: string } | undefined,
-): TodoErrorCode {
-  if (issue?.code === "too_big") return TodoErrorCode.TitleTooLong;
-  return TodoErrorCode.TitleEmpty;
-}
-
 export const TodoTitle = {
   create: (raw: string): TodoTitle => {
-    const result = todoTitleSchema.safeParse(raw);
-    if (result.success) {
-      return result.data as TodoTitle;
+    const trimmed = raw.trim();
+    if (trimmed.length === 0) {
+      throw new BusinessRuleError(
+        TodoErrorCode.TitleEmpty,
+        "Todo title cannot be empty",
+      );
     }
-    const code = mapTitleIssueToErrorCode(result.error.issues[0]);
-    const message =
-      code === TodoErrorCode.TitleTooLong
-        ? `Todo title exceeds maximum length (${TODO_TITLE_MAX_LENGTH})`
-        : "Todo title cannot be empty";
-    throw new BusinessRuleError(code, message, result.error);
+    if (trimmed.length > TODO_TITLE_MAX_LENGTH) {
+      throw new BusinessRuleError(
+        TodoErrorCode.TitleTooLong,
+        `Todo title exceeds maximum length (${TODO_TITLE_MAX_LENGTH})`,
+      );
+    }
+    return trimmed as TodoTitle;
   },
 };
