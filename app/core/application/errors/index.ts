@@ -23,11 +23,6 @@ export type SerializedSystemError = SerializedErrorBase & {
   kind: "system";
 };
 
-/**
- * Application-layer error family. Subclasses are categorised structurally
- * by their `toSerialized()` `kind` — HTTP status mapping lives at the
- * presentation boundary, not here.
- */
 export abstract class ApplicationError<
   TCode extends string = string,
 > extends CodedError<TCode> {
@@ -127,10 +122,6 @@ const RETRYABLE_SYSTEM_CODES: ReadonlySet<SystemErrorCode> =
     SystemErrorCode.ExternalApiError,
   ]);
 
-/**
- * Low-level infrastructure failure (DB driver, network, storage). Surfaces
- * as a 500-class response.
- */
 export class SystemError extends ApplicationError<SystemErrorCode> {
   override readonly name = "SystemError";
 

@@ -5,7 +5,7 @@ import { TodoId, TodoTitle } from "./valueObject";
 type TodoBase = Readonly<{
   id: TodoId;
   title: TodoTitle;
-  /** Monotonic revision counter for optimistic locking. */
+  // Monotonic revision counter for optimistic locking.
   version: number;
   createdAt: Date;
   updatedAt: Date;
@@ -14,10 +14,6 @@ type TodoBase = Readonly<{
 export type ActiveTodo = TodoBase & Readonly<{ status: "active" }>;
 export type CompletedTodo = TodoBase & Readonly<{ status: "completed" }>;
 
-/**
- * Todo aggregate. Discriminated on `status`, so state-specific operations
- * (`complete`, `reopen`) require the correct variant at compile time.
- */
 export type Todo = ActiveTodo | CompletedTodo;
 
 function complete(
@@ -55,32 +51,11 @@ function reopen(
 }
 
 function rename(
-  todo: ActiveTodo,
-  newTitle: string,
-  eventId: string,
-  now: Date,
-): WithEvents<ActiveTodo, TodoEvent>;
-function rename(
-  todo: CompletedTodo,
-  newTitle: string,
-  eventId: string,
-  now: Date,
-): WithEvents<CompletedTodo, TodoEvent>;
-function rename(
-  todo: Todo,
-  newTitle: string,
-  eventId: string,
-  now: Date,
-): WithEvents<Todo, TodoEvent>;
-function rename(
   todo: Todo,
   newTitle: string,
   eventId: string,
   now: Date,
 ): WithEvents<Todo, TodoEvent> {
-  // Validate before the idempotency short-circuit: an invalid input is not
-  // "the same as current", it is malformed. Comparing raw input against the
-  // already-normalized title would also let unnormalized inputs slip past.
   const title = TodoTitle.create(newTitle);
   if (title === todo.title) {
     return { entity: todo, events: [] };
@@ -102,10 +77,6 @@ export const Todo = {
   isCompleted: (todo: Todo): todo is CompletedTodo =>
     todo.status === "completed",
 
-  /**
-   * Create a new todo aggregate. Single branding point for `TodoId` — the
-   * application layer never constructs value objects from external input.
-   */
   create: (
     params: { id: string; eventId: string; title: string },
     now: Date,

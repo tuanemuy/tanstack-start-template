@@ -43,12 +43,8 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/**
- * Drizzle-backed `UnitOfWorkProvider`. SQLITE_BUSY / SQLITE_LOCKED failures
- * are retried internally with exponential backoff so application code never
- * sees those codes. A retry re-executes the callback from the top — keep it
- * pure with respect to external side effects.
- */
+// Retries SQLITE_BUSY / SQLITE_LOCKED with exponential backoff. The callback
+// is re-executed from the top, so external side effects must be idempotent.
 export class DrizzleSqliteUnitOfWorkProvider implements UnitOfWorkProvider {
   constructor(
     private readonly db: Database,

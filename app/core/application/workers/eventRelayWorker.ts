@@ -3,34 +3,16 @@ import { type TodoEvent, todoEventDecoders } from "@/core/domain/todo/events";
 import type { Container } from "../di/server";
 import type { OutboxEntry } from "../ports/outboxRepository";
 
-/**
- * Drains the outbox: poll → decode → dispatch → mark processed. Per-row
- * decode/dispatch failures are logged and skipped (NOT marked processed)
- * so a future run can retry — delivery is therefore at-least-once but
- * best-effort: there is no dead-letter queue, no backoff cap, and a poison
- * row (e.g. a payload that no decoder can ever decode) will retry every
- * tick. Production deployments should layer DLQ + retry caps on top.
- *
- * Dispatch runs in parallel via `Promise.allSettled`, so there is NO
- * ordering guarantee — not even per aggregate. Consumers must be idempotent
- * keyed on `event.id` and tolerate observing events out of emit order.
- */
+// Delivery is at-least-once with NO ordering guarantee. Per-row failures
+// are logged and skipped (left pending) so a poison row will retry every
+// tick — production deployments should layer DLQ + retry caps on top.
+// Consumers must be idempotent keyed on `event.id`.
 export type EventDispatcher = (event: DomainEvent) => Promise<void>;
 
-/**
- * Public registry type used by callers passing a custom registry. Wide on
- * purpose: a test fixture or alternate worker should be free to register
- * arbitrary keys.
- */
 export type EventDecoderRegistry = Readonly<
   Record<string, EventDecoder<DomainEvent>>
 >;
 
-/**
- * Union of every domain's event type. Adding a new domain here makes the
- * coverage check below fail to typecheck until decoders are registered
- * for every new variant.
- */
 type AllDomainEvents = TodoEvent;
 
 type DefaultEventDecoderRegistry = {

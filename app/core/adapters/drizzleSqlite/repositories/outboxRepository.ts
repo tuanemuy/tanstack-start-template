@@ -20,10 +20,6 @@ function rowToEntry(row: OutboxEventRow): OutboxEntry {
   };
 }
 
-/**
- * Drizzle-backed `OutboxRepository`. The `Executor` may be a transaction
- * handle (UoW flush) or the bare DB (relay worker reads / mark-processed).
- */
 export class DrizzleSqliteOutboxRepository implements OutboxRepository {
   constructor(private readonly executor: Executor) {}
 

@@ -6,10 +6,6 @@ export type SerializedBusinessError = SerializedErrorBase & {
   kind: "business";
 };
 
-/**
- * Domain-layer error. Each domain narrows `TCode` to its own literal-union
- * code type at the throw site (e.g. `BusinessRuleError<TodoErrorCode>`).
- */
 export class BusinessRuleError<
   TCode extends string = never,
 > extends CodedError<TCode> {

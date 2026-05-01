@@ -22,11 +22,6 @@ import { mapDbError } from "./helpers";
 
 type TodoRow = typeof todos.$inferSelect;
 
-/**
- * Re-validate every column on the way in. A `BusinessRuleError` from a VO
- * factory means the stored row violates a domain invariant — that is
- * infrastructural corruption, surfaced as `SystemError(DatabaseError)`.
- */
 function toTodo(row: TodoRow): Todo {
   try {
     if (!Number.isInteger(row.version) || row.version < 0) {
@@ -61,17 +56,6 @@ function toTodo(row: TodoRow): Todo {
   }
 }
 
-/**
- * Drizzle-backed `TodoRepository` with optimistic concurrency control.
- *
- * - `version === 0` → INSERT. PK collision is treated as a programming bug.
- * - `version > 0`   → UPDATE with `WHERE id = ? AND version = ? - 1`. Zero
- *   rows updated → `ConflictError(OPTIMISTIC_LOCK_FAILURE)`.
- * - DELETE is similarly guarded by `expectedVersion`.
- *
- * Upsert is intentionally NOT used — it would silently clobber a stale
- * version.
- */
 export class DrizzleSqliteTodoRepository implements TodoRepository {
   constructor(private readonly executor: Executor) {}
 
@@ -100,9 +84,8 @@ export class DrizzleSqliteTodoRepository implements TodoRepository {
   findPage(pagination: Pagination): Promise<PaginationResult<Todo>> {
     return mapDbError("Failed to page todos", async () => {
       const offset = (pagination.page - 1) * pagination.limit;
-      // Single round-trip: `COUNT(*) OVER()` ships the total alongside each
-      // row. Empty pages (past-end / empty table) need a fallback count
-      // because the window emits zero rows when the partition is empty.
+      // Empty pages need a fallback count: the COUNT(*) OVER() window emits
+      // zero rows when the partition itself is empty.
       const rows = await this.executor
         .select({
           ...getTableColumns(todos),

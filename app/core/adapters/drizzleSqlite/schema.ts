@@ -1,13 +1,8 @@
 import { sql } from "drizzle-orm";
 import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
-/**
- * `status` mirrors the discriminator on the `Todo` aggregate so adding a
- * future variant is a domain change without a migration. `version`
- * implements optimistic concurrency control. Timestamps are millisecond-
- * precision so they round-trip with `Date` losslessly and stay aligned
- * with the outbox `occurred_at` / UUIDv7 ordering.
- */
+// Timestamps are ms-precision so they round-trip with `Date` and align with
+// outbox `occurred_at` and the UUIDv7 monotonic ordering encoded in `id`.
 export const todos = sqliteTable("todos", {
   id: text("id").primaryKey(),
   title: text("title").notNull(),
@@ -17,15 +12,6 @@ export const todos = sqliteTable("todos", {
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
 });
 
-/**
- * Transactional outbox for domain events. Delivery is at-least-once;
- * consumers must be idempotent (typically keyed on `id`). Rows with
- * `processed_at IS NOT NULL` are retained for audit and pruned by
- * `pruneOutbox`.
- *
- * `created_at` is millisecond-precision so it agrees with `occurred_at`
- * (domain timestamp) and the UUIDv7 monotonic ordering encoded into `id`.
- */
 export const outboxEvents = sqliteTable(
   "outbox_events",
   {
