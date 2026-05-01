@@ -95,15 +95,22 @@ export const TodoEvents = {
 };
 
 /**
- * Per-event decoders keyed on the full `event.type`. Re-runs every payload
- * through the domain's value-object factories so consumers see branded
- * types. Tightening a value-object invariant can retroactively reject
- * historical outbox rows — keep changes additive, or introduce a new event
- * type rather than mutating the existing shape.
+ * Per-variant decoder map. The mapped type means adding a new {@link TodoEvent}
+ * variant without registering its decoder is a compile-time error rather than
+ * a runtime surprise. Each decoder re-runs the payload through the domain's
+ * value-object factories so consumers see branded types.
+ *
+ * Tightening a value-object invariant can retroactively reject historical
+ * outbox rows — keep changes additive, or introduce a new event type rather
+ * than mutating the existing shape.
  */
-export const todoEventDecoders: Readonly<
-  Record<TodoEvent["type"], EventDecoder<TodoEvent>>
-> = {
+export type TodoEventDecoders = {
+  readonly [K in TodoEvent["type"]]: EventDecoder<
+    Extract<TodoEvent, { type: K }>
+  >;
+};
+
+export const todoEventDecoders: TodoEventDecoders = {
   "todo.created": (_type, payload, meta) => {
     const parsed = todoCreatedPayloadSchema.parse(payload);
     return {
@@ -155,19 +162,20 @@ export const todoEventDecoders: Readonly<
   },
 };
 
+function isTodoEventType(type: string): type is TodoEvent["type"] {
+  return type in todoEventDecoders;
+}
+
 export const decodeTodoEvent: EventDecoder<TodoEvent> = (
   type,
   payload,
   meta,
 ) => {
-  const decoder = (
-    todoEventDecoders as Record<string, EventDecoder<TodoEvent>>
-  )[type];
-  if (!decoder) {
+  if (!isTodoEventType(type)) {
     throw new BusinessRuleError(
       TodoErrorCode.UnknownEventType,
       `Unknown todo event type: ${type}`,
     );
   }
-  return decoder(type, payload, meta);
+  return todoEventDecoders[type](type, payload, meta);
 };

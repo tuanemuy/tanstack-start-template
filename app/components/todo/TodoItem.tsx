@@ -1,37 +1,26 @@
 "use client";
 
 import { useServerFn } from "@tanstack/react-start";
-import { useState } from "react";
 import type { TodoView } from "@/core/application/todo/view";
 import { displayError } from "@/core/presentation/errorDisplay";
-import {
-  type ErrorHandlers,
-  useServerAction,
-} from "@/core/presentation/useServerAction";
+import type { SerializedError } from "@/core/presentation/errorResponse";
+import { useServerAction } from "@/core/presentation/useServerAction";
 import { changeTodoStatusFn, deleteTodoFn } from "./actions";
 
 type Props = {
   todo: TodoView;
 };
 
+function todoErrorMessage(error: SerializedError): string {
+  if (error.kind === "notFound") return "このTodoは既に削除されています";
+  return displayError(error);
+}
+
 export function TodoItem({ todo }: Props) {
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-
-  const onError: ErrorHandlers = {
-    notFound: () => setErrorMessage("このTodoは既に削除されています"),
-    default: (error) => setErrorMessage(displayError(error)),
-  };
-  const onSuccess = () => setErrorMessage(null);
-
-  const changeStatus = useServerAction(useServerFn(changeTodoStatusFn), {
-    onError,
-    onSuccess,
-  });
-  const remove = useServerAction(useServerFn(deleteTodoFn), {
-    onError,
-    onSuccess,
-  });
+  const changeStatus = useServerAction(useServerFn(changeTodoStatusFn));
+  const remove = useServerAction(useServerFn(deleteTodoFn));
   const isPending = changeStatus.isPending || remove.isPending;
+  const error = changeStatus.lastError ?? remove.lastError;
 
   return (
     <li>
@@ -64,7 +53,9 @@ export function TodoItem({ todo }: Props) {
       >
         削除
       </button>
-      {errorMessage ? <span role="alert">{errorMessage}</span> : null}
+      {error !== null ? (
+        <span role="alert">{todoErrorMessage(error)}</span>
+      ) : null}
     </li>
   );
 }

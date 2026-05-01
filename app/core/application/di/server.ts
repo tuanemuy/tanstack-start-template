@@ -76,11 +76,17 @@ export async function createContainer(
  * Lazily-constructed, memoized container. Memoizing the `Promise<Container>`
  * (not the resolved value) ensures concurrent callers during startup share
  * a single initialization — no duplicate DB connections, no duplicate WAL
- * PRAGMA round-trips. Tests bypass this and call {@link createContainer}.
+ * PRAGMA round-trips. Tests should prefer {@link createContainer} directly,
+ * but {@link resetContainer} exists as an escape hatch for code that has to
+ * reach for the singleton (route loaders driven by integration test rigs).
  */
 let _containerPromise: Promise<Container> | null = null;
 export function getContainer(): Promise<Container> {
   if (_containerPromise !== null) return _containerPromise;
   _containerPromise = createContainer(readServerConfig());
   return _containerPromise;
+}
+
+export function resetContainer(): void {
+  _containerPromise = null;
 }

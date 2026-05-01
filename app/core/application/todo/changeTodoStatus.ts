@@ -1,7 +1,12 @@
+import { z } from "zod";
 import type { Container } from "@/core/application/di/server";
 import { Todo } from "@/core/domain/todo/entity";
 import type { TodoEvent } from "@/core/domain/todo/events";
-import { NotFoundError } from "../errors";
+import {
+  NotFoundError,
+  ValidationError,
+  zodIssuesToFieldErrors,
+} from "../errors";
 import type { ServiceArgs } from "../types";
 import { type TodoView, toTodoView } from "./view";
 
@@ -16,26 +21,32 @@ export type ChangeTodoStatusOutput = {
   todo: TodoView;
 };
 
+const inputSchema = z.object({
+  id: z.string().min(1),
+  status: z.enum(["active", "completed"]),
+});
+
 export async function changeTodoStatus({
   container,
   input,
 }: ServiceArgs<ChangeTodoStatusInput>): Promise<ChangeTodoStatusOutput> {
+  const parsed = parseInput(input);
   const now = container.clock.now();
 
   const next = await container.unitOfWorkProvider.run(
     async ({ todoRepository, collectEvents }) => {
-      const current = await todoRepository.findById(input.id);
+      const current = await todoRepository.findById(parsed.id);
       if (!current) {
         throw new NotFoundError(
           "TODO_NOT_FOUND",
-          `Todo not found: ${input.id}`,
+          `Todo not found: ${parsed.id}`,
         );
       }
 
       const transition = setStatusIfNeeded(
         container,
         current,
-        input.status,
+        parsed.status,
         now,
       );
       if (transition === null) return current;
@@ -46,6 +57,19 @@ export async function changeTodoStatus({
   );
 
   return { todo: toTodoView(next) };
+}
+
+function parseInput(input: ChangeTodoStatusInput): z.infer<typeof inputSchema> {
+  const parsed = inputSchema.safeParse(input);
+  if (!parsed.success) {
+    throw new ValidationError(
+      "INVALID_INPUT",
+      "Invalid change-todo-status input",
+      parsed.error,
+      zodIssuesToFieldErrors(parsed.error.issues),
+    );
+  }
+  return parsed.data;
 }
 
 function setStatusIfNeeded(

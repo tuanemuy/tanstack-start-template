@@ -30,15 +30,10 @@ export type UseServerActionOptions<TArgs extends unknown[], TResult> = {
   onSuccess?: (result: TResult) => void;
   /**
    * Fired synchronously at the start of the call — use this to dispatch
-   * `useOptimistic` updates. Only effective when `transition !== false`.
+   * `useOptimistic` updates from inside the same `useTransition` scope.
    */
   onOptimistic?: (...args: TArgs) => void;
   invalidate?: InvalidateStrategy;
-  /**
-   * When `false`, bypass `useTransition` so UI updates apply immediately.
-   * Defaults to `true`.
-   */
-  transition?: boolean;
 };
 
 export function useServerAction<TArgs extends unknown[], TResult>(
@@ -46,8 +41,7 @@ export function useServerAction<TArgs extends unknown[], TResult>(
   options?: UseServerActionOptions<TArgs, TResult>,
 ) {
   const router = useRouter();
-  const [transitionPending, startTransition] = useTransition();
-  const [directPending, setDirectPending] = useState(false);
+  const [isPending, startTransition] = useTransition();
   const [lastError, setLastError] = useState<SerializedError | null>(null);
 
   const fnRef = useRef(fn);
@@ -58,7 +52,7 @@ export function useServerAction<TArgs extends unknown[], TResult>(
   const run = useCallback(
     (...args: TArgs): Promise<ServerActionResult<TResult>> => {
       return new Promise((resolve) => {
-        const execute = async () => {
+        startTransition(async () => {
           const opts = optionsRef.current;
           opts?.onOptimistic?.(...args);
 
@@ -83,14 +77,7 @@ export function useServerAction<TArgs extends unknown[], TResult>(
             handler?.(serialized);
             resolve({ ok: false, error: serialized });
           }
-        };
-
-        if (optionsRef.current?.transition === false) {
-          setDirectPending(true);
-          void execute().finally(() => setDirectPending(false));
-        } else {
-          startTransition(execute);
-        }
+        });
       });
     },
     [router],
@@ -100,7 +87,7 @@ export function useServerAction<TArgs extends unknown[], TResult>(
 
   return {
     run,
-    isPending: transitionPending || directPending,
+    isPending,
     lastError,
     clearLastError,
   };

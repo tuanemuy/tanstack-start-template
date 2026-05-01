@@ -4,16 +4,14 @@ import type { FieldErrors, SerializedError } from "@/lib/serializedError";
 export type { FieldErrors, SerializedError } from "@/lib/serializedError";
 
 /**
- * Application-layer error family that maps cleanly to an HTTP status code.
- * Each subclass pins one status via {@link httpStatus}, consumed by
- * `withErrorResponse` to set the response status.
+ * Application-layer error family. Subclasses are categorised structurally
+ * by their `toSerialized()` `kind` — HTTP status mapping lives at the
+ * presentation boundary, not here.
  */
 export abstract class ApplicationError<
   TCode extends string = string,
 > extends CodedError<TCode> {
   override readonly name: string = "ApplicationError";
-
-  abstract get httpStatus(): number;
 }
 
 export function isApplicationError(error: unknown): error is ApplicationError {
@@ -22,10 +20,6 @@ export function isApplicationError(error: unknown): error is ApplicationError {
 
 export class NotFoundError extends ApplicationError {
   override readonly name = "NotFoundError";
-
-  override get httpStatus(): number {
-    return 404;
-  }
 
   override toSerialized(): SerializedError {
     return {
@@ -43,10 +37,6 @@ export function isNotFoundError(error: unknown): error is NotFoundError {
 
 export class ConflictError extends ApplicationError {
   override readonly name = "ConflictError";
-
-  override get httpStatus(): number {
-    return 409;
-  }
 
   override toSerialized(): SerializedError {
     return {
@@ -77,10 +67,6 @@ export class ValidationError extends ApplicationError {
     if (fieldErrors !== undefined) {
       this.fieldErrors = fieldErrors;
     }
-  }
-
-  override get httpStatus(): number {
-    return 422;
   }
 
   override toSerialized(): SerializedError {
@@ -141,7 +127,7 @@ const RETRYABLE_SYSTEM_CODES: ReadonlySet<SystemErrorCode> =
  * Low-level infrastructure failure (DB driver, network, storage). Surfaces
  * as a 500-class response.
  */
-export class SystemError extends CodedError<SystemErrorCode> {
+export class SystemError extends ApplicationError<SystemErrorCode> {
   override readonly name = "SystemError";
 
   override get retryable(): boolean {
