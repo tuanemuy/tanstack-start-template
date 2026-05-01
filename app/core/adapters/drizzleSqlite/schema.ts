@@ -4,15 +4,17 @@ import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 /**
  * `status` mirrors the discriminator on the `Todo` aggregate so adding a
  * future variant is a domain change without a migration. `version`
- * implements optimistic concurrency control.
+ * implements optimistic concurrency control. Timestamps are millisecond-
+ * precision so they round-trip with `Date` losslessly and stay aligned
+ * with the outbox `occurred_at` / UUIDv7 ordering.
  */
 export const todos = sqliteTable("todos", {
   id: text("id").primaryKey(),
   title: text("title").notNull(),
   status: text("status").notNull(),
   version: integer("version").notNull().default(0),
-  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
-  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
 });
 
 /**

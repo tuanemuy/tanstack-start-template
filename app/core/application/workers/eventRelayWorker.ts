@@ -11,8 +11,9 @@ import type { OutboxEntry } from "../ports/outboxRepository";
  * row (e.g. a payload that no decoder can ever decode) will retry every
  * tick. Production deployments should layer DLQ + retry caps on top.
  *
- * `Promise.allSettled` over dispatch keeps one failing consumer from
- * knocking the rest off the train.
+ * Dispatch runs in parallel via `Promise.allSettled`, so there is NO
+ * ordering guarantee — not even per aggregate. Consumers must be idempotent
+ * keyed on `event.id` and tolerate observing events out of emit order.
  */
 export type EventDispatcher = (event: DomainEvent) => Promise<void>;
 

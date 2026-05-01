@@ -59,13 +59,12 @@ Hexagonal architecture with DDD principles.
     - `__tests__/helpers.ts` — Drizzle-backed in-memory SQLite test container.
     - `__tests__/fakes/` — port fakes (`FakeIdGenerator`, `FakeLogger`).
 - **Presentation Layer** (`app/core/presentation/`): framework-specific cross-cutting utilities.
-    - `errorResponse.ts` — `AppServerError`, `withErrorResponse`, `serializeError`, `extractSerializedError`.
+    - `errorResponse.ts` — `AppServerError`, `withErrorResponse`, `serializeError`, `extractSerializedError`. Owns the full `SerializedError` discriminated union (assembled from each layer's variants) and the `unknown` catch-all variant — presentation is the only layer that needs to see every `kind` at once.
     - `errorDisplay.ts` — `displayError` / `sanitizeRouteError` / `renderErrorMessage`.
     - `useServerAction.ts` — client hook around server functions.
-    - `validator.ts` — `createValidator(schema)` for server-function input boundaries.
+    - `validator.ts` — `validateInput(schema)` for `createServerFn(...).inputValidator(...)`. Shape / DoS guard only. Imports the variant type via `import type` from sibling `./errorResponse`; runtime stays at the presentation layer (already in the client bundle), so no application/domain runtime leaks into the client graph.
 - **Shared lib** (`app/lib/`)
-    - `serializedError.ts` — wire envelope + the structural `SerializableError` interface and `isSerializableError` guard. Lives outside `core/` because it is a transport contract shared by every error producer and renderer.
-    - `error.ts` — `CodedError<TCode>` base shared by `SystemError`, `ApplicationError`, `BusinessRuleError`. Living in `app/lib/` is what lets every layer extend it without violating the hexagonal direction.
+    - `error.ts` — `CodedError<TCode>` base shared by `SystemError`, `ApplicationError`, `BusinessRuleError`, plus the structural pieces `SerializedErrorBase`, `FieldErrors`, the `SerializableError` interface, and `isSerializableError`. The full `SerializedError` union is intentionally NOT here — each layer defines its own `kind`-tagged variant and presentation assembles them. `toSerialized()` returns `SerializedErrorBase & { kind: string }` structurally; subclasses narrow to their own variant. Living in `app/lib/` is what lets every layer extend it without violating the hexagonal direction.
 
 ### Unit of Work
 
@@ -92,7 +91,7 @@ There is intentionally no application-level OCC retry decorator. Conflicts (`Con
 
 ### Event Handling (Outbox Pattern)
 
-Delivery is **at-least-once**. Consumers must be idempotent (typically keyed on `event.id`).
+Delivery is **at-least-once** with **no ordering guarantee**. Pending rows are read in `(createdAt, id)` order, but dispatch runs in parallel via `Promise.allSettled`, so consumers must be idempotent (typically keyed on `event.id`) and must not rely on observing events in any particular order — even within a single aggregate.
 
 - `ports/outboxRepository.ts`: `save` (UoW transaction), `listPending`, `markProcessed`, `pruneProcessed`.
 - `adapters/drizzleSqlite/repositories/outboxRepository.ts` implements the port. The adapter takes a Drizzle `Executor` so the same class works inside a transaction or against the bare DB.
@@ -100,6 +99,17 @@ Delivery is **at-least-once**. Consumers must be idempotent (typically keyed on 
 - `workers/outboxPrune.ts`: `pruneOutbox(container, { retentionMs })`. Raw milliseconds is the canonical unit. Safe to run concurrently with the relay worker.
 - The template assumes a single relay worker process. Running multiple concurrent workers can double-dispatch.
 - Rows with `processed_at IS NOT NULL` are retained for audit; the template ships `pruneOutbox` but **does not schedule it**.
+
+### Input validation
+
+Input is validated at exactly two points, with distinct responsibilities:
+
+- **Transport boundary** (`createServerFn(...).inputValidator(validateInput(schema))`): shape / DoS guard. Asserts the JSON matches the expected signature. The schema lives next to the component (`app/components/${domain}/schema.ts`) and depends only on `zod`, so it's safe to ship to the client bundle that `inputValidator` runs in.
+- **Domain layer** (value-object factories like `TodoTitle.create`): business invariants. The final gate that decides what is a legal value of the type.
+
+Usecases sit between these two and do **NOT** re-validate input. They trust the static type and apply domain logic. A `BusinessRuleError` from a VO factory propagates out as a `business`-kind serialized error.
+
+This keeps Zod and application/domain modules off the client bundle path that `inputValidator` enters, and avoids duplicating the same constraint in three layers.
 
 ### State transitions
 
@@ -123,16 +133,15 @@ TanStack Start with React 19 / RSC, TanStack Router (file-based), Tailwind v4.
 
 ### Domain Layer
 
-- `domain/error.ts` defines `BusinessRuleError<TCode extends string = never>`. Each throw site narrows `TCode` to its domain's literal-union code type. `isBusinessRuleError` narrows to `BusinessRuleError<string>` for the generic catch case.
-- `BusinessRuleError` carries `toSerialized()` — presentation never enumerates classes via `instanceof`.
+- `domain/error.ts` defines `BusinessRuleError<TCode extends string = never>` and the `SerializedBusinessError` variant it produces. Each throw site narrows `TCode` to its domain's literal-union code type. `isBusinessRuleError` narrows to `BusinessRuleError<string>` for the generic catch case.
+- `BusinessRuleError` carries `toSerialized()` returning its own variant — presentation never enumerates classes via `instanceof`.
 
 ### Application Layer
 
-- `errors/index.ts` defines the abstract `ApplicationError` (HTTP status family) plus `NotFoundError` (404), `ConflictError` (409), `ValidationError` (422). `SystemError` (500-class) lives here too.
-- `ApplicationError` exposes `abstract get httpStatus(): number`. `withErrorResponse` calls `setResponseStatus(error.httpStatus)` for any application error before throwing the wire envelope, so adding a new variant requires nothing more than choosing its status.
-- Each subclass's `code` is a plain string. Per-class enums were dropped — domain enums (e.g. `TodoErrorCode`) and the transport `SerializedErrorKind` cover all the categorisation that matters. `SystemErrorCode` is kept because it drives the runtime `retryable` classification.
-- `ValidationError.fieldErrors` is optional. `zodIssuesToFieldErrors` converts Zod issues into that shape.
-- Every error class implements `toSerialized()` so the presentation layer can serialize structurally.
+- `errors/index.ts` defines the abstract `ApplicationError` plus `NotFoundError`, `ConflictError`, `ValidationError`, and the 500-class `SystemError`. It also owns the `SerializedNotFoundError` / `SerializedConflictError` / `SerializedValidationError` / `SerializedSystemError` variants — each error class returns its own variant from `toSerialized()`. HTTP status mapping is the presentation layer's concern (driven structurally by `kind`), not a property of the error itself.
+- Each subclass's `code` is a plain string. Per-class enums were dropped — domain enums (e.g. `TodoErrorCode`) and the presentation-assembled `SerializedErrorKind` cover all the categorisation that matters. `SystemErrorCode` is kept because it drives the runtime `retryable` classification.
+- `ValidationError.fieldErrors` is optional. The presentation-layer `validateInput` builds this shape from Zod issues internally.
+- Every error class implements `toSerialized()` returning its own `kind`-tagged variant so the presentation layer can serialize structurally without enumerating concrete classes.
 - Avoid broad `try / catch` in ordinary application logic. Use it only at explicit boundaries: server-function serialization, decoder per-row tolerance in the relay worker.
 
 ### Infrastructure Layer
@@ -141,7 +150,7 @@ TanStack Start with React 19 / RSC, TanStack Router (file-based), Tailwind v4.
 
 ### Presentation Layer
 
-- `withErrorResponse(fn)` wraps thrown values in `AppServerError` via `serializeError` → `isSerializableError` → `toSerialized`. Status comes from `error.httpStatus` (only the abstract `ApplicationError` base is touched). `redirect()` / `notFound()` sentinels are re-thrown to drive navigation.
+- `withErrorResponse(fn)` wraps thrown values in `AppServerError` via `serializeError` → `isSerializableError` → `toSerialized`. The HTTP status is derived from the serialized `kind` at the boundary. `redirect()` / `notFound()` sentinels are re-thrown to drive navigation.
 - Workers log decode/dispatch failures via the injected `Logger` and leave the row pending. `Promise.allSettled` keeps one bad consumer from aborting the batch.
 - UI calls `displayError(error)` / `sanitizeRouteError(error)`. `useServerAction` exposes `lastError` so forms can pluck `fieldErrors` out of a validation failure without parsing the message.
 

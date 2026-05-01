@@ -4,9 +4,12 @@ import type { DomainEvent } from "@/core/domain/common/event";
  * Outbox port. Application-layer (NOT domain) — the outbox is an
  * infrastructural delivery mechanism. Domain code never imports this port.
  *
- * Delivery is at-least-once. Consumers MUST be idempotent (typically keyed
- * on `event.id`). Designed for a single relay worker process; running
- * multiple concurrent workers can double-dispatch.
+ * Delivery is at-least-once with NO ordering guarantee. `listPending`
+ * returns rows in `(createdAt, id)` order, but the relay worker dispatches
+ * them in parallel — consumers MUST be idempotent (typically keyed on
+ * `event.id`) and must not rely on per-aggregate ordering. Designed for
+ * a single relay worker process; running multiple concurrent workers can
+ * double-dispatch.
  */
 
 export type OutboxEntry = Readonly<{

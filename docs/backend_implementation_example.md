@@ -48,7 +48,7 @@ app/core/
 │   ├── errorResponse.ts           AppServerError, withErrorResponse, ...
 │   ├── errorDisplay.ts            displayError, sanitizeRouteError
 │   ├── useServerAction.ts
-│   └── validator.ts               createValidator(schema)
+│   └── validator.ts               validateInput(schema) — transport-boundary shape check
 └── adapters/
     └── drizzleSqlite/
         ├── client.ts
@@ -61,8 +61,7 @@ app/core/
         └── migrations/
 
 app/lib/
-├── error.ts                       CodedError 基底
-├── serializedError.ts             SerializedError 等の wire contract
+├── error.ts                       CodedError 基底 + SerializedErrorBase / FieldErrors / SerializableError interface（構造のみ。union は presentation で組立）
 └── path.ts
 ```
 
@@ -381,11 +380,12 @@ cutoff にして `outboxRepository.pruneProcessed(cutoff)` を呼ぶ。pending �
 
 すべてのエラークラスは `app/lib/error.ts` の抽象基底 `CodedError<TCode extends string>`
 を継承する。基底クラスが `code: TCode` フィールド・デフォルトの `retryable: false` getter・
-抽象メソッド `toSerialized()` を所有し、各サブクラスは `toSerialized()` で `kind`
-discriminant を pin する。
+抽象メソッド `toSerialized()` を所有する。基底の戻り値型は構造的な
+`SerializedErrorBase & { kind: string }` で、各サブクラスは override で自分の
+`kind`-tagged variant に narrow する。
 
 `code` は plain string。per-class enum はあえて畳んでいる（domain enum と
-transport `SerializedErrorKind` で必要な分類は揃う）。`SystemErrorCode` は
+presentation で組み立てる `SerializedErrorKind` で必要な分類は揃う）。`SystemErrorCode` は
 runtime の `retryable` 判定に使うので残してある。
 
 `BusinessRuleError<TCode extends string = never>` のデフォルトは `never`。
@@ -393,5 +393,10 @@ runtime の `retryable` 判定に使うので残してある。
 広がるので、throw 側でドメインの literal union を渡すことを強制している。
 `isBusinessRuleError(...)` は `BusinessRuleError<string>` に narrow する。
 
-各エラークラスは `toSerialized(): SerializedError` を実装する。新しいエラー型を
-足しても presentation の `serializeError` は触らなくて良い。
+各エラークラスは自分の `Serialized*Error` variant を同じファイルで宣言し
+（`SerializedBusinessError` は domain、`SerializedNotFoundError` 等は application）、
+`toSerialized()` でその variant を返す。presentation 層の `errorResponse.ts` が
+全 variant を寄せ集めて `SerializedError` discriminated union を組み立てる。
+新しいエラー型を足しても presentation の `serializeError` は触らなくて良い
+（構造的に `toSerialized()` を呼ぶだけ）。`SerializedError` union と
+`SerializedErrorKind` だけは presentation 層に追記する。
