@@ -1,9 +1,3 @@
-/**
- * Database seed script. Runs outside the server runtime (`pnpm db:seed` →
- * `tsx`), reusing `readServerConfig` + `createContainer` so it reads env
- * the same way the running server does.
- */
-
 import "dotenv/config";
 
 import {
@@ -24,23 +18,26 @@ async function main(): Promise<void> {
   const config = readServerConfig();
   const container = await createContainer(config);
 
-  for (const seed of SEED_TODOS) {
-    const { todo } = await createTodo({
-      container,
-      input: { title: seed.title },
-    });
-    console.log(`seeded todo ${todo.id} — ${todo.title}`);
-  }
+  try {
+    for (const seed of SEED_TODOS) {
+      const { todo } = await createTodo({
+        container,
+        input: { title: seed.title },
+      });
+      console.log(`seeded todo ${todo.id} — ${todo.title}`);
+    }
 
-  console.log(`seeded ${SEED_TODOS.length} todo(s)`);
+    console.log(`seeded ${SEED_TODOS.length} todo(s)`);
+  } finally {
+    await container.shutdown();
+  }
 }
 
 void (async () => {
   try {
     await main();
-    process.exit(0);
   } catch (error) {
     console.error("seed failed:", error);
-    process.exit(1);
+    process.exitCode = 1;
   }
 })();

@@ -1,4 +1,4 @@
-import type { Container } from "@/core/application/di/server";
+import type { Container } from "@/core/application/di/types";
 import { Todo } from "@/core/domain/todo/entity";
 import type { TodoEvent } from "@/core/domain/todo/events";
 import { NotFoundError } from "../errors";

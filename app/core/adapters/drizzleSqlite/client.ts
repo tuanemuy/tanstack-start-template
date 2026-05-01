@@ -8,7 +8,7 @@ import {
 import { normalizeFileUrl } from "@/lib/path";
 import * as schema from "./schema";
 
-export type Database = LibSQLDatabase<typeof schema>;
+export type Database = LibSQLDatabase<typeof schema> & { $client: Client };
 export type Transaction = LibSQLTransaction<
   typeof schema,
   ExtractTablesWithRelations<typeof schema>
@@ -23,12 +23,9 @@ function isLocalFileUrl(url: string): boolean {
   return url.startsWith("file:");
 }
 
-/**
- * For local `file:` URLs the WAL PRAGMA is awaited before the database is
- * returned, so callers never query a connection still in rollback-journal
- * mode — that race would defeat the concurrency guarantees the outbox / UoW
- * retry paths rely on.
- */
+// Awaits the WAL PRAGMA before returning so callers never query a connection
+// still in rollback-journal mode — that race breaks the outbox / UoW retry
+// concurrency guarantees.
 export async function getDatabase(url: string): Promise<Database> {
   const normalizedUrl = normalizeFileUrl(url);
   const client = createClient({ url: normalizedUrl });

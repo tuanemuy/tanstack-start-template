@@ -1,13 +1,6 @@
-import type { Container } from "../di/server";
+import type { Container } from "../di/types";
 
-/**
- * Delete processed outbox rows older than `clock.now() - retentionMs`.
- * Schedule on a cron / queue runner sized to your retention policy. Safe
- * to run concurrently with the relay worker — a row only becomes a prune
- * candidate after `markProcessed` has stamped it.
- */
 export type PruneOutboxOptions = {
-  /** Retention window in milliseconds. Caller composes `days * 86_400_000` etc. */
   retentionMs: number;
 };
 

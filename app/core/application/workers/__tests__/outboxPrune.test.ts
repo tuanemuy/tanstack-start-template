@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Container } from "@/core/application/di/server";
+import type { Container } from "@/core/application/di/types";
 import type { Clock } from "@/core/application/ports/clock";
 import type { OutboxRepository } from "@/core/application/ports/outboxRepository";
 import { FakeLogger } from "../../__tests__/fakes";
@@ -60,6 +60,7 @@ function makeContainer(overrides: Partial<Container>): Container {
     clock: overrides.clock ?? { now: () => new Date(0) },
     idGenerator: { next: () => "00000000-0000-7000-8000-000000000000" },
     logger: overrides.logger ?? new FakeLogger(),
+    shutdown: async () => {},
     ...overrides,
   };
 }

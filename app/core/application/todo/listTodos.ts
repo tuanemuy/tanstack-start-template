@@ -1,4 +1,4 @@
-import type { Container } from "@/core/application/di/server";
+import type { Container } from "@/core/application/di/types";
 import type { Pagination } from "@/core/domain/common/pagination";
 import { type TodoView, toTodoView } from "./view";
 
