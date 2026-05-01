@@ -1,17 +1,43 @@
-import {
-  isSerializableError,
-  type SerializedError,
-  type SerializedErrorKind,
-} from "@/lib/serializedError";
+import type {
+  SerializedConflictError,
+  SerializedNotFoundError,
+  SerializedSystemError,
+  SerializedValidationError,
+} from "@/core/application/errors";
+import type { SerializedBusinessError } from "@/core/domain/error";
+import { isSerializableError, type SerializedErrorBase } from "@/lib/error";
 
+export type { SerializedValidationError } from "@/core/application/errors";
 export type {
   FieldErrors,
   SerializableError,
-  SerializedError,
   SerializedErrorBase,
-  SerializedErrorKind,
-  SerializedValidationError,
-} from "@/lib/serializedError";
+} from "@/lib/error";
+
+/**
+ * Catch-all variant for thrown values that don't implement
+ * `SerializableError`. Owned by the presentation layer because this is
+ * the boundary where "unknown thrown thing" must be normalized into the
+ * wire envelope.
+ */
+export type SerializedUnknownError = SerializedErrorBase & {
+  kind: "unknown";
+};
+
+/**
+ * Full discriminated union of every wire-format error variant. Assembled
+ * here because presentation is the only layer that needs to see every
+ * `kind` at once (HTTP status mapping, renderer dispatch, hook callbacks).
+ */
+export type SerializedError =
+  | SerializedBusinessError
+  | SerializedNotFoundError
+  | SerializedConflictError
+  | SerializedValidationError
+  | SerializedSystemError
+  | SerializedUnknownError;
+
+export type SerializedErrorKind = SerializedError["kind"];
 
 function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -26,7 +52,7 @@ function errorMessage(error: unknown): string {
  */
 export function serializeError(error: unknown): SerializedError {
   if (isSerializableError(error)) {
-    return error.toSerialized();
+    return error.toSerialized() as SerializedError;
   }
   return {
     kind: "unknown",

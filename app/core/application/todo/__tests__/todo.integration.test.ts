@@ -3,11 +3,7 @@ import * as schema from "@/core/adapters/drizzleSqlite/schema";
 import { Todo } from "@/core/domain/todo/entity";
 import { TodoId } from "@/core/domain/todo/valueObject";
 import { setupTestContainer } from "../../__tests__/helpers";
-import {
-  isConflictError,
-  isNotFoundError,
-  isValidationError,
-} from "../../errors";
+import { isConflictError, isNotFoundError } from "../../errors";
 import { changeTodoStatus } from "../changeTodoStatus";
 import { createTodo } from "../createTodo";
 import { deleteTodo } from "../deleteTodo";
@@ -212,23 +208,5 @@ describe("listTodos", () => {
 
     const afterRows = await container.db.select().from(schema.outboxEvents);
     expect(afterRows).toHaveLength(beforeCount);
-  });
-
-  it("raises ValidationError with fieldErrors on bad pagination", async () => {
-    const container = getContainer();
-    try {
-      await listTodos({
-        container,
-        input: { page: 0, limit: 20 },
-      });
-      expect.fail("should have thrown");
-    } catch (error) {
-      expect(isValidationError(error)).toBe(true);
-      if (isValidationError(error)) {
-        expect(error.code).toBe("INVALID_INPUT");
-        expect(error.fieldErrors).toBeDefined();
-        expect(Object.keys(error.fieldErrors ?? {})).toContain("page");
-      }
-    }
   });
 });

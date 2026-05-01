@@ -1,7 +1,27 @@
-import { CodedError } from "@/lib/error";
-import type { FieldErrors, SerializedError } from "@/lib/serializedError";
+import {
+  CodedError,
+  type FieldErrors,
+  type SerializedErrorBase,
+} from "@/lib/error";
 
-export type { FieldErrors, SerializedError } from "@/lib/serializedError";
+export type { FieldErrors } from "@/lib/error";
+
+export type SerializedNotFoundError = SerializedErrorBase & {
+  kind: "notFound";
+};
+
+export type SerializedConflictError = SerializedErrorBase & {
+  kind: "conflict";
+};
+
+export type SerializedValidationError = SerializedErrorBase & {
+  kind: "validation";
+  fieldErrors?: FieldErrors;
+};
+
+export type SerializedSystemError = SerializedErrorBase & {
+  kind: "system";
+};
 
 /**
  * Application-layer error family. Subclasses are categorised structurally
@@ -21,7 +41,7 @@ export function isApplicationError(error: unknown): error is ApplicationError {
 export class NotFoundError extends ApplicationError {
   override readonly name = "NotFoundError";
 
-  override toSerialized(): SerializedError {
+  override toSerialized(): SerializedNotFoundError {
     return {
       kind: "notFound",
       code: this.code,
@@ -38,7 +58,7 @@ export function isNotFoundError(error: unknown): error is NotFoundError {
 export class ConflictError extends ApplicationError {
   override readonly name = "ConflictError";
 
-  override toSerialized(): SerializedError {
+  override toSerialized(): SerializedConflictError {
     return {
       kind: "conflict",
       code: this.code,
@@ -69,7 +89,7 @@ export class ValidationError extends ApplicationError {
     }
   }
 
-  override toSerialized(): SerializedError {
+  override toSerialized(): SerializedValidationError {
     if (this.fieldErrors !== undefined) {
       return {
         kind: "validation",
@@ -90,22 +110,6 @@ export class ValidationError extends ApplicationError {
 
 export function isValidationError(error: unknown): error is ValidationError {
   return error instanceof ValidationError;
-}
-
-export function zodIssuesToFieldErrors(
-  issues: ReadonlyArray<{
-    readonly path: ReadonlyArray<PropertyKey>;
-    readonly message: string;
-  }>,
-): FieldErrors {
-  const acc: Record<string, string[]> = {};
-  for (const issue of issues) {
-    const key = issue.path.map((segment) => String(segment)).join(".");
-    const bucket = acc[key] ?? [];
-    bucket.push(issue.message);
-    acc[key] = bucket;
-  }
-  return acc;
 }
 
 export const SystemErrorCode = {
@@ -134,7 +138,7 @@ export class SystemError extends ApplicationError<SystemErrorCode> {
     return RETRYABLE_SYSTEM_CODES.has(this.code);
   }
 
-  override toSerialized(): SerializedError {
+  override toSerialized(): SerializedSystemError {
     return {
       kind: "system",
       code: this.code,
