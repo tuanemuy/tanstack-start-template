@@ -47,7 +47,6 @@ app/core/
 ├── presentation/
 │   ├── errorResponse.ts           AppServerError, withErrorResponse, ...
 │   ├── errorDisplay.ts            displayError, sanitizeRouteError
-│   ├── useServerAction.ts
 │   └── validator.ts               validateInput(schema) — transport-boundary shape check
 └── adapters/
     └── drizzleSqlite/

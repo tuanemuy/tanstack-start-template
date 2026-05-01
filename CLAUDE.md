@@ -8,7 +8,6 @@ Guidance for Claude Code working in this repository.
 - Prefer stateless, pure functional code in the domain and application layers. Adapter classes are acceptable when they encapsulate a single external resource and keep mutable state internal.
 - Make illegal states unrepresentable at the type level before falling back to runtime checks.
 - Default to no comments. Add one only when the WHY is non-obvious — a hidden constraint, an invariant, a workaround.
-- Keep the surface small. Add a port, decorator, or abstraction only when a concrete second implementation already exists or is imminent.
 
 ## Development Commands
 
@@ -61,7 +60,6 @@ Hexagonal architecture with DDD principles.
 - **Presentation Layer** (`app/core/presentation/`): framework-specific cross-cutting utilities.
     - `errorResponse.ts` — `AppServerError`, `withErrorResponse`, `serializeError`, `extractSerializedError`. Owns the full `SerializedError` discriminated union (assembled from each layer's variants) and the `unknown` catch-all variant — presentation is the only layer that needs to see every `kind` at once.
     - `errorDisplay.ts` — `displayError` / `sanitizeRouteError` / `renderErrorMessage`.
-    - `useServerAction.ts` — client hook around server functions.
     - `validator.ts` — `validateInput(schema)` for `createServerFn(...).inputValidator(...)`. Shape / DoS guard only. Imports the variant type via `import type` from sibling `./errorResponse`; runtime stays at the presentation layer (already in the client bundle), so no application/domain runtime leaks into the client graph.
 - **Shared lib** (`app/lib/`)
     - `error.ts` — `CodedError<TCode>` base shared by `SystemError`, `ApplicationError`, `BusinessRuleError`, plus the structural pieces `SerializedErrorBase`, `FieldErrors`, the `SerializableError` interface, and `isSerializableError`. The full `SerializedError` union is intentionally NOT here — each layer defines its own `kind`-tagged variant and presentation assembles them. `toSerialized()` returns `SerializedErrorBase & { kind: string }` structurally; subclasses narrow to their own variant. Living in `app/lib/` is what lets every layer extend it without violating the hexagonal direction.
@@ -128,6 +126,7 @@ TanStack Start with React 19 / RSC, TanStack Router (file-based), Tailwind v4.
 - Styles: `app/styles/index.css`.
 - Server Components: default to async server components for fetching / authorization / usecase invocation. Use `cache()` from `react` to dedupe per-request fetches. Throw `redirect({ to })` / `notFound()` from `@tanstack/react-router` to drive navigation.
 - Server Functions (mutations): `createServerFn` from `@tanstack/react-start`. `.handler(...)` already runs server-only — invoke usecases directly. Wrap in `withErrorResponse(...)` so any thrown value becomes the `AppServerError` wire envelope. Loaders should remain a thin proxy. Do not statically import server-only components or DI modules into route files that enter the client graph; wrap the RSC render in `createServerFn` and have the loader call that bridge.
+- Client mutations: bind the server function with `useServerFn(fn)` and drive it through React 19 primitives directly — `useActionState` for forms (`<form action={formAction}>`), `useTransition` + `useOptimistic` for inline actions. Catch the rejection, convert via `extractSerializedError`, then `await router.invalidate()` to refresh loader-owned RSC. The template intentionally ships no `useServerAction`-style wrapper.
 
 ## Error Handling
 
@@ -152,7 +151,7 @@ TanStack Start with React 19 / RSC, TanStack Router (file-based), Tailwind v4.
 
 - `withErrorResponse(fn)` wraps thrown values in `AppServerError` via `serializeError` → `isSerializableError` → `toSerialized`. The HTTP status is derived from the serialized `kind` at the boundary. `redirect()` / `notFound()` sentinels are re-thrown to drive navigation.
 - Workers log decode/dispatch failures via the injected `Logger` and leave the row pending. `Promise.allSettled` keeps one bad consumer from aborting the batch.
-- UI calls `displayError(error)` / `sanitizeRouteError(error)`. `useServerAction` exposes `lastError` so forms can pluck `fieldErrors` out of a validation failure without parsing the message.
+- UI calls `displayError(error)` / `sanitizeRouteError(error)`. Forms call `extractSerializedError(e)` inside their action / transition and branch on `kind === "validation"` to pluck `fieldErrors` for per-field display.
 
 ## Example Implementation
 

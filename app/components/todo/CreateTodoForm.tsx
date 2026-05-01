@@ -1,52 +1,59 @@
 "use client";
 
+import { useRouter } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import { type SubmitEvent, useState } from "react";
+import { useActionState, useState } from "react";
 import { displayError } from "@/core/presentation/errorDisplay";
-import { useServerAction } from "@/core/presentation/useServerAction";
+import {
+  extractSerializedError,
+  type SerializedError,
+} from "@/core/presentation/errorResponse";
 import { createTodoFn } from "./actions";
 import { TODO_TITLE_MAX_LENGTH } from "./schema";
 
+type FormState = { error: SerializedError | null };
+
+const initialState: FormState = { error: null };
+
 export function CreateTodoForm() {
+  const router = useRouter();
+  const createTodo = useServerFn(createTodoFn);
   const [title, setTitle] = useState("");
 
-  const { run, isPending, lastError, clearLastError } = useServerAction(
-    useServerFn(createTodoFn),
-    {
-      onSuccess: () => {
+  const [state, formAction, isPending] = useActionState<FormState, FormData>(
+    async (_prev, formData) => {
+      const value = String(formData.get("title") ?? "").trim();
+      if (value.length === 0) return { error: null };
+      try {
+        await createTodo({ data: { title: value } });
+        await router.invalidate();
         setTitle("");
-      },
+        return { error: null };
+      } catch (error) {
+        return { error: extractSerializedError(error) };
+      }
     },
+    initialState,
   );
 
-  const onSubmit = (event: SubmitEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const value = title.trim();
-    if (!value) return;
-    run({ data: { title: value } });
-  };
-
-  // Prefer field-level messages when the server returned a structured
-  // `ValidationError.fieldErrors`; fall back to the consolidated message
-  // for every other error kind (business / system / conflict / etc.).
   const titleFieldErrors =
-    lastError?.kind === "validation" ? lastError.fieldErrors?.title : undefined;
+    state.error?.kind === "validation"
+      ? state.error.fieldErrors?.title
+      : undefined;
   const summaryMessage =
-    lastError !== null && titleFieldErrors === undefined
-      ? displayError(lastError)
+    state.error !== null && titleFieldErrors === undefined
+      ? displayError(state.error)
       : null;
 
   return (
-    <form onSubmit={onSubmit}>
+    <form action={formAction}>
       <label>
         タイトル
         <input
+          name="title"
           type="text"
           value={title}
-          onChange={(event) => {
-            setTitle(event.target.value);
-            if (lastError) clearLastError();
-          }}
+          onChange={(event) => setTitle(event.target.value)}
           disabled={isPending}
           maxLength={TODO_TITLE_MAX_LENGTH}
           required

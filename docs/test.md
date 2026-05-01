@@ -130,4 +130,4 @@ concurrent / OCC 挙動を検証する integration 層を分けることで、�
   カバレッジは fake で網羅するより integration で「実 DB 上で動いた」ことを
   重視する。
 - **Frontend**: 必要最小限。server function の wire 型境界と UI ロジックは
-  Conform / Zod と `useServerAction` の挙動で大枠カバーされる。
+  Conform / Zod と `useActionState` / `useOptimistic` の挙動で大枠カバーされる。

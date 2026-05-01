@@ -11,14 +11,6 @@ import {
   deleteTodoSchema,
 } from "./schema";
 
-/**
- * `inputValidator` runs in both client and server bundles. `validateInput`
- * is intentionally a shape-only check (Zod over plain JSON) and depends on
- * no application/domain modules, so it's safe to ship to the client.
- * Domain invariants are reasserted by the value-object factories the
- * usecase reaches through (`TodoTitle.create` etc).
- */
-
 export const createTodoFn = createServerFn({ method: "POST" })
   .inputValidator(validateInput(createTodoSchema))
   .handler(async ({ data }) =>

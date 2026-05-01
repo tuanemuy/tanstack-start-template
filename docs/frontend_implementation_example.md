@@ -374,7 +374,10 @@ RSC との相性が良い。
 
 state を変える操作は `createServerFn({ method: "POST" })` に集約し、例外は
 `withErrorResponse(fn)` で `AppServerError` にラップしてクライアントまで
-届ける。クライアントは `useServerFn(fn)` と `useServerAction` を組み合わせる。
+届ける。クライアントは `useServerFn(fn)` でラップしたうえで、React 19 の
+**`useActionState` / `useTransition` / `useOptimistic`** に直接渡す。汎用フック
+（`useServerAction` 風ラッパー）は意図的に用意しない — 第二の具体パターンが
+出てきた時にだけ抽象化する。
 
 ### 入力検証の責務分担
 
@@ -460,63 +463,69 @@ export const createTodoFn = createServerFn({ method: "POST" })
   );
 ```
 
-### useServerAction で呼ぶ
+### フォーム送信は `useActionState`
 
-`useServerAction(fn, options)` は server function 呼び出しに **router
-invalidation + transition + エラー kind 分岐** を一枚で被せるフック。戻り
-値の `lastError: SerializedError | null` を使うと、`validation` エラーの
-`fieldErrors` をそのまま UI に流し込める。
+`<form action={formAction}>` + `useActionState` が React 19 の正攻法。
+state には `SerializedError | null` を畳み、`validation` エラーなら
+`fieldErrors` をそのまま field 単位で出す。
 
 ```tsx
 // app/components/todo/CreateTodoForm.tsx
 "use client";
 
+import { useRouter } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import { type SubmitEvent, useState } from "react";
+import { useActionState, useState } from "react";
 import { displayError } from "@/core/presentation/errorDisplay";
-import { useServerAction } from "@/core/presentation/useServerAction";
+import {
+  extractSerializedError,
+  type SerializedError,
+} from "@/core/presentation/errorResponse";
 import { createTodoFn } from "./actions";
 import { TODO_TITLE_MAX_LENGTH } from "./schema";
 
+type FormState = { error: SerializedError | null };
+const initialState: FormState = { error: null };
+
 export function CreateTodoForm() {
+  const router = useRouter();
+  const createTodo = useServerFn(createTodoFn);
   const [title, setTitle] = useState("");
 
-  const { run, isPending, lastError, clearLastError } = useServerAction(
-    useServerFn(createTodoFn),
-    {
-      // invalidate: "all"（デフォルト）なので onSuccess 後に router.invalidate()
-      // が走る。部分 invalidate したいときは `() => router.invalidate({ filter })`。
-      onSuccess: () => setTitle(""),
+  const [state, formAction, isPending] = useActionState<FormState, FormData>(
+    async (_prev, formData) => {
+      const value = String(formData.get("title") ?? "").trim();
+      if (value.length === 0) return { error: null };
+      try {
+        await createTodo({ data: { title: value } });
+        await router.invalidate();
+        setTitle("");
+        return { error: null };
+      } catch (error) {
+        return { error: extractSerializedError(error) };
+      }
     },
+    initialState,
   );
 
-  const onSubmit = (event: SubmitEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const value = title.trim();
-    if (!value) return;
-    run({ data: { title: value } });
-  };
-
-  // ValidationError.fieldErrors があれば field 単位で、それ以外は
-  // displayError で集約メッセージを表示する。
   const titleFieldErrors =
-    lastError?.kind === "validation" ? lastError.fieldErrors?.title : undefined;
+    state.error?.kind === "validation"
+      ? state.error.fieldErrors?.title
+      : undefined;
   const summary =
-    lastError !== null && titleFieldErrors === undefined
-      ? displayError(lastError)
+    state.error !== null && titleFieldErrors === undefined
+      ? displayError(state.error)
       : null;
 
   return (
-    <form onSubmit={onSubmit}>
+    <form action={formAction}>
       <label>
         タイトル
         <input
+          name="title"
           type="text"
           value={title}
-          onChange={(event) => {
-            setTitle(event.target.value);
-            if (lastError) clearLastError();
-          }}
+          onChange={(event) => setTitle(event.target.value)}
           disabled={isPending}
           maxLength={TODO_TITLE_MAX_LENGTH}
           required
@@ -535,20 +544,107 @@ export function CreateTodoForm() {
 }
 ```
 
-### Conflict などの失敗
+### 行内アクションは `useTransition` + `useOptimistic`
 
-`ConflictError` 等の失敗はそのままクライアントに伝播する。UI は
-`onError` の `conflict` ハンドラで「再試行してください」と表示するか、
-`useServerAction` を呼び直す。
+リスト中のチェックボックストグルや削除ボタンのような **フォーム外の即時
+アクション** は、`useTransition` で transition を取りつつ、状態が即時反映
+されるべき項目には `useOptimistic` を被せる。`useOptimistic` の setter は
+**transition 内** から呼ぶことが必要条件。
 
 ```tsx
-const changeStatus = useServerAction(useServerFn(changeTodoStatusFn), {
-  onError: {
-    notFound: () => setErrorMessage("このTodoは既に削除されています"),
-    conflict: () => setErrorMessage("他の操作と競合しました。もう一度お試しください"),
-    default: (error) => setErrorMessage(displayError(error)),
-  },
-});
+// app/components/todo/TodoItem.tsx
+"use client";
+
+import { useRouter } from "@tanstack/react-router";
+import { useServerFn } from "@tanstack/react-start";
+import { useOptimistic, useState, useTransition } from "react";
+import type { TodoView } from "@/core/application/todo/view";
+import { displayError } from "@/core/presentation/errorDisplay";
+import {
+  extractSerializedError,
+  type SerializedError,
+} from "@/core/presentation/errorResponse";
+import { changeTodoStatusFn, deleteTodoFn } from "./actions";
+
+function todoErrorMessage(error: SerializedError): string {
+  if (error.kind === "notFound") return "このTodoは既に削除されています";
+  return displayError(error);
+}
+
+export function TodoItem({ todo }: { todo: TodoView }) {
+  const router = useRouter();
+  const changeStatus = useServerFn(changeTodoStatusFn);
+  const remove = useServerFn(deleteTodoFn);
+
+  const [isPending, startTransition] = useTransition();
+  const [error, setError] = useState<SerializedError | null>(null);
+  const [optimisticCompleted, setOptimisticCompleted] = useOptimistic(
+    todo.completed,
+    (_current, next: boolean) => next,
+  );
+
+  const onToggle = (checked: boolean) => {
+    startTransition(async () => {
+      setOptimisticCompleted(checked);
+      try {
+        await changeStatus({
+          data: { id: todo.id, status: checked ? "completed" : "active" },
+        });
+        await router.invalidate();
+        setError(null);
+      } catch (e) {
+        setError(extractSerializedError(e));
+      }
+    });
+  };
+
+  const onDelete = () => {
+    startTransition(async () => {
+      try {
+        await remove({ data: { id: todo.id } });
+        await router.invalidate();
+        setError(null);
+      } catch (e) {
+        setError(extractSerializedError(e));
+      }
+    });
+  };
+
+  return (
+    <li>
+      <label>
+        <input
+          type="checkbox"
+          checked={optimisticCompleted}
+          onChange={(e) => onToggle(e.target.checked)}
+          disabled={isPending}
+        />
+        <span style={{ textDecoration: optimisticCompleted ? "line-through" : "none" }}>
+          {todo.title}
+        </span>
+      </label>
+      <button type="button" onClick={onDelete} disabled={isPending}>削除</button>
+      {error !== null ? <span role="alert">{todoErrorMessage(error)}</span> : null}
+    </li>
+  );
+}
+```
+
+### Conflict などの失敗
+
+`ConflictError` などの失敗もエンベロープに乗ってクライアントに伝播する。
+UI 側は action / transition の `catch` で `extractSerializedError(e)` し、
+`error.kind` で switch する：
+
+```tsx
+try {
+  await changeStatus({ data: { id, status } });
+} catch (e) {
+  const error = extractSerializedError(e);
+  if (error.kind === "notFound") setMessage("このTodoは既に削除されています");
+  else if (error.kind === "conflict") setMessage("他の操作と競合しました。もう一度お試しください");
+  else setMessage(displayError(error));
+}
 ```
 
 ### ポイント
@@ -556,14 +652,20 @@ const changeStatus = useServerAction(useServerFn(changeTodoStatusFn), {
 - `useServerFn(fn)` は `isRedirect` を自動検知して router.navigate に変換する。
   usecase 側で `throw redirect({ to: "/login" })` した場合に client の try/catch
   でフォールスルーせずに済む。
-- `invalidate` は `"all"` / `"none"` / `() => void | Promise<void>` の 3 択。
-  デフォルトは `"all"` なので全 loader が refetch される。
-- `lastError` / `clearLastError` で UI 側のエラー state を hook が管理するため、
-  フォームコンポーネント内に `useState<string | null>` を用意しなくて済む。
-- `fieldErrors` を **フィールド単位で** 表示したい場合は `lastError?.kind === "validation"`
+- `useActionState` の action は async でよい。`await` の前後どちらの状態
+  更新も同じ transition に入る。`<form action={formAction}>` に渡せば JS が
+  まだ届いていないクライアントでも progressively enhance できる。
+- 成功時に loader 所有の RSC を更新したいときは action / transition 内で
+  `await router.invalidate()` を明示する。汎用フックを廃したぶん「いつ
+  invalidate するか」は呼び出し側の責任。
+- `fieldErrors` を **フィールド単位で** 表示したい場合は `state.error?.kind === "validation"`
   を分岐するだけ。Conform + `parseWithZod` を別途導入しなくてもこの形で足りる。
-  検証は usecase 内の Zod に一本化されているので、どの入口（server function / route
+  検証は server 側の Zod に一本化されているので、どの入口（server function / route
   loader / テスト）から呼んでも同一の `ValidationError` envelope で届く。
+- `useOptimistic` は **親が所有しているデータ** に対しては使えない。
+  `TodoItem` が自身の `completed` をトグルするのには使えるが、リストから
+  項目を消すような **親の state を変える操作** は `router.invalidate()` で
+  RSC を再取得する経路に任せる（このテンプレでは削除がそれに該当）。
 
 ---
 
@@ -694,8 +796,8 @@ __root.tsx .errorComponent          ←  最終フォールバック（sanitizeR
 
 を用意している（`app/core/presentation/errorResponse.ts`）。
 
-`useServerAction` を通さず生で `await` したい場合は `extractSerializedError`
-で kind に分岐する：
+クライアントの action / transition / loader などで生で `await` する側は
+`extractSerializedError` で kind に分岐する：
 
 ```tsx
 import { extractSerializedError } from "@/core/presentation/errorResponse";
