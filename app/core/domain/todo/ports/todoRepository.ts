@@ -8,7 +8,6 @@ import type { Todo } from "../entity";
 // as `ConflictError("OPTIMISTIC_LOCK_FAILURE")`.
 export interface TodoRepository {
   findById(id: string): Promise<Todo | null>;
-  findAll(): Promise<Todo[]>;
   findPage(pagination: Pagination): Promise<PaginationResult<Todo>>;
   save(todo: Todo): Promise<void>;
   delete(id: string, expectedVersion: number): Promise<void>;

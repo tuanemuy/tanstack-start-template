@@ -71,16 +71,6 @@ export class DrizzleSqliteTodoRepository implements TodoRepository {
     });
   }
 
-  findAll(): Promise<Todo[]> {
-    return mapDbError("Failed to list todos", async () => {
-      const rows = await this.executor
-        .select()
-        .from(todos)
-        .orderBy(desc(todos.createdAt), desc(todos.id));
-      return rows.map(toTodo);
-    });
-  }
-
   findPage(pagination: Pagination): Promise<PaginationResult<Todo>> {
     return mapDbError("Failed to page todos", async () => {
       const offset = (pagination.page - 1) * pagination.limit;

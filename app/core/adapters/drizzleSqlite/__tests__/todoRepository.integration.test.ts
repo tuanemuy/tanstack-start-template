@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { FakeIdGenerator } from "@/core/application/__tests__/fakes";
 import { setupTestContainer } from "@/core/application/__tests__/helpers";
 import { isConflictError } from "@/core/application/errors";
+import { EventId } from "@/core/domain/common/event";
 import { Todo } from "@/core/domain/todo/entity";
 import { TodoId, TodoTitle } from "@/core/domain/todo/valueObject";
 import * as schema from "../schema";
@@ -11,10 +12,10 @@ describe("DrizzleSqliteTodoRepository (integration)", () => {
   const NOW = new Date("2026-01-01T00:00:00.000Z");
 
   const ids = new FakeIdGenerator();
-  const nextId = () => ids.next();
-  const nextTodoId = () => TodoId.create(nextId());
+  const nextEventId = () => EventId.create(ids.next());
+  const nextTodoId = () => TodoId.create(ids.next());
   const make = (title: string) =>
-    Todo.create({ id: nextTodoId(), eventId: nextId(), title }, NOW);
+    Todo.create({ id: nextTodoId(), eventId: nextEventId(), title }, NOW);
 
   it("save → findById round-trips an ActiveTodo with all fields intact", async () => {
     const container = getContainer();
@@ -50,7 +51,7 @@ describe("DrizzleSqliteTodoRepository (integration)", () => {
       await todoRepository.save(active);
     });
 
-    const { entity: completed } = Todo.complete(active, nextId(), NOW);
+    const { entity: completed } = Todo.complete(active, nextEventId(), NOW);
     await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
       await todoRepository.save(completed);
     });
@@ -69,7 +70,7 @@ describe("DrizzleSqliteTodoRepository (integration)", () => {
       await todoRepository.save(active);
     });
 
-    const { entity: completed } = Todo.complete(active, nextId(), NOW);
+    const { entity: completed } = Todo.complete(active, nextEventId(), NOW);
     await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
       await todoRepository.save(completed);
     });
@@ -86,12 +87,16 @@ describe("DrizzleSqliteTodoRepository (integration)", () => {
       await todoRepository.save(active);
     });
 
-    const { entity: completedFirst } = Todo.complete(active, nextId(), NOW);
+    const { entity: completedFirst } = Todo.complete(
+      active,
+      nextEventId(),
+      NOW,
+    );
     await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
       await todoRepository.save(completedFirst);
     });
 
-    const { entity: stale } = Todo.complete(active, nextId(), NOW);
+    const { entity: stale } = Todo.complete(active, nextEventId(), NOW);
     let caught: unknown;
     try {
       await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
@@ -241,33 +246,6 @@ describe("DrizzleSqliteTodoRepository (integration)", () => {
     expect(new Set(collected).size).toBe(seedIds.length);
   });
 
-  it("findAll returns todos in descending createdAt order", async () => {
-    const container = getContainer();
-    const base = new Date("2026-03-01T00:00:00.000Z").getTime();
-    const seedIds = [
-      "019db000-0000-7000-8000-000000000011",
-      "019db000-0000-7000-8000-000000000012",
-      "019db000-0000-7000-8000-000000000013",
-    ];
-    for (let i = 0; i < seedIds.length; i++) {
-      const id = seedIds[i];
-      if (!id) continue;
-      const at = new Date(base + i * 2000);
-      await container.db.insert(schema.todos).values({
-        id,
-        title: `t-${i}`,
-        status: "active",
-        version: 0,
-        createdAt: at,
-        updatedAt: at,
-      });
-    }
-    const all = await container.unitOfWorkProvider.run(
-      async ({ todoRepository }) => todoRepository.findAll(),
-    );
-    expect(all.map((t) => t.id)).toEqual([seedIds[2], seedIds[1], seedIds[0]]);
-  });
-
   it("rowToTodo re-validates value-object invariants (corrupt id → SystemError)", async () => {
     const container = getContainer();
     const now = new Date();
@@ -283,9 +261,9 @@ describe("DrizzleSqliteTodoRepository (integration)", () => {
     let caught: unknown;
     try {
       await container.unitOfWorkProvider.run(async ({ todoRepository }) =>
-        todoRepository.findAll(),
+        todoRepository.findById("not-a-uuid"),
       );
-      expect.fail("findAll should have surfaced a SystemError");
+      expect.fail("findById should have surfaced a SystemError");
     } catch (error) {
       caught = error;
     }
