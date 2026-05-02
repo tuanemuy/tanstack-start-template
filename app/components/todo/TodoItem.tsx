@@ -28,7 +28,7 @@ export function TodoItem({ todo }: Props) {
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<SerializedError | null>(null);
   const [optimisticCompleted, setOptimisticCompleted] = useOptimistic(
-    todo.completed,
+    todo.status === "completed",
     (_current, next: boolean) => next,
   );
 
