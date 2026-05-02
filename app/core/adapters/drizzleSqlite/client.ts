@@ -1,3 +1,4 @@
+import * as path from "node:path";
 import { type Client, createClient } from "@libsql/client";
 import type { ExtractTablesWithRelations } from "drizzle-orm";
 import {
@@ -5,8 +6,14 @@ import {
   type LibSQLDatabase,
   type LibSQLTransaction,
 } from "drizzle-orm/libsql";
-import { normalizeFileUrl } from "@/lib/path";
 import * as schema from "./schema";
+
+function normalizeFileUrl(url: string): string {
+  if (!url.startsWith("file:")) return url;
+  const filePath = url.slice(5);
+  if (path.isAbsolute(filePath)) return url;
+  return `file:${path.resolve(process.cwd(), filePath)}`;
+}
 
 export type Database = LibSQLDatabase<typeof schema> & { $client: Client };
 export type Transaction = LibSQLTransaction<
