@@ -6,8 +6,8 @@ export type TodoView = Readonly<{
   id: string;
   title: string;
   status: TodoStatus;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: string;
+  updatedAt: string;
 }>;
 
 export function toTodoView(todo: Todo): TodoView {
@@ -15,7 +15,7 @@ export function toTodoView(todo: Todo): TodoView {
     id: todo.id,
     title: todo.title,
     status: todo.status,
-    createdAt: todo.createdAt,
-    updatedAt: todo.updatedAt,
+    createdAt: todo.createdAt.toISOString(),
+    updatedAt: todo.updatedAt.toISOString(),
   };
 }
