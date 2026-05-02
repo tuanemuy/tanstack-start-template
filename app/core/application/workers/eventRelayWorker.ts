@@ -21,11 +21,9 @@ type DefaultEventDecoderRegistry = {
   >;
 };
 
-const _coverage: DefaultEventDecoderRegistry = todoEventDecoders;
-
-export const defaultEventDecoderRegistry: EventDecoderRegistry = {
-  ..._coverage,
-};
+export const defaultEventDecoderRegistry = {
+  ...todoEventDecoders,
+} satisfies DefaultEventDecoderRegistry;
 
 export type ProcessOutboxEventsOptions = {
   batchSize?: number;

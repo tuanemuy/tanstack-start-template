@@ -1,6 +1,5 @@
+import { SystemError, SystemErrorCode } from "@/core/application/errors";
 import type { DomainEventBase, EventDecoder } from "@/core/domain/common/event";
-import { BusinessRuleError } from "@/core/domain/error";
-import { TodoErrorCode } from "./errorCode";
 import { TodoId, TodoTitle } from "./valueObject";
 
 export type TodoCreatedEvent = DomainEventBase<
@@ -82,9 +81,13 @@ export const TodoEvents = {
   }),
 };
 
+// Decode failures are data-integrity / infra-class problems (a corrupt or
+// schema-skewed outbox row), not business-rule violations — surface them
+// as `SystemError(DatabaseError)` so logs / kind-routing classify them
+// alongside other infrastructure failures.
 function rejectPayload(eventType: string, message: string): never {
-  throw new BusinessRuleError(
-    TodoErrorCode.UnknownEventType,
+  throw new SystemError(
+    SystemErrorCode.DatabaseError,
     `Invalid payload for ${eventType}: ${message}`,
   );
 }
@@ -205,8 +208,8 @@ export const decodeTodoEvent: EventDecoder<TodoEvent> = (
   meta,
 ) => {
   if (!isTodoEventType(type)) {
-    throw new BusinessRuleError(
-      TodoErrorCode.UnknownEventType,
+    throw new SystemError(
+      SystemErrorCode.DatabaseError,
       `Unknown todo event type: ${type}`,
     );
   }

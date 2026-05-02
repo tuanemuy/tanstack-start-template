@@ -1,7 +1,5 @@
 import { CodedError, type SerializedErrorBase } from "@/lib/error";
 
-export type BusinessRuleErrorCode = string;
-
 export type SerializedBusinessError = SerializedErrorBase & {
   kind: "business";
 };
