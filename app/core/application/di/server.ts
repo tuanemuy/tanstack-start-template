@@ -1,5 +1,7 @@
-import "@tanstack/react-start/server-only";
-
+// Server-only by construction — every consumer (`actions.ts` handler bodies,
+// the seed CLI, RSC bridges) reaches it via `await import(...)` so the static
+// client graph never pulls in drizzle / libsql. The build-time marker is
+// avoided here because it would block those dynamic imports too.
 import { getDatabase } from "@/core/adapters/drizzleSqlite/client";
 import { DrizzleSqliteOutboxRepository } from "@/core/adapters/drizzleSqlite/repositories/outboxRepository";
 import { DrizzleSqliteUnitOfWorkProvider } from "@/core/adapters/drizzleSqlite/unitOfWork";

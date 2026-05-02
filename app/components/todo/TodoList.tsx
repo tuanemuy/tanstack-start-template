@@ -1,12 +1,16 @@
 import { cache } from "react";
-import { getContainer } from "@/core/application/di/server";
-import { listTodos } from "@/core/application/todo/listTodos";
 import { CreateTodoForm } from "./CreateTodoForm";
 import { TodoItem } from "./TodoItem";
 
-const loadTodos = cache(async () =>
-  listTodos({ container: await getContainer() }),
-);
+// Dynamic-import the DI / usecase modules so the static graph from this
+// (server) component into client chunks stays free of drizzle / libsql.
+const loadTodos = cache(async () => {
+  const [{ getContainer }, { listTodos }] = await Promise.all([
+    import("@/core/application/di/server"),
+    import("@/core/application/todo/listTodos"),
+  ]);
+  return listTodos({ container: await getContainer() });
+});
 
 export async function TodoList() {
   const { todos, count } = await loadTodos();

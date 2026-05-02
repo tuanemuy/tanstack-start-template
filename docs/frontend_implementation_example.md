@@ -293,11 +293,12 @@ RSC ペイロードとしてクライアントに送る」だけ。
 // app/routes/posts/$postId.tsx
 
 import { createFileRoute } from "@tanstack/react-router";
-import { createServerFn } from "@tanstack/react-start";
 import { renderServerComponent } from "@tanstack/react-start/rsc";
 import { z } from "zod";
 
-const renderPostDetail = createServerFn({ method: "GET" })
+import { defineServerFn } from "@/core/presentation/serverFn";
+
+const renderPostDetail = defineServerFn({ method: "GET" })
   .inputValidator(z.object({ postId: z.string() }))
   .handler(async ({ data }) => {
     const { PostDetail, getPostTitle } = await import(
@@ -372,9 +373,11 @@ RSC との相性が良い。
 
 ## Server Function (mutation)
 
-state を変える操作は `createServerFn({ method: "POST" })` に集約し、例外は
-`withErrorResponse(fn)` で `AppServerError` にラップしてクライアントまで
-届ける。クライアントは `useServerFn(fn)` でラップしたうえで、React 19 の
+state を変える操作は `defineServerFn({ method: "POST" })` に集約する。
+`defineServerFn` は `createServerFn` に `errorResponseMiddleware` を予め
+適用したエントリポイントで、`inputValidator` と handler の **両方** の
+throw を同じ middleware で拾って `AppServerError` envelope と HTTP ステータスに
+変換する。 クライアントは `useServerFn(fn)` でラップしたうえで、React 19 の
 **`useActionState` / `useTransition` / `useOptimistic`** に直接渡す。汎用フック
 （`useServerAction` 風ラッパー）は意図的に用意しない — 第二の具体パターンが
 出てきた時にだけ抽象化する。
@@ -447,19 +450,16 @@ export function validateInput<T extends ZodType>(schema: T) {
 
 ```typescript
 // app/components/todo/actions.ts
-import { createServerFn } from "@tanstack/react-start";
 import { getContainer } from "@/core/application/di/server";
 import { createTodo } from "@/core/application/todo/createTodo";
-import { withErrorResponse } from "@/core/presentation/errorResponse.server";
+import { defineServerFn } from "@/core/presentation/serverFn";
 import { validateInput } from "@/core/presentation/validator";
 import { createTodoSchema } from "./schema";
 
-export const createTodoFn = createServerFn({ method: "POST" })
+export const createTodoFn = defineServerFn({ method: "POST" })
   .inputValidator(validateInput(createTodoSchema))
   .handler(async ({ data }) =>
-    withErrorResponse(async () =>
-      createTodo({ container: await getContainer(), input: data }),
-    ),
+    createTodo({ container: await getContainer(), input: data }),
   );
 ```
 
@@ -579,7 +579,7 @@ export function TodoItem({ todo }: { todo: TodoView }) {
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<SerializedError | null>(null);
   const [optimisticCompleted, setOptimisticCompleted] = useOptimistic(
-    todo.completed,
+    todo.status === "completed",
     (_current, next: boolean) => next,
   );
 
@@ -792,7 +792,8 @@ __root.tsx .errorComponent          ←  最終フォールバック（sanitizeR
 - `AppServerError` — 伝搬専用の例外クラス（`serialized` を enumerable own property に持ち、JSON 往復後も生き残る）
 - `serializeError(error)` — Business / NotFound / Validation 等を `SerializedError`（`{ kind, code, message, retryable?, fieldErrors? }`）に畳み込む
 - `extractSerializedError(error)` — クライアント側で `SerializedError` を取り出す（`AppServerError` でも、plain object 化された残骸でも動く）
-- `withErrorResponse(fn)` — handler をラップして上記を適用。TanStack Router の `redirect()` / `notFound()` センチネルはそのまま rethrow
+- `errorResponseMiddleware`（`app/core/presentation/errorResponseMiddleware.ts`） — server function 全体（`inputValidator` と handler の両方）をラップして上記を適用し、`SerializedErrorKind` から HTTP ステータスを設定する。TanStack Router の `redirect()` / `notFound()` センチネルはそのまま rethrow
+- `defineServerFn(opts?)`（`app/core/presentation/serverFn.ts`） — `createServerFn(opts).middleware([errorResponseMiddleware])` を返す canonical エントリポイント。`createServerFn` を直接呼ばずこちらを使う
 
 を用意している（`app/core/presentation/errorResponse.ts`）。
 

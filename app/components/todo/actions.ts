@@ -1,9 +1,4 @@
-import { createServerFn } from "@tanstack/react-start";
-import { getContainer } from "@/core/application/di/server";
-import { changeTodoStatus } from "@/core/application/todo/changeTodoStatus";
-import { createTodo } from "@/core/application/todo/createTodo";
-import { deleteTodo } from "@/core/application/todo/deleteTodo";
-import { withErrorResponse } from "@/core/presentation/errorResponse.server";
+import { defineServerFn } from "@/core/presentation/serverFn";
 import { validateInput } from "@/core/presentation/validator";
 import {
   changeTodoStatusSchema,
@@ -11,26 +6,35 @@ import {
   deleteTodoSchema,
 } from "./schema";
 
-export const createTodoFn = createServerFn({ method: "POST" })
+// Server-only modules (`di/server`, usecases) are dynamic-imported inside
+// each handler so the static graph from this file stays client-safe — client
+// components import the bound server functions to drive RPC.
+export const createTodoFn = defineServerFn({ method: "POST" })
   .inputValidator(validateInput(createTodoSchema))
-  .handler(async ({ data }) =>
-    withErrorResponse(async () =>
-      createTodo({ container: await getContainer(), input: data }),
-    ),
-  );
+  .handler(async ({ data }) => {
+    const [{ getContainer }, { createTodo }] = await Promise.all([
+      import("@/core/application/di/server"),
+      import("@/core/application/todo/createTodo"),
+    ]);
+    return createTodo({ container: await getContainer(), input: data });
+  });
 
-export const changeTodoStatusFn = createServerFn({ method: "POST" })
+export const changeTodoStatusFn = defineServerFn({ method: "POST" })
   .inputValidator(validateInput(changeTodoStatusSchema))
-  .handler(async ({ data }) =>
-    withErrorResponse(async () =>
-      changeTodoStatus({ container: await getContainer(), input: data }),
-    ),
-  );
+  .handler(async ({ data }) => {
+    const [{ getContainer }, { changeTodoStatus }] = await Promise.all([
+      import("@/core/application/di/server"),
+      import("@/core/application/todo/changeTodoStatus"),
+    ]);
+    return changeTodoStatus({ container: await getContainer(), input: data });
+  });
 
-export const deleteTodoFn = createServerFn({ method: "POST" })
+export const deleteTodoFn = defineServerFn({ method: "POST" })
   .inputValidator(validateInput(deleteTodoSchema))
-  .handler(async ({ data }) =>
-    withErrorResponse(async () =>
-      deleteTodo({ container: await getContainer(), input: data }),
-    ),
-  );
+  .handler(async ({ data }) => {
+    const [{ getContainer }, { deleteTodo }] = await Promise.all([
+      import("@/core/application/di/server"),
+      import("@/core/application/todo/deleteTodo"),
+    ]);
+    return deleteTodo({ container: await getContainer(), input: data });
+  });

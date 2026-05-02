@@ -45,7 +45,9 @@ app/core/
 │       ├── ${usecase}.ts
 │       └── __tests__/
 ├── presentation/
-│   ├── errorResponse.ts           AppServerError, withErrorResponse, ...
+│   ├── errorResponse.ts             AppServerError, serializeError, extractSerializedError, httpStatusFor
+│   ├── errorResponseMiddleware.ts   errorResponseMiddleware (wraps inputValidator + handler)
+│   ├── serverFn.ts                  defineServerFn (canonical createServerFn entry, pre-applies the middleware)
 │   ├── errorDisplay.ts            displayError, sanitizeRouteError
 │   └── validator.ts               validateInput(schema) — transport-boundary shape check
 └── adapters/
@@ -275,7 +277,7 @@ export async function createContainer(config: ServerConfig): Promise<Container> 
   const db = await getDatabase(config.databaseUrl);
   return {
     config: { appUrl: config.appUrl },
-    unitOfWorkProvider: new DrizzleSqliteUnitOfWorkProvider(db),
+    unitOfWorkProvider: new DrizzleSqliteUnitOfWorkProvider(db, SystemClock),
     outboxRepository: new DrizzleSqliteOutboxRepository(db),
     clock: SystemClock,
     idGenerator: UuidV7Generator,

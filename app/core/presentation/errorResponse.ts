@@ -72,15 +72,18 @@ export function serializeError(error: unknown): SerializedError {
   };
 }
 
-const HTTP_STATUS_BY_KIND: Partial<Record<SerializedErrorKind, number>> = {
+// `null` is the intentional fall-through to the framework's default 500.
+const HTTP_STATUS_BY_KIND: Record<SerializedErrorKind, number | null> = {
+  business: 422,
   notFound: 404,
   conflict: 409,
   validation: 422,
+  system: null,
+  unknown: null,
 };
 
-// Returns null so the framework falls through to its default 500-class.
 export function httpStatusFor(serialized: SerializedError): number | null {
-  return HTTP_STATUS_BY_KIND[serialized.kind] ?? null;
+  return HTTP_STATUS_BY_KIND[serialized.kind];
 }
 
 export class AppServerError extends Error {
@@ -88,10 +91,6 @@ export class AppServerError extends Error {
 
   constructor(public readonly serialized: SerializedError) {
     super(serialized.message);
-  }
-
-  toSerialized(): SerializedError {
-    return this.serialized;
   }
 }
 

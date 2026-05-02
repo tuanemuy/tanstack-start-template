@@ -1,9 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { createServerFn } from "@tanstack/react-start";
 import { renderServerComponent } from "@tanstack/react-start/rsc";
 import { sanitizeRouteError } from "@/core/presentation/errorDisplay";
+import { defineServerFn } from "@/core/presentation/serverFn";
 
-const renderTodoList = createServerFn().handler(async () => {
+const renderTodoList = defineServerFn().handler(async () => {
   const { TodoList } = await import("@/components/todo/TodoList");
   return renderServerComponent(<TodoList />);
 });
