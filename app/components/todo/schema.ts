@@ -4,6 +4,7 @@ import { z } from "zod";
 // `@/core/domain/todo/*` so the client bundle that runs `inputValidator`
 // never pulls in domain code.
 export const TODO_TITLE_MAX_LENGTH = 140;
+export const TODO_LIST_MAX_LIMIT = 100;
 
 export const createTodoSchema = z.object({
   title: z.string().trim().min(1).max(TODO_TITLE_MAX_LENGTH),
@@ -16,4 +17,10 @@ export const changeTodoStatusSchema = z.object({
 
 export const deleteTodoSchema = z.object({
   id: z.string().min(1),
+});
+
+// `page` is 1-indexed; the `limit` upper bound is the DoS guard.
+export const paginationSchema = z.object({
+  page: z.number().int().min(1),
+  limit: z.number().int().min(1).max(TODO_LIST_MAX_LIMIT),
 });
