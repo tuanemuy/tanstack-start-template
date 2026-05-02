@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { EventId } from "@/core/domain/common/event";
 import { decodeTodoEvent, TodoEvents } from "../events";
 import { TodoId, TodoTitle } from "../valueObject";
 
@@ -8,8 +9,8 @@ const T0 = new Date(0);
 // passed in, so each test supplies its own deterministic UUIDv7 string.
 const todoId = (n: number) =>
   TodoId.create(`00000000-0000-7000-8000-${n.toString(16).padStart(12, "0")}`);
-const eventId = (n: number) =>
-  `01950000-0000-7000-8000-${n.toString(16).padStart(12, "0")}`;
+const eventId = (n: number): EventId =>
+  EventId.create(`01950000-0000-7000-8000-${n.toString(16).padStart(12, "0")}`);
 
 describe("decodeTodoEvent", () => {
   it("decodes a valid toggled payload without coercion", () => {

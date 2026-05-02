@@ -1,4 +1,8 @@
-import type { DomainEvent, EventDecoder } from "@/core/domain/common/event";
+import {
+  type DomainEvent,
+  type EventDecoder,
+  EventId,
+} from "@/core/domain/common/event";
 import { type TodoEvent, todoEventDecoders } from "@/core/domain/todo/events";
 import type { Container } from "../di/server";
 import type { OutboxEntry } from "../ports/outboxRepository";
@@ -41,7 +45,7 @@ function decodeEntry(
     throw new Error(`No decoder registered for event type "${entry.type}"`);
   }
   return decoder(entry.type, entry.payload, {
-    id: entry.id,
+    id: EventId.create(entry.id),
     occurredAt: entry.occurredAt,
     aggregateId: entry.aggregateId,
   });
@@ -59,11 +63,12 @@ export async function processOutboxEvents(
   const entries = await outboxRepository.listPending(batchSize);
   if (entries.length === 0) return { processed: 0 };
 
-  type DecodedRow = { id: string; event: DomainEvent };
+  type DecodedRow = { id: EventId; event: DomainEvent };
   const decoded: DecodedRow[] = [];
   for (const entry of entries) {
     try {
-      decoded.push({ id: entry.id, event: decodeEntry(entry, registry) });
+      const event = decodeEntry(entry, registry);
+      decoded.push({ id: event.id, event });
     } catch (error) {
       logger.error(
         `[outbox] decode failed for event ${entry.id} (${entry.type})`,
@@ -77,7 +82,7 @@ export async function processOutboxEvents(
   const results = await Promise.allSettled(
     decoded.map((row) => dispatch(row.event)),
   );
-  const dispatchedIds: string[] = [];
+  const dispatchedIds: EventId[] = [];
   results.forEach((result, index) => {
     const row = decoded[index];
     if (!row) return;

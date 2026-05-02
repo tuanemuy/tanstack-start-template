@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as schema from "@/core/adapters/drizzleSqlite/schema";
+import { EventId } from "@/core/domain/common/event";
 import { Todo } from "@/core/domain/todo/entity";
 import { TodoId } from "@/core/domain/todo/valueObject";
 import { setupTestContainer } from "../../__tests__/helpers";
@@ -122,7 +123,7 @@ describe("concurrent changeTodoStatus", () => {
     }
     const { entity: staleMutation } = Todo.complete(
       stale,
-      "f0000000-0000-7000-8000-000000000001",
+      EventId.create("f0000000-0000-7000-8000-000000000001"),
       new Date("2026-01-01T00:00:00.000Z"),
     );
 

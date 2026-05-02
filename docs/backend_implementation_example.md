@@ -99,7 +99,7 @@ export type Foo = ActiveFoo | CompletedFoo;
 
 export const Foo = {
   create: (
-    params: { id: string; eventId: string; /* ...domain inputs... */ },
+    params: { id: string; eventId: EventId; /* ...domain inputs... */ },
     now: Date,
   ): WithEvents<ActiveFoo, FooEvent> => {
     const id = FooId.create(params.id);
@@ -109,7 +109,7 @@ export const Foo = {
 
   complete: (
     foo: ActiveFoo,
-    eventId: string,
+    eventId: EventId,
     now: Date,
   ): WithEvents<CompletedFoo, FooEvent> => {
     const next: CompletedFoo = { ...foo, status: "completed", version: foo.version + 1, updatedAt: now };
@@ -120,7 +120,7 @@ export const Foo = {
 
 ポイント:
 - 状態を discriminated union で表現 → 不正な遷移は型エラー
-- `Todo.create` のように **VO 生成は entity factory に集約**（application 層は raw string を渡す）
+- `Todo.create` のように **VO 生成は entity factory に集約**（application 層は `id` を raw string、`eventId` は `EventId` brand で渡す）
 - `now: Date` と必要な `id` / `eventId` を引数で受ける（domain は `new Date()` も `uuidv7()` も呼ばない）
 - 状態遷移は `WithEvents<TEntity, TEvent>` を返してイベントとセットで扱う
 - 削除のように後続エンティティが無い操作は domain にメソッドを置かず、usecase が
@@ -137,7 +137,7 @@ export type FooCreatedEvent = DomainEventBase<
 export type FooEvent = FooCreatedEvent | FooDeletedEvent;
 
 export const FooEvents = {
-  created: (id: string, fooId: FooId, occurredAt: Date): FooCreatedEvent => ({
+  created: (id: EventId, fooId: FooId, occurredAt: Date): FooCreatedEvent => ({
     id,
     type: "foo.created",
     payload: { fooId },
@@ -145,7 +145,7 @@ export const FooEvents = {
     aggregateId: fooId,
   }),
 
-  deleted: (id: string, fooId: FooId, occurredAt: Date): FooDeletedEvent => ({
+  deleted: (id: EventId, fooId: FooId, occurredAt: Date): FooDeletedEvent => ({
     id,
     type: "foo.deleted",
     payload: { fooId },
@@ -177,7 +177,7 @@ export const fooEventDecoders: Readonly<
 ```
 
 ポイント:
-- factory は `id` を引数で受ける（usecase が `container.idGenerator.next()` でミントして渡す）
+- factory は `id: EventId` を引数で受ける（usecase が `EventId.create(container.idGenerator.next())` でミントして渡す）
 - decoder map のキーは **完全な `event.type` 文字列**（`"foo.created"`）
 - map 自体を `Record<FooEvent["type"], EventDecoder<FooEvent>>` で型付けして網羅性を強制
 - 各 entry は throw する（relay worker が per-row catch してログに流す）
@@ -223,7 +223,7 @@ export async function createFoo({
 }: ServiceArgs<CreateFooInput>): Promise<CreateFooOutput> {
   const now = container.clock.now();
   const id = container.idGenerator.next();
-  const eventId = container.idGenerator.next();
+  const eventId = EventId.create(container.idGenerator.next());
 
   const { entity: foo, events } = Foo.create(
     { id, eventId, /* ...input fields... */ },
@@ -248,7 +248,7 @@ export async function deleteFoo({
   input,
 }: ServiceArgs<DeleteFooInput>): Promise<void> {
   const now = container.clock.now();
-  const eventId = container.idGenerator.next();
+  const eventId = EventId.create(container.idGenerator.next());
 
   await container.unitOfWorkProvider.run(
     async ({ fooRepository, collectEvents }) => {

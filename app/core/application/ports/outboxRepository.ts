@@ -1,5 +1,8 @@
-import type { DomainEvent } from "@/core/domain/common/event";
+import type { DomainEvent, EventId } from "@/core/domain/common/event";
 
+// `id` stays as a raw string here: it is the at-rest wire representation
+// from the outbox row, validated into `EventId` only when the worker hands
+// it to a decoder (so an invalid row fails per-event, not for the batch).
 export type OutboxEntry = Readonly<{
   id: string;
   type: string;
@@ -16,7 +19,7 @@ export interface OutboxRepository {
 
   listPending(limit: number): Promise<readonly OutboxEntry[]>;
 
-  markProcessed(ids: readonly string[], now: Date): Promise<void>;
+  markProcessed(ids: readonly EventId[], now: Date): Promise<void>;
 
   pruneProcessed(olderThan: Date): Promise<{ deleted: number }>;
 }

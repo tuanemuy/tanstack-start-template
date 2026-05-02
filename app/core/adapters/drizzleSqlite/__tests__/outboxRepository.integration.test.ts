@@ -2,6 +2,7 @@ import { eq, isNull } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { FakeIdGenerator } from "@/core/application/__tests__/fakes";
 import { setupTestContainer } from "@/core/application/__tests__/helpers";
+import { EventId } from "@/core/domain/common/event";
 import { TodoEvents } from "@/core/domain/todo/events";
 import { TodoId, TodoTitle } from "@/core/domain/todo/valueObject";
 import * as schema from "../schema";
@@ -22,8 +23,8 @@ import * as schema from "../schema";
  */
 
 const ids = new FakeIdGenerator();
-const nextId = (): string => ids.next();
-const nextTodoId = () => TodoId.create(nextId());
+const nextId = (): EventId => EventId.create(ids.next());
+const nextTodoId = () => TodoId.create(ids.next());
 
 describe("DrizzleSqliteOutboxRepository.save (integration)", () => {
   const getContainer = setupTestContainer();

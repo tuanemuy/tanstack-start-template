@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { EventId } from "@/core/domain/common/event";
 import { isBusinessRuleError } from "@/core/domain/error";
 import { Todo } from "../entity";
 import { TodoErrorCode } from "../errorCode";
@@ -20,8 +21,8 @@ const at = (ms: number) => new Date(T0.getTime() + ms);
 const ID_BASE = "00000000-0000-7000-8000-";
 const id = (n: number): TodoId =>
   TodoId.create(`${ID_BASE}${n.toString(16).padStart(12, "0")}`);
-const eventId = (n: number): string =>
-  `${ID_BASE}${(n + 1_000).toString(16).padStart(12, "0")}`;
+const eventId = (n: number): EventId =>
+  EventId.create(`${ID_BASE}${(n + 1_000).toString(16).padStart(12, "0")}`);
 
 describe("Todo.create", () => {
   it("produces an active entity with the supplied TodoId", () => {

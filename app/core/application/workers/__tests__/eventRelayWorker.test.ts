@@ -1,6 +1,7 @@
 import { asc, isNull } from "drizzle-orm";
 import { describe, expect, it, vi } from "vitest";
 import * as schema from "@/core/adapters/drizzleSqlite/schema";
+import { EventId } from "@/core/domain/common/event";
 import { TodoEvents } from "@/core/domain/todo/events";
 import { TodoId, TodoTitle } from "@/core/domain/todo/valueObject";
 import { FakeIdGenerator, FakeLogger } from "../../__tests__/fakes";
@@ -16,8 +17,8 @@ const T0 = new Date(0);
 // usecase + manual `TodoEvents.*` calls below — keeps assertions focused on
 // outbox behaviour rather than UUID minting.
 const ids = new FakeIdGenerator();
-const nextId = (): string => ids.next();
-const nextTodoId = (): TodoId => TodoId.create(nextId());
+const nextId = (): EventId => EventId.create(ids.next());
+const nextTodoId = (): TodoId => TodoId.create(ids.next());
 
 describe("processOutboxEvents", () => {
   const getContainer = setupTestContainer();

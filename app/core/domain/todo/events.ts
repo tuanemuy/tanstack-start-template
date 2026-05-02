@@ -1,5 +1,9 @@
 import { SystemError, SystemErrorCode } from "@/core/application/errors";
-import type { DomainEventBase, EventDecoder } from "@/core/domain/common/event";
+import type {
+  DomainEventBase,
+  EventDecoder,
+  EventId,
+} from "@/core/domain/common/event";
 import { TodoId, TodoTitle } from "./valueObject";
 
 export type TodoCreatedEvent = DomainEventBase<
@@ -30,7 +34,7 @@ export type TodoEvent =
 
 export const TodoEvents = {
   created: (
-    id: string,
+    id: EventId,
     todoId: TodoId,
     title: TodoTitle,
     occurredAt: Date,
@@ -43,7 +47,7 @@ export const TodoEvents = {
   }),
 
   toggled: (
-    id: string,
+    id: EventId,
     todoId: TodoId,
     completed: boolean,
     occurredAt: Date,
@@ -56,7 +60,7 @@ export const TodoEvents = {
   }),
 
   renamed: (
-    id: string,
+    id: EventId,
     todoId: TodoId,
     title: TodoTitle,
     occurredAt: Date,
@@ -69,7 +73,7 @@ export const TodoEvents = {
   }),
 
   deleted: (
-    id: string,
+    id: EventId,
     todoId: TodoId,
     occurredAt: Date,
   ): TodoDeletedEvent => ({

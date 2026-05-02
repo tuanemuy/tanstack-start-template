@@ -1,3 +1,4 @@
+import { EventId } from "@/core/domain/common/event";
 import { Todo } from "@/core/domain/todo/entity";
 import type { TodoEvent } from "@/core/domain/todo/events";
 import { NotFoundError } from "../errors";
@@ -34,7 +35,7 @@ export async function changeTodoStatus({
       const transition = setStatusIfNeeded(
         current,
         input.status,
-        () => container.idGenerator.next(),
+        () => EventId.create(container.idGenerator.next()),
         now,
       );
       if (transition === null) return current;
@@ -50,7 +51,7 @@ export async function changeTodoStatus({
 function setStatusIfNeeded(
   todo: Todo,
   status: TodoStatusInput,
-  nextId: () => string,
+  nextId: () => EventId,
   now: Date,
 ): { entity: Todo; events: readonly TodoEvent[] } | null {
   if (status === "completed") {

@@ -1,6 +1,6 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
-import type { WithEvents } from "@/core/domain/common/event";
+import { EventId, type WithEvents } from "@/core/domain/common/event";
 import { Todo, type Todo as TodoType } from "../entity";
 import { type TodoEvent, TodoEvents } from "../events";
 import { TodoId } from "../valueObject";
@@ -34,11 +34,12 @@ const NOW = new Date(0);
 // shrinking output.
 const ID_BASE = "00000000-0000-7000-8000-";
 let counter = 0;
-const nextEventId = (): string => {
+const nextRawId = (): string => {
   counter += 1;
   return `${ID_BASE}${counter.toString(16).padStart(12, "0")}`;
 };
-const nextTodoId = (): TodoId => TodoId.create(nextEventId());
+const nextEventId = (): EventId => EventId.create(nextRawId());
+const nextTodoId = (): TodoId => TodoId.create(nextRawId());
 
 describe("Todo.complete / Todo.reopen (property)", () => {
   it("complete then reopen restores the original status", () => {

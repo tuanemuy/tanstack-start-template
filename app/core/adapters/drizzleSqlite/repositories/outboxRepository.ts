@@ -3,7 +3,7 @@ import type {
   OutboxEntry,
   OutboxRepository,
 } from "@/core/application/ports/outboxRepository";
-import type { DomainEvent } from "@/core/domain/common/event";
+import type { DomainEvent, EventId } from "@/core/domain/common/event";
 import type { Executor } from "../client";
 import { outboxEvents } from "../schema";
 import { mapDbError } from "./helpers";
@@ -50,7 +50,7 @@ export class DrizzleSqliteOutboxRepository implements OutboxRepository {
     });
   }
 
-  async markProcessed(ids: readonly string[], now: Date): Promise<void> {
+  async markProcessed(ids: readonly EventId[], now: Date): Promise<void> {
     if (ids.length === 0) return;
     await mapDbError("Failed to mark outbox events as processed", () =>
       this.executor
@@ -58,7 +58,7 @@ export class DrizzleSqliteOutboxRepository implements OutboxRepository {
         .set({ processedAt: now })
         .where(
           and(
-            inArray(outboxEvents.id, ids as string[]),
+            inArray(outboxEvents.id, ids as readonly string[] as string[]),
             isNull(outboxEvents.processedAt),
           ),
         ),

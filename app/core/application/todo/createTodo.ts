@@ -1,3 +1,4 @@
+import { EventId } from "@/core/domain/common/event";
 import { Todo } from "@/core/domain/todo/entity";
 import type { ServiceArgs } from "../types";
 import { type TodoView, toTodoView } from "./view";
@@ -16,7 +17,7 @@ export async function createTodo({
 }: ServiceArgs<CreateTodoInput>): Promise<CreateTodoOutput> {
   const now = container.clock.now();
   const id = container.idGenerator.next();
-  const eventId = container.idGenerator.next();
+  const eventId = EventId.create(container.idGenerator.next());
   const { entity: todo, events } = Todo.create(
     { id, eventId, title: input.title },
     now,

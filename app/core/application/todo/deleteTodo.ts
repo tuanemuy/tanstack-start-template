@@ -1,3 +1,4 @@
+import { EventId } from "@/core/domain/common/event";
 import { TodoEvents } from "@/core/domain/todo/events";
 import { NotFoundError } from "../errors";
 import type { ServiceArgs } from "../types";
@@ -11,7 +12,7 @@ export async function deleteTodo({
   input,
 }: ServiceArgs<DeleteTodoInput>): Promise<void> {
   const now = container.clock.now();
-  const eventId = container.idGenerator.next();
+  const eventId = EventId.create(container.idGenerator.next());
 
   await container.unitOfWorkProvider.run(
     async ({ todoRepository, collectEvents }) => {

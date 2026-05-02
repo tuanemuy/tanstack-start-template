@@ -1,4 +1,4 @@
-import type { WithEvents } from "@/core/domain/common/event";
+import type { EventId, WithEvents } from "@/core/domain/common/event";
 import { type TodoEvent, TodoEvents } from "./events";
 import { TodoId, TodoTitle } from "./valueObject";
 
@@ -18,7 +18,7 @@ export type Todo = ActiveTodo | CompletedTodo;
 
 function complete(
   todo: ActiveTodo,
-  eventId: string,
+  eventId: EventId,
   now: Date,
 ): WithEvents<CompletedTodo, TodoEvent> {
   const next: CompletedTodo = {
@@ -35,7 +35,7 @@ function complete(
 
 function reopen(
   todo: CompletedTodo,
-  eventId: string,
+  eventId: EventId,
   now: Date,
 ): WithEvents<ActiveTodo, TodoEvent> {
   const next: ActiveTodo = {
@@ -53,7 +53,7 @@ function reopen(
 function rename(
   todo: Todo,
   newTitle: string,
-  eventId: string,
+  eventId: EventId,
   now: Date,
 ): WithEvents<Todo, TodoEvent> {
   const title = TodoTitle.create(newTitle);
@@ -78,7 +78,7 @@ export const Todo = {
     todo.status === "completed",
 
   create: (
-    params: { id: string; eventId: string; title: string },
+    params: { id: string; eventId: EventId; title: string },
     now: Date,
   ): WithEvents<ActiveTodo, TodoEvent> => {
     const id = TodoId.create(params.id);
