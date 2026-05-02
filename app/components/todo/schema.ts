@@ -15,6 +15,11 @@ export const changeTodoStatusSchema = z.object({
   status: z.enum(["active", "completed"]),
 });
 
+export const renameTodoSchema = z.object({
+  id: z.string().min(1),
+  title: z.string().trim().min(1).max(TODO_TITLE_MAX_LENGTH),
+});
+
 export const deleteTodoSchema = z.object({
   id: z.string().min(1),
 });

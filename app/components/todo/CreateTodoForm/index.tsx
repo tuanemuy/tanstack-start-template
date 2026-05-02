@@ -8,8 +8,8 @@ import {
   extractSerializedError,
   type SerializedError,
 } from "@/core/presentation/errorResponse";
-import { createTodoFn } from "./actions";
-import { TODO_TITLE_MAX_LENGTH } from "./schema";
+import { TODO_TITLE_MAX_LENGTH } from "../schema";
+import { createTodoFn } from "./action";
 
 type FormState = { error: SerializedError | null };
 
