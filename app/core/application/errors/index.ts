@@ -1,8 +1,4 @@
-import {
-  CodedError,
-  type FieldErrors,
-  type SerializedErrorBase,
-} from "@/lib/error";
+import { CodedError, type SerializedErrorBase } from "@/lib/error";
 
 export type { FieldErrors } from "@/lib/error";
 
@@ -12,11 +8,6 @@ export type SerializedNotFoundError = SerializedErrorBase & {
 
 export type SerializedConflictError = SerializedErrorBase & {
   kind: "conflict";
-};
-
-export type SerializedValidationError = SerializedErrorBase & {
-  kind: "validation";
-  fieldErrors?: FieldErrors;
 };
 
 export type SerializedSystemError = SerializedErrorBase & {
@@ -67,46 +58,15 @@ export function isConflictError(error: unknown): error is ConflictError {
   return error instanceof ConflictError;
 }
 
-export class ValidationError extends ApplicationError {
-  override readonly name = "ValidationError";
-
-  readonly fieldErrors?: FieldErrors;
-
-  constructor(
-    code: string,
-    message: string,
-    cause?: unknown,
-    fieldErrors?: FieldErrors,
-  ) {
-    super(code, message, cause);
-    if (fieldErrors !== undefined) {
-      this.fieldErrors = fieldErrors;
-    }
-  }
-
-  override toSerialized(): SerializedValidationError {
-    if (this.fieldErrors !== undefined) {
-      return {
-        kind: "validation",
-        code: this.code,
-        message: this.message,
-        retryable: this.retryable,
-        fieldErrors: this.fieldErrors,
-      };
-    }
-    return {
-      kind: "validation",
-      code: this.code,
-      message: this.message,
-      retryable: this.retryable,
-    };
-  }
-}
-
-export function isValidationError(error: unknown): error is ValidationError {
-  return error instanceof ValidationError;
-}
-
+/**
+ * Codes for unrecoverable system faults surfaced by adapters.
+ * Add a new entry per external resource you integrate; include it in
+ * `RETRYABLE_SYSTEM_CODES` below if the failure is transient.
+ *
+ * `NetworkError` / `ExternalApiError` are template-only placeholders showing
+ * the extension shape — no code throws them today. Delete them when you add
+ * your first external adapter, or keep as reference.
+ */
 export const SystemErrorCode = {
   InternalServerError: "INTERNAL_SERVER_ERROR",
   DatabaseError: "DATABASE_ERROR",

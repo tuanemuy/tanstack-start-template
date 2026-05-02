@@ -421,29 +421,44 @@ export const createTodoSchema = z.object({
 
 ```typescript
 // app/core/presentation/validator.ts
-// 構造のみを担う `@/lib/error` と sibling の `./errorResponse` から
-// 型だけ引いてくる（runtime はすでに client バンドルに乗っている presentation 層）。
-// application/domain の runtime は引きずり込まないので inputValidator が走る
-// client バンドルにも安全に乗る。
+// transport boundary 専用の `InputValidationError` をこのファイルに閉じて持つ。
+// `@/lib/error` の `CodedError` を継承して `toSerialized()` で wire 化するので、
+// 他のエラー（NotFound / Conflict / Business / System）と「class → toSerialized」
+// プロトコルが揃う。application/domain の runtime は引かないので inputValidator が
+// 走る client バンドルにも安全に乗る。
 import { type z, type ZodType } from "zod";
-import type { FieldErrors } from "@/lib/error";
+import { CodedError, type FieldErrors } from "@/lib/error";
 import {
   AppServerError,
   type SerializedValidationError,
 } from "./errorResponse";
 
+class InputValidationError extends CodedError {
+  override readonly name = "InputValidationError";
+
+  constructor(public readonly fieldErrors: FieldErrors) {
+    super("INVALID_INPUT", "Invalid input");
+  }
+
+  override toSerialized(): SerializedValidationError {
+    return {
+      kind: "validation",
+      code: this.code,
+      message: this.message,
+      retryable: false,
+      fieldErrors: this.fieldErrors,
+    };
+  }
+}
+
 export function validateInput<T extends ZodType>(schema: T) {
   return (input: unknown): z.infer<T> => {
     const parsed = schema.safeParse(input);
     if (parsed.success) return parsed.data;
-    const serialized: SerializedValidationError = {
-      kind: "validation",
-      code: "INVALID_INPUT",
-      message: "Invalid input",
-      retryable: false,
-      fieldErrors: zodIssuesToFieldErrors(parsed.error.issues),
-    };
-    throw new AppServerError(serialized);
+    const error = new InputValidationError(
+      zodIssuesToFieldErrors(parsed.error.issues),
+    );
+    throw new AppServerError(error.toSerialized());
   };
 }
 ```

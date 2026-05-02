@@ -1,9 +1,30 @@
 import type { ZodType, z } from "zod";
-import type { FieldErrors } from "@/lib/error";
+import { CodedError, type FieldErrors } from "@/lib/error";
 import {
   AppServerError,
   type SerializedValidationError,
 } from "./errorResponse";
+
+// Transport-boundary validation error. Owned by presentation because the only
+// throw site is `validateInput` (Zod against incoming wire payloads). Business
+// invariants are enforced by `BusinessRuleError` inside value-object factories.
+class InputValidationError extends CodedError {
+  override readonly name = "InputValidationError";
+
+  constructor(public readonly fieldErrors: FieldErrors) {
+    super("INVALID_INPUT", "Invalid input");
+  }
+
+  override toSerialized(): SerializedValidationError {
+    return {
+      kind: "validation",
+      code: this.code,
+      message: this.message,
+      retryable: false,
+      fieldErrors: this.fieldErrors,
+    };
+  }
+}
 
 // Structural / DoS guard at the transport boundary. Business-rule validation
 // belongs in value-object factories — keeping this scope narrow avoids
@@ -13,14 +34,10 @@ export function validateInput<T extends ZodType>(schema: T) {
   return (input: unknown): z.infer<T> => {
     const parsed = schema.safeParse(input);
     if (parsed.success) return parsed.data;
-    const serialized: SerializedValidationError = {
-      kind: "validation",
-      code: "INVALID_INPUT",
-      message: "Invalid input",
-      retryable: false,
-      fieldErrors: zodIssuesToFieldErrors(parsed.error.issues),
-    };
-    throw new AppServerError(serialized);
+    const error = new InputValidationError(
+      zodIssuesToFieldErrors(parsed.error.issues),
+    );
+    throw new AppServerError(error.toSerialized());
   };
 }
 
