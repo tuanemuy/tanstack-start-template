@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Guidance for Claude Code working in this repository. This file records **principles and the overall shape** — implementation details and non-obvious WHYs belong in code comments / library-level JSDoc, not here.
+Guidance for Claude Code working in this repository.
 
 ## Principles
 
