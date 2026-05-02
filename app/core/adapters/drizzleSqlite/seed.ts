@@ -33,11 +33,9 @@ async function main(): Promise<void> {
   }
 }
 
-void (async () => {
-  try {
-    await main();
-  } catch (error) {
-    console.error("seed failed:", error);
-    process.exitCode = 1;
-  }
-})();
+try {
+  await main();
+} catch (error) {
+  console.error("seed failed:", error);
+  process.exitCode = 1;
+}
