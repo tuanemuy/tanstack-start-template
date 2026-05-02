@@ -1,7 +1,8 @@
 import { v7 as uuidv7 } from "uuid";
 
-// UUIDv7 monotonic ordering is what the outbox `(createdAt, id)` ordering
-// relies on — replacements must preserve that property.
+// `(createdAt, id)` only acts as a deterministic poll-order tiebreaker for
+// the outbox — consumers must NOT rely on observing events in any
+// particular order. Replacements need to be unique, not monotonic.
 export interface IdGenerator {
   next(): string;
 }

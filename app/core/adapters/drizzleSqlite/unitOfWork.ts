@@ -2,6 +2,7 @@ import type {
   UnitOfWorkContext,
   UnitOfWorkProvider,
 } from "@/core/application/execution/unitOfWork";
+import type { Clock } from "@/core/application/ports/clock";
 import type { DomainEvent } from "@/core/domain/common/event";
 import type { Database, Executor } from "./client";
 import { DrizzleSqliteOutboxRepository } from "./repositories/outboxRepository";
@@ -48,6 +49,7 @@ function sleep(ms: number): Promise<void> {
 export class DrizzleSqliteUnitOfWorkProvider implements UnitOfWorkProvider {
   constructor(
     private readonly db: Database,
+    private readonly clock: Clock,
     private readonly retryConfig: DrizzleSqliteUnitOfWorkRetryConfig = DEFAULT_RETRY_CONFIG,
   ) {}
 
@@ -68,7 +70,7 @@ export class DrizzleSqliteUnitOfWorkProvider implements UnitOfWorkProvider {
 
   private runOnce<T>(fn: (ctx: UnitOfWorkContext) => Promise<T>): Promise<T> {
     return this.db.transaction(async (tx) => {
-      const executor = tx as Executor;
+      const executor: Executor = tx;
       const todoRepository = new DrizzleSqliteTodoRepository(executor);
       const outbox = new DrizzleSqliteOutboxRepository(executor);
       const collected: DomainEvent[] = [];
@@ -82,7 +84,7 @@ export class DrizzleSqliteUnitOfWorkProvider implements UnitOfWorkProvider {
       const result = await fn(ctx);
 
       if (collected.length > 0) {
-        await outbox.save(collected);
+        await outbox.save(collected, this.clock.now());
       }
 
       return result;

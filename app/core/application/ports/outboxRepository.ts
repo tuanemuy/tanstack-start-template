@@ -10,8 +10,9 @@ export type OutboxEntry = Readonly<{
 
 export interface OutboxRepository {
   // Must run in the same transaction as the entity changes that produced
-  // them — usecases reach this only via `collectEvents`.
-  save(events: readonly DomainEvent[]): Promise<void>;
+  // them — usecases reach this only via `collectEvents`. `now` comes from
+  // the application `Clock` so a fake clock freezes outbox `createdAt` too.
+  save(events: readonly DomainEvent[], now: Date): Promise<void>;
 
   listPending(limit: number): Promise<readonly OutboxEntry[]>;
 

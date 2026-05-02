@@ -3,6 +3,8 @@ import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 // Timestamps are ms-precision so they round-trip with `Date` and align with
 // outbox `occurred_at` and the UUIDv7 monotonic ordering encoded in `id`.
+// All timestamps come from the application `Clock` (no SQL defaults) so
+// fakes can freeze time deterministically.
 export const todos = sqliteTable("todos", {
   id: text("id").primaryKey(),
   title: text("title").notNull(),
@@ -21,9 +23,7 @@ export const outboxEvents = sqliteTable(
     payload: text("payload", { mode: "json" }).notNull(),
     occurredAt: integer("occurred_at", { mode: "timestamp_ms" }).notNull(),
     processedAt: integer("processed_at", { mode: "timestamp_ms" }),
-    createdAt: integer("created_at", { mode: "timestamp_ms" })
-      .notNull()
-      .default(sql`(CAST(unixepoch('subsec') * 1000 AS INTEGER))`),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   },
   (table) => [
     index("idx_outbox_pending")

@@ -116,6 +116,7 @@ describe("processOutboxEvents", () => {
       aggregateId: "01950000-0000-7000-8000-000000000001",
       payload: {},
       occurredAt: new Date(),
+      createdAt: new Date(),
     });
 
     const dispatch: EventDispatcher = vi.fn(async () => {});
@@ -141,6 +142,7 @@ describe("processOutboxEvents", () => {
       aggregateId: "01950000-0000-7000-8000-000000000099",
       payload: {},
       occurredAt: new Date(),
+      createdAt: new Date(),
     });
 
     const dispatch: EventDispatcher = vi.fn(async () => {});
@@ -174,6 +176,7 @@ describe("processOutboxEvents", () => {
       aggregateId: badId,
       payload: { todoId: "not-a-uuid", title: "ok" },
       occurredAt: new Date(0),
+      createdAt: new Date(0),
     });
     await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
       collectEvents([TodoEvents.created(nextId(), goodId, goodTitle, T0)]);

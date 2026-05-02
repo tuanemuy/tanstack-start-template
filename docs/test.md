@@ -79,7 +79,7 @@ concurrent / OCC 挙動を検証する integration 層を分けることで、�
 ## Real DB test（integration）方針
 
 - `setupTestContainer()` が `:memory:` SQLite client を作り、migration を流し、
-  `DrizzleSqliteUnitOfWorkProvider(db)` の production 相当ワイヤリングで
+  `DrizzleSqliteUnitOfWorkProvider(db, SystemClock)` の production 相当ワイヤリングで
   コンテナを返す。adapter は `SQLITE_BUSY` / `SQLITE_LOCKED` を内部で
   retry するので、application 層は transient 失敗を意識しない。
 - afterEach で libsql client を close。adapter の transient retry の

@@ -23,7 +23,7 @@ function rowToEntry(row: OutboxEventRow): OutboxEntry {
 export class DrizzleSqliteOutboxRepository implements OutboxRepository {
   constructor(private readonly executor: Executor) {}
 
-  async save(events: readonly DomainEvent[]): Promise<void> {
+  async save(events: readonly DomainEvent[], now: Date): Promise<void> {
     if (events.length === 0) return;
     const rows = events.map((event) => ({
       id: event.id,
@@ -31,6 +31,7 @@ export class DrizzleSqliteOutboxRepository implements OutboxRepository {
       aggregateId: event.aggregateId,
       payload: event.payload,
       occurredAt: event.occurredAt,
+      createdAt: now,
     }));
     await mapDbError("Failed to save outbox events", () =>
       this.executor.insert(outboxEvents).values(rows),

@@ -27,13 +27,14 @@ export async function createContainer(
   const db = await getDatabase(config.databaseUrl);
   return {
     config: { appUrl: config.appUrl },
-    unitOfWorkProvider: new DrizzleSqliteUnitOfWorkProvider(db),
+    unitOfWorkProvider: new DrizzleSqliteUnitOfWorkProvider(db, SystemClock),
     outboxRepository: new DrizzleSqliteOutboxRepository(db),
     clock: SystemClock,
     idGenerator: UuidV7Generator,
     logger: ConsoleLogger,
     shutdown: async () => {
       db.$client.close();
+      resetContainer();
     },
   };
 }
