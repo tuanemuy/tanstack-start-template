@@ -53,19 +53,23 @@ export class DrizzleSqliteUnitOfWorkProvider implements UnitOfWorkProvider {
     private readonly retryConfig: DrizzleSqliteUnitOfWorkRetryConfig = DEFAULT_RETRY_CONFIG,
   ) {}
 
-  async run<T>(fn: (ctx: UnitOfWorkContext) => Promise<T>): Promise<T> {
-    const { maxAttempts } = this.retryConfig;
-    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-      try {
-        return await this.runOnce(fn);
-      } catch (error) {
-        if (!isRetryableError(error) || attempt >= maxAttempts) {
-          throw error;
-        }
-        await sleep(calculateDelay(attempt, this.retryConfig));
+  run<T>(fn: (ctx: UnitOfWorkContext) => Promise<T>): Promise<T> {
+    return this.attempt(fn, 1);
+  }
+
+  private async attempt<T>(
+    fn: (ctx: UnitOfWorkContext) => Promise<T>,
+    n: number,
+  ): Promise<T> {
+    try {
+      return await this.runOnce(fn);
+    } catch (error) {
+      if (!isRetryableError(error) || n >= this.retryConfig.maxAttempts) {
+        throw error;
       }
+      await sleep(calculateDelay(n, this.retryConfig));
+      return this.attempt(fn, n + 1);
     }
-    throw new Error("unreachable: retry loop exited without returning");
   }
 
   private runOnce<T>(fn: (ctx: UnitOfWorkContext) => Promise<T>): Promise<T> {
