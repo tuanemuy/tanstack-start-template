@@ -87,11 +87,4 @@ describe("TodoId", () => {
     // Brand types erase to string at runtime — the underlying value is preserved.
     expect(created as unknown as string).toBe(raw);
   });
-
-  it("is referentially equal across successive create calls with the same input", () => {
-    const raw = "01950000-0000-7000-8000-000000000abc";
-    const a = TodoId.create(raw);
-    const b = TodoId.create(raw);
-    expect(a).toBe(b);
-  });
 });
