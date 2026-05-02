@@ -7,20 +7,34 @@ import {
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import type { ReactNode } from "react";
 import { sanitizeRouteError } from "@/core/presentation/errorDisplay";
+import { buildHead } from "@/core/presentation/head";
+import { defineServerFn } from "@/core/presentation/serverFn";
 import appCss from "../styles/index.css?url";
 
+export const loadAppContext = defineServerFn().handler(async () => {
+  const { getContainer } = await import("@/core/application/di/server");
+  const container = await getContainer();
+  return { config: container.config };
+});
+
+const SITE_ASSET_LINKS = [
+  { rel: "icon", href: "/favicon.ico", sizes: "any" },
+  { rel: "icon", type: "image/svg+xml", href: "/favicon.svg" },
+  { rel: "apple-touch-icon", href: "/apple-touch-icon.png" },
+  { rel: "manifest", href: "/site.webmanifest" },
+];
+
 export const Route = createRootRoute({
-  head: () => ({
-    meta: [
-      { charSet: "utf-8" },
-      { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "TanStack Start Template" },
-    ],
-    links: [{ rel: "stylesheet", href: appCss }],
-  }),
+  staleTime: Number.POSITIVE_INFINITY,
+  loader: () => loadAppContext(),
+  head: ({ loaderData }) => {
+    const stylesheet = { rel: "stylesheet", href: appCss };
+    const baseLinks = [...SITE_ASSET_LINKS, stylesheet];
+    if (!loaderData) return { links: baseLinks };
+    const { meta, links } = buildHead(loaderData.config);
+    return { meta, links: [...baseLinks, ...links] };
+  },
   component: RootComponent,
-  // Last-resort error boundary; child routes with their own `errorComponent`
-  // catch errors first and prevent this from firing.
   errorComponent: ({ error }) => (
     <RootDocument>
       <div>

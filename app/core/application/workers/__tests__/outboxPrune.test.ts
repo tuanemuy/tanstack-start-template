@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { content } from "@/config";
 import type { Container } from "@/core/application/di/types";
 import type { Clock } from "@/core/application/ports/clock";
 import type { OutboxRepository } from "@/core/application/ports/outboxRepository";
@@ -49,7 +50,7 @@ function makeContainer(overrides: Partial<Container>): Container {
   // rest of `Container` is irrelevant — cast through an unknown to keep the
   // stub small without poking holes in the real type elsewhere.
   return {
-    config: { appUrl: "http://test" },
+    config: { ...content, appUrl: "http://test" },
     unitOfWorkProvider: {
       run: vi.fn(async () => {
         throw new Error("not used");

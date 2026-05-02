@@ -5,6 +5,7 @@ import { createClient } from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
 import { migrate } from "drizzle-orm/libsql/migrator";
 import { afterEach, beforeEach } from "vitest";
+import { content } from "@/config";
 import { DrizzleSqliteOutboxRepository } from "@/core/adapters/drizzleSqlite/repositories/outboxRepository";
 import * as schema from "@/core/adapters/drizzleSqlite/schema";
 import { DrizzleSqliteUnitOfWorkProvider } from "@/core/adapters/drizzleSqlite/unitOfWork";
@@ -58,6 +59,7 @@ export async function createTestContainer(
 
   return {
     config: {
+      ...content,
       appUrl: "http://localhost:3000",
       ...options.config,
     },
