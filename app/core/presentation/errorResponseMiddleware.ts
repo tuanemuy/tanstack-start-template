@@ -1,5 +1,6 @@
 import { isNotFound, isRedirect } from "@tanstack/react-router";
 import { createMiddleware } from "@tanstack/react-start";
+import { setResponseStatus } from "@tanstack/react-start/server";
 import {
   AppServerError,
   httpStatusFor,
@@ -11,11 +12,9 @@ import {
 // and the handler land in the same catch. Setting the response status from
 // inside the handler alone would miss validator throws (they fire before
 // `.handler` runs), and the constructor of `AppServerError` can't touch the
-// server-only status setter directly.
-//
-// `setResponseStatus` is loaded via dynamic import so this module stays safe
-// to pull into the client graph (route files import it transitively via
-// `defineServerFn`). The body only runs server-side because of `.server(...)`.
+// server-only status setter directly. The `.server(...)` body is stripped
+// from client bundles by the TanStack Start compiler, so importing
+// `@tanstack/react-start/server` at module top-level is safe.
 export const errorResponseMiddleware = createMiddleware({
   type: "function",
 }).server(async ({ next }) => {
@@ -27,12 +26,7 @@ export const errorResponseMiddleware = createMiddleware({
       ? error
       : new AppServerError(serializeError(error));
     const status = httpStatusFor(appError.serialized);
-    if (status !== null) {
-      const { setResponseStatus } = await import(
-        "@tanstack/react-start/server"
-      );
-      setResponseStatus(status);
-    }
+    if (status !== null) setResponseStatus(status);
     throw appError;
   }
 });
