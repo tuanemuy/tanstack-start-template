@@ -25,13 +25,21 @@ async function loadServerDeps<TModule>(
  * handler bodies but doesn't tree-shake top-level static imports of
  * side-effectful modules.
  */
-export function serverData<TModule, TResult>(
+export function serverData<
+  TModule,
+  TResult,
+  TArgs extends readonly unknown[] = [],
+>(
   loadModule: () => Promise<TModule>,
-  run: (ctx: { container: Container }, module: TModule) => Promise<TResult>,
-): () => Promise<TResult> {
-  return async () => {
+  run: (
+    ctx: { container: Container },
+    module: TModule,
+    ...args: TArgs
+  ) => Promise<TResult>,
+): (...args: TArgs) => Promise<TResult> {
+  return async (...args: TArgs) => {
     const { container, module } = await loadServerDeps(loadModule);
-    return run({ container }, module);
+    return run({ container }, module, ...args);
   };
 }
 

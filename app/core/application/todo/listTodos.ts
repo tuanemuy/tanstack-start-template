@@ -9,19 +9,15 @@ export type ListTodosOutput = {
   count: number;
 };
 
-const DEFAULT_PAGINATION: Pagination = { page: 1, limit: 20 };
-
 export async function listTodos({
   container,
   input,
 }: {
   container: Container;
-  input?: ListTodosInput;
+  input: ListTodosInput;
 }): Promise<ListTodosOutput> {
-  const pagination = input ?? DEFAULT_PAGINATION;
-
   const { items, count } = await container.unitOfWorkProvider.run(
-    ({ todoRepository }) => todoRepository.findPage(pagination),
+    ({ todoRepository }) => todoRepository.findPage(input),
   );
 
   return { todos: items.map(toTodoView), count };

@@ -1,21 +1,17 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { renderServerComponent } from "@tanstack/react-start/rsc";
 import { sanitizeRouteError } from "@/core/presentation/errorDisplay";
 import { buildHead } from "@/core/presentation/head";
-import { defineServerFn } from "@/core/presentation/serverFn";
-import { loadAppContext } from "./__root";
+import { loadAppContext } from "../__root";
+import { paginationSearchSchema, renderTodoList } from "./-action";
 
-const renderTodoList = defineServerFn().handler(async () => {
-  const { TodoList } = await import("@/components/todo/TodoList");
-  return renderServerComponent(<TodoList />);
-});
-
-export const Route = createFileRoute("/")({
+export const Route = createFileRoute("/_home/")({
   staleTime: 0,
-  loader: async () => {
+  validateSearch: (search) => paginationSearchSchema.parse(search),
+  loaderDeps: ({ search }) => search,
+  loader: async ({ deps }) => {
     const [{ config }, TodoList] = await Promise.all([
       loadAppContext(),
-      renderTodoList(),
+      renderTodoList({ data: deps }),
     ]);
     return { config, TodoList };
   },

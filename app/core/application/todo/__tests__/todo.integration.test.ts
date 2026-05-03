@@ -188,7 +188,10 @@ describe("listTodos", () => {
       },
     ]);
 
-    const { todos: result } = await listTodos({ container });
+    const { todos: result } = await listTodos({
+      container,
+      input: { page: 1, limit: 20 },
+    });
 
     expect(result).toHaveLength(3);
     expect(result[0]?.id).toBe(id3);
@@ -204,8 +207,8 @@ describe("listTodos", () => {
     const beforeRows = await container.db.select().from(schema.outboxEvents);
     const beforeCount = beforeRows.length;
 
-    await listTodos({ container });
-    await listTodos({ container });
+    await listTodos({ container, input: { page: 1, limit: 20 } });
+    await listTodos({ container, input: { page: 1, limit: 20 } });
 
     const afterRows = await container.db.select().from(schema.outboxEvents);
     expect(afterRows).toHaveLength(beforeCount);

@@ -1,9 +1,10 @@
+import type { Pagination } from "@/core/domain/common/pagination";
 import { CreateTodoForm } from "../CreateTodoForm";
 import { TodoItem } from "../TodoItem";
 import { loadTodos } from "./action";
 
-export async function TodoList() {
-  const { todos, count } = await loadTodos();
+export async function TodoList({ pagination }: { pagination: Pagination }) {
+  const { todos, count } = await loadTodos(pagination);
 
   return (
     <section>
