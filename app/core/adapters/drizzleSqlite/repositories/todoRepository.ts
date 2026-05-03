@@ -1,4 +1,4 @@
-import { and, desc, eq, getTableColumns, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import {
   ConflictError,
   SystemError,
@@ -81,29 +81,19 @@ export class DrizzleSqliteTodoRepository implements TodoRepository {
   findPage(pagination: Pagination): Promise<PaginationResult<Todo>> {
     return mapDbError("Failed to page todos", async () => {
       const offset = (pagination.page - 1) * pagination.limit;
-      // Empty pages need a fallback count: the COUNT(*) OVER() window emits
-      // zero rows when the partition itself is empty.
-      const rows = await this.executor
-        .select({
-          ...getTableColumns(todos),
-          totalCount: sql<number>`COUNT(*) OVER()`.as("total_count"),
-        })
-        .from(todos)
-        .orderBy(desc(todos.createdAt), desc(todos.id))
-        .limit(pagination.limit)
-        .offset(offset);
-
-      if (rows.length === 0) {
-        const countRows = await this.executor
-          .select({ count: sql<number>`count(*)` })
-          .from(todos);
-        return { items: [], count: Number(countRows[0]?.count ?? 0) };
-      }
-
-      const items = rows.map(({ totalCount: _totalCount, ...row }) =>
-        toTodo(row),
-      );
-      return { items, count: Number(rows[0]?.totalCount ?? 0) };
+      const [rows, countRows] = await Promise.all([
+        this.executor
+          .select()
+          .from(todos)
+          .orderBy(desc(todos.createdAt), desc(todos.id))
+          .limit(pagination.limit)
+          .offset(offset),
+        this.executor.select({ count: sql<number>`count(*)` }).from(todos),
+      ]);
+      return {
+        items: rows.map(toTodo),
+        count: Number(countRows[0]?.count ?? 0),
+      };
     });
   }
 
