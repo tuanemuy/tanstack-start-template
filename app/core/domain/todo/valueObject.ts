@@ -3,17 +3,19 @@ import { TodoErrorCode } from "./errorCode";
 
 const TODO_TITLE_MAX_LENGTH = 140;
 
-const UUID_V7_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
 declare const todoIdBrand: unique symbol;
 declare const todoTitleBrand: unique symbol;
 
 export type TodoId = string & { readonly [todoIdBrand]: true };
 
+// Domain treats the id as an opaque, non-empty string. The choice of id
+// format (UUIDv7 in this template) is owned by `IdGenerator` and verified
+// by storage adapters on rehydration — keeping the regex out of the
+// domain lets the generator be swapped (ULID, KSUID, etc.) without
+// touching value-object code.
 export const TodoId = {
   create: (id: string): TodoId => {
-    if (!UUID_V7_PATTERN.test(id)) {
+    if (id.trim().length === 0) {
       throw new BusinessRuleError(TodoErrorCode.InvalidId, "Invalid todo id");
     }
     return id as TodoId;

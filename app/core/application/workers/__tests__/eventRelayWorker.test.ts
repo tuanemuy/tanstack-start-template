@@ -171,11 +171,15 @@ describe("processOutboxEvents", () => {
     const badId = "01950000-0000-7000-8000-000000000002";
     const goodId = nextTodoId();
     const goodTitle = TodoTitle.create("ok");
+    // `TodoId.create` is intentionally format-agnostic at the domain
+    // layer (UUIDv7 enforcement is on the adapter side). A malformed
+    // payload here violates a still-load-bearing invariant: the title
+    // must be non-empty.
     await container.db.insert(schema.outboxEvents).values({
       id: badId,
       eventType: "todo.created",
       aggregateId: badId,
-      payload: { todoId: "not-a-uuid", title: "ok" },
+      payload: { todoId: badId, title: "" },
       occurredAt: new Date(0),
       createdAt: new Date(0),
     });

@@ -1,4 +1,6 @@
 import { and, asc, inArray, isNotNull, isNull, lt } from "drizzle-orm";
+import { SystemError, SystemErrorCode } from "@/core/application/errors";
+import { isUuidV7 } from "@/core/application/ports/idGenerator";
 import type {
   OutboxEntry,
   OutboxRepository,
@@ -11,6 +13,12 @@ import { mapDbError } from "./helpers";
 type OutboxEventRow = typeof outboxEvents.$inferSelect;
 
 function rowToEntry(row: OutboxEventRow): OutboxEntry {
+  if (!isUuidV7(row.id)) {
+    throw new SystemError(
+      SystemErrorCode.DataIntegrityError,
+      `Stored outbox event has malformed id: ${row.id}`,
+    );
+  }
   return {
     id: row.id,
     type: row.eventType,

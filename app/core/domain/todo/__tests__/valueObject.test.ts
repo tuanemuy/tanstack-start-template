@@ -56,9 +56,9 @@ describe("TodoTitle", () => {
 });
 
 describe("TodoId", () => {
-  it("throws InvalidId for a non-UUID string", () => {
+  it("throws InvalidId for an empty string", () => {
     try {
-      TodoId.create("invalid-id");
+      TodoId.create("");
       expect.fail("should have thrown");
     } catch (error) {
       expect(isBusinessRuleError(error)).toBe(true);
@@ -68,10 +68,9 @@ describe("TodoId", () => {
     }
   });
 
-  it("throws InvalidId for a UUID that is not version 7", () => {
-    // Version nibble here is 1, not 7 (and variant nibble is 8).
+  it("throws InvalidId for a whitespace-only string", () => {
     try {
-      TodoId.create("12345678-1234-1234-8123-123456789012");
+      TodoId.create("   ");
       expect.fail("should have thrown");
     } catch (error) {
       expect(isBusinessRuleError(error)).toBe(true);
@@ -81,10 +80,16 @@ describe("TodoId", () => {
     }
   });
 
-  it("accepts a valid UUIDv7 string and returns a branded TodoId", () => {
+  // Domain treats the id as opaque — generator format (UUIDv7 in this
+  // template) is enforced by storage adapters on rehydration, not by the
+  // value-object factory. So a non-UUID-shaped non-empty string is
+  // intentionally accepted at this layer.
+  it("accepts any non-empty string and returns a branded TodoId", () => {
     const raw = "01950000-0000-7000-8000-000000000001";
     const created = TodoId.create(raw);
-    // Brand types erase to string at runtime — the underlying value is preserved.
     expect(created as unknown as string).toBe(raw);
+
+    const opaque = TodoId.create("not-a-uuid");
+    expect(opaque as unknown as string).toBe("not-a-uuid");
   });
 });

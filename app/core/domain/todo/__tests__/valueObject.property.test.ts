@@ -117,75 +117,38 @@ describe("TodoTitle.create (property)", () => {
 });
 
 describe("TodoId.create (property)", () => {
-  // Hex digit arbitrary used to assemble valid UUIDv7 strings.
-  const hexArb = fc.stringMatching(/^[0-9a-f]$/);
+  // The domain factory only enforces "non-empty after trim". Format
+  // (UUIDv7 in this template) is the `IdGenerator`'s contract, validated
+  // by storage adapters on rehydration — see the adapter integration
+  // tests for that boundary.
 
-  function buildUuidV7(rest: string[], variantNibble: string): string {
-    // Canonical form: 8-4-4-4-12 with version `7` at the start of the third
-    // group and variant `8|9|a|b` at the start of the fourth.
-    const seg = (n: number, start: number) =>
-      rest.slice(start, start + n).join("");
-    return [
-      seg(8, 0),
-      seg(4, 8),
-      `7${seg(3, 12)}`,
-      `${variantNibble}${seg(3, 15)}`,
-      seg(12, 18),
-    ].join("-");
-  }
-
-  it("accepts any well-formed UUIDv7 string", () => {
+  it("accepts any non-empty, non-whitespace-only string", () => {
     fc.assert(
       fc.property(
-        fc.array(hexArb, { minLength: 30, maxLength: 30 }),
-        fc.constantFrom("8", "9", "a", "b"),
-        (rest, variant) => {
-          const raw = buildUuidV7(rest, variant);
+        fc
+          .string({ minLength: 1, maxLength: 100 })
+          .filter((s) => s.trim().length > 0),
+        (raw) => {
           const id = TodoId.create(raw);
-          // Brand erases at runtime, value round-trips.
           expect(id as unknown as string).toBe(raw);
         },
       ),
     );
   });
 
-  it("rejects UUIDs with the wrong version nibble", () => {
+  it("rejects empty / whitespace-only strings with InvalidId", () => {
     fc.assert(
       fc.property(
-        fc.array(hexArb, { minLength: 30, maxLength: 30 }),
-        fc.constantFrom("8", "9", "a", "b"),
-        // Anything in 0..f except '7'.
-        fc.constantFrom(
-          "0",
-          "1",
-          "2",
-          "3",
-          "4",
-          "5",
-          "6",
-          "8",
-          "9",
-          "a",
-          "b",
-          "c",
-          "d",
-          "e",
-          "f",
-        ),
-        (rest, variant, badVersion) => {
-          // Same shape as buildUuidV7 but with a forced wrong version nibble.
-          const seg = (n: number, start: number) =>
-            rest.slice(start, start + n).join("");
-          const raw = [
-            seg(8, 0),
-            seg(4, 8),
-            `${badVersion}${seg(3, 12)}`,
-            `${variant}${seg(3, 15)}`,
-            seg(12, 18),
-          ].join("-");
+        fc
+          .array(fc.constantFrom(" ", "\t", "\n", "\r"), {
+            minLength: 0,
+            maxLength: 10,
+          })
+          .map((chars) => chars.join("")),
+        (raw) => {
           try {
             TodoId.create(raw);
-            expect.fail(`expected throw for version=${badVersion}`);
+            expect.fail(`expected throw for empty id: ${JSON.stringify(raw)}`);
           } catch (error) {
             expect(isBusinessRuleError(error)).toBe(true);
             if (isBusinessRuleError(error)) {

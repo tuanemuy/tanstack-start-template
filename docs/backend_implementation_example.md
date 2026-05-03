@@ -76,7 +76,7 @@ export type FooId = string & { readonly [fooIdBrand]: true };
 
 export const FooId = {
   create: (id: string): FooId => {
-    if (!UUID_V7_PATTERN.test(id)) {
+    if (id.trim().length === 0) {
       throw new BusinessRuleError(FooErrorCode.InvalidId, "Invalid foo id");
     }
     return id as FooId;
@@ -89,6 +89,7 @@ export const FooId = {
 - factory が唯一の作成経路
 - 不正値は `BusinessRuleError` を throw（Result 型は使わない）
 - **`generate()` は置かない**。id 生成は application 層の `IdGenerator` port 経由
+- domain は id を「不透明な非空文字列」として扱う。format（UUIDv7 / ULID / KSUID 等）は `IdGenerator` 実装の責務で、storage adapter が rehydration 時に再検証する（`isUuidV7` 参照）。これで生成側の format を差し替えても VO を触らない
 
 ### Entity
 

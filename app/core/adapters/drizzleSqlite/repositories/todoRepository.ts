@@ -4,6 +4,7 @@ import {
   SystemError,
   SystemErrorCode,
 } from "@/core/application/errors";
+import { isUuidV7 } from "@/core/application/ports/idGenerator";
 import type {
   Pagination,
   PaginationResult,
@@ -34,6 +35,12 @@ function toTodo(row: TodoRow): Todo {
       throw new SystemError(
         SystemErrorCode.DataIntegrityError,
         `Stored todo has invalid status: ${row.status}`,
+      );
+    }
+    if (!isUuidV7(row.id)) {
+      throw new SystemError(
+        SystemErrorCode.DataIntegrityError,
+        `Stored todo has malformed id: ${row.id}`,
       );
     }
     const base = {

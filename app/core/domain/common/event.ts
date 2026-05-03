@@ -1,15 +1,15 @@
 import { BusinessRuleError } from "@/core/domain/error";
 
-const UUID_V7_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
 declare const eventIdBrand: unique symbol;
 
 export type EventId = string & { readonly [eventIdBrand]: true };
 
+// As with `TodoId`, the domain treats event ids as opaque, non-empty
+// strings. Format (UUIDv7 in this template) is the `IdGenerator`'s
+// responsibility, validated on rehydration by storage adapters.
 export const EventId = {
   create: (id: string): EventId => {
-    if (!UUID_V7_PATTERN.test(id)) {
+    if (id.trim().length === 0) {
       throw new BusinessRuleError("INVALID_EVENT_ID", "Invalid event id");
     }
     return id as EventId;
