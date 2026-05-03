@@ -63,6 +63,14 @@ export function isConflictError(error: unknown): error is ConflictError {
  * Add a new entry per external resource you integrate; include it in
  * `RETRYABLE_SYSTEM_CODES` below if the failure is transient.
  *
+ * Distinguish driver failures (`DatabaseError`) from data-integrity failures
+ * (`DataIntegrityError`): the former is "the storage layer threw" (connection
+ * dropped, lock timeout exhausted), the latter is "stored data violates the
+ * shape we expect" (corrupt row, schema-skewed payload, malformed id). They
+ * share `kind: "system"` for transport but separate codes so logs / alerts
+ * can route them differently — a flood of `DataIntegrityError` means a
+ * migration is broken, not the DB itself.
+ *
  * `NetworkError` / `ExternalApiError` are template-only placeholders showing
  * the extension shape — no code throws them today. Delete them when you add
  * your first external adapter, or keep as reference.
@@ -70,6 +78,7 @@ export function isConflictError(error: unknown): error is ConflictError {
 export const SystemErrorCode = {
   InternalServerError: "INTERNAL_SERVER_ERROR",
   DatabaseError: "DATABASE_ERROR",
+  DataIntegrityError: "DATA_INTEGRITY_ERROR",
   NetworkError: "NETWORK_ERROR",
   ExternalApiError: "EXTERNAL_API_ERROR",
 } as const;

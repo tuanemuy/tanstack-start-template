@@ -26,13 +26,13 @@ function toTodo(row: TodoRow): Todo {
   try {
     if (!Number.isInteger(row.version) || row.version < 0) {
       throw new SystemError(
-        SystemErrorCode.DatabaseError,
+        SystemErrorCode.DataIntegrityError,
         `Stored todo has invalid version: ${row.version}`,
       );
     }
     if (row.status !== "active" && row.status !== "completed") {
       throw new SystemError(
-        SystemErrorCode.DatabaseError,
+        SystemErrorCode.DataIntegrityError,
         `Stored todo has invalid status: ${row.status}`,
       );
     }
@@ -52,7 +52,7 @@ function toTodo(row: TodoRow): Todo {
       error instanceof BusinessRuleError
         ? "Stored todo violates invariants"
         : "Failed to map stored todo row";
-    throw new SystemError(SystemErrorCode.DatabaseError, message, error);
+    throw new SystemError(SystemErrorCode.DataIntegrityError, message, error);
   }
 }
 

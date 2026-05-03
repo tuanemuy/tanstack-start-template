@@ -85,13 +85,13 @@ export const TodoEvents = {
   }),
 };
 
-// Decode failures are data-integrity / infra-class problems (a corrupt or
-// schema-skewed outbox row), not business-rule violations — surface them
-// as `SystemError(DatabaseError)` so logs / kind-routing classify them
-// alongside other infrastructure failures.
+// Decode failures are data-integrity problems (a corrupt or schema-skewed
+// outbox row), not business-rule violations and not driver faults — surface
+// them as `SystemError(DataIntegrityError)` so logs / alerts can tell
+// "stored data is broken" apart from "the DB itself is down".
 function rejectPayload(eventType: string, message: string): never {
   throw new SystemError(
-    SystemErrorCode.DatabaseError,
+    SystemErrorCode.DataIntegrityError,
     `Invalid payload for ${eventType}: ${message}`,
   );
 }
@@ -213,7 +213,7 @@ export const decodeTodoEvent: EventDecoder<TodoEvent> = (
 ) => {
   if (!isTodoEventType(type)) {
     throw new SystemError(
-      SystemErrorCode.DatabaseError,
+      SystemErrorCode.DataIntegrityError,
       `Unknown todo event type: ${type}`,
     );
   }
