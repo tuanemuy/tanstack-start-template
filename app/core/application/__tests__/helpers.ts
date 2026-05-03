@@ -48,7 +48,6 @@ export type TestContainerOptions = {
 
 export type TestContainer = Container & {
   db: TestDatabase;
-  cleanup: () => Promise<void>;
 };
 
 export async function createTestContainer(
@@ -72,9 +71,6 @@ export async function createTestContainer(
       await dbWithCleanup.cleanup();
     },
     db,
-    cleanup: async () => {
-      await dbWithCleanup.cleanup();
-    },
   };
 }
 
@@ -86,7 +82,7 @@ export function setupTestContainer(
     container = await createTestContainer(options);
   });
   afterEach(async () => {
-    await container.cleanup();
+    await container.shutdown();
   });
   return () => container;
 }

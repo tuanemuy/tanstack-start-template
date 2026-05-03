@@ -11,7 +11,7 @@ import { createTestContainer, setupTestContainer } from "./helpers";
  * executable documentation of the harness contract.
  */
 
-describe("createTestContainer / cleanup", () => {
+describe("createTestContainer / shutdown", () => {
   it("initializes an in-memory SQLite with migrations applied", async () => {
     const container = await createTestContainer();
     try {
@@ -20,15 +20,15 @@ describe("createTestContainer / cleanup", () => {
       const rows = await container.db.select().from(schema.todos);
       expect(rows).toEqual([]);
     } finally {
-      await container.cleanup();
+      await container.shutdown();
     }
   });
 
-  it("cleanup is safe to call multiple times", async () => {
+  it("shutdown is safe to call multiple times", async () => {
     const container = await createTestContainer();
-    await container.cleanup();
-    // Second cleanup must not throw — the harness contract.
-    await expect(container.cleanup()).resolves.toBeUndefined();
+    await container.shutdown();
+    // Second shutdown must not throw — the harness contract.
+    await expect(container.shutdown()).resolves.toBeUndefined();
   });
 });
 
@@ -53,8 +53,8 @@ describe("setupTestContainer (suite hooks)", () => {
   it("exposes direct db access for test assertions", () => {
     const c = getContainer();
     // Harness contract: every TestContainer has a `.db` for poking at
-    // rows directly, plus a `.cleanup` function (driven by the hooks).
+    // rows directly, plus a `.shutdown` function (driven by the hooks).
     expect(c.db).toBeDefined();
-    expect(typeof c.cleanup).toBe("function");
+    expect(typeof c.shutdown).toBe("function");
   });
 });
