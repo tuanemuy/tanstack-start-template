@@ -1,5 +1,5 @@
-import type { Container } from "@/core/application/di/types";
 import type { Pagination } from "@/core/domain/common/pagination";
+import type { ServiceArgs } from "../types";
 import { type TodoView, toTodoView } from "./view";
 
 export type ListTodosInput = Pagination;
@@ -12,10 +12,7 @@ export type ListTodosOutput = {
 export async function listTodos({
   container,
   input,
-}: {
-  container: Container;
-  input: ListTodosInput;
-}): Promise<ListTodosOutput> {
+}: ServiceArgs<ListTodosInput>): Promise<ListTodosOutput> {
   const { items, count } = await container.unitOfWorkProvider.run(
     ({ todoRepository }) => todoRepository.findPage(input),
   );
