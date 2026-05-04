@@ -2,7 +2,7 @@
 
 import { useRouter } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import { useOptimistic, useState, useTransition } from "react";
+import { useId, useOptimistic, useState, useTransition } from "react";
 import type { TodoView } from "@/core/application/todo/view";
 import { displayError } from "@/core/presentation/errorDisplay";
 import {
@@ -33,13 +33,13 @@ export function TodoItem({ todo }: Props) {
     todo.status === "completed",
     (_current, next: boolean) => next,
   );
-  const [optimisticTitle, setOptimisticTitle] = useOptimistic(
-    todo.title,
-    (_current, next: string) => next,
-  );
 
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState(todo.title);
+
+  const checkboxId = useId();
+  const titleInputId = useId();
+  const errorId = useId();
 
   const onToggle = (checked: boolean) => {
     startTransition(async () => {
@@ -86,7 +86,6 @@ export function TodoItem({ todo }: Props) {
       return;
     }
     startTransition(async () => {
-      setOptimisticTitle(trimmed);
       try {
         await rename({ data: { id: todo.id, title: trimmed } });
         await router.invalidate();
@@ -100,18 +99,40 @@ export function TodoItem({ todo }: Props) {
 
   const titleFieldErrors =
     error?.kind === "validation" ? error.fieldErrors?.title : undefined;
+  const errorMessage =
+    titleFieldErrors !== undefined && titleFieldErrors.length > 0
+      ? titleFieldErrors[0]
+      : error !== null && titleFieldErrors === undefined
+        ? todoErrorMessage(error)
+        : "";
 
   return (
     <li>
-      <label>
-        <input
-          type="checkbox"
-          checked={optimisticCompleted}
-          onChange={(event) => onToggle(event.target.checked)}
-          disabled={isPending || isEditing}
-        />
+      <input
+        id={checkboxId}
+        type="checkbox"
+        checked={optimisticCompleted}
+        onChange={(event) => onToggle(event.target.checked)}
+        disabled={isPending || isEditing}
+      />
+      <label htmlFor={checkboxId}>
         {isEditing ? (
+          <span className="sr-only">{todo.title}</span>
+        ) : (
+          <span
+            className={optimisticCompleted ? "line-through" : "no-underline"}
+          >
+            {todo.title}
+          </span>
+        )}
+      </label>
+      {isEditing ? (
+        <>
+          <label htmlFor={titleInputId} className="sr-only">
+            タイトル
+          </label>
           <input
+            id={titleInputId}
             type="text"
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
@@ -127,19 +148,12 @@ export function TodoItem({ todo }: Props) {
             disabled={isPending}
             maxLength={TODO_TITLE_MAX_LENGTH}
             aria-invalid={titleFieldErrors !== undefined}
+            aria-describedby={errorMessage !== "" ? errorId : undefined}
             // biome-ignore lint/a11y/noAutofocus: focus inline-edit field on open
             autoFocus
           />
-        ) : (
-          <span
-            style={{
-              textDecoration: optimisticCompleted ? "line-through" : "none",
-            }}
-          >
-            {optimisticTitle}
-          </span>
-        )}
-      </label>
+        </>
+      ) : null}
       {isEditing ? (
         <>
           <button type="button" onClick={onSubmitEdit} disabled={isPending}>
@@ -159,11 +173,9 @@ export function TodoItem({ todo }: Props) {
           </button>
         </>
       )}
-      {titleFieldErrors !== undefined && titleFieldErrors.length > 0 ? (
-        <span role="alert">{titleFieldErrors[0]}</span>
-      ) : error !== null && titleFieldErrors === undefined ? (
-        <span role="alert">{todoErrorMessage(error)}</span>
-      ) : null}
+      <span id={errorId} aria-live="polite">
+        {errorMessage}
+      </span>
     </li>
   );
 }
