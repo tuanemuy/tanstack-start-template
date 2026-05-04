@@ -13,10 +13,21 @@ const RETRYABLE_SQLITE_CODES: ReadonlySet<string> = new Set([
   "SQLITE_LOCKED",
 ]);
 
+// Walks the `cause` chain because `mapDbError` wraps driver errors in
+// `SystemError`, which exposes its own SystemErrorCode on `.code` and stashes
+// the original SQLite error (carrying SQLITE_BUSY / SQLITE_LOCKED) on `.cause`.
 function isRetryableError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  const code = (error as { code?: unknown }).code;
-  return typeof code === "string" && RETRYABLE_SQLITE_CODES.has(code);
+  let current: unknown = error;
+  const seen = new Set<unknown>();
+  while (current instanceof Error && !seen.has(current)) {
+    seen.add(current);
+    const code = (current as { code?: unknown }).code;
+    if (typeof code === "string" && RETRYABLE_SQLITE_CODES.has(code)) {
+      return true;
+    }
+    current = (current as { cause?: unknown }).cause;
+  }
+  return false;
 }
 
 export type DrizzleSqliteUnitOfWorkRetryConfig = Readonly<{

@@ -112,6 +112,33 @@ describe("DrizzleSqliteTodoRepository (integration)", () => {
     }
   });
 
+  it("inserting a duplicate id raises ConflictError, not SystemError", async () => {
+    const container = getContainer();
+    const { entity: first } = make("dup-pk");
+    await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
+      await todoRepository.save(first);
+    });
+
+    const duplicate = {
+      ...first,
+      title: TodoTitle.create("dup-pk-2"),
+    };
+
+    let caught: unknown;
+    try {
+      await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
+        await todoRepository.save(duplicate);
+      });
+      expect.fail("duplicate id insert should have thrown");
+    } catch (error) {
+      caught = error;
+    }
+    expect(isConflictError(caught)).toBe(true);
+    if (isConflictError(caught)) {
+      expect(caught.code).toBe("UNIQUE_VIOLATION");
+    }
+  });
+
   it("delete with mismatched expectedVersion raises ConflictError", async () => {
     const container = getContainer();
     const { entity: active } = make("del-occ");
