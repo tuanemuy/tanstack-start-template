@@ -1,23 +1,21 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { sanitizeRouteError } from "@/core/presentation/errorDisplay";
 import { buildHead } from "@/core/presentation/head";
-import { loadAppContext } from "../__root";
-import { paginationSearchSchema, renderTodoList } from "./-action";
+import { paginationSearchSchema } from "@/core/presentation/pagination";
+import { renderTodoList } from "./-action";
 
 export const Route = createFileRoute("/_home/")({
   staleTime: 0,
   validateSearch: (search) => paginationSearchSchema.parse(search),
   loaderDeps: ({ search }) => search,
   loader: async ({ deps }) => {
-    const [{ config }, TodoList] = await Promise.all([
-      loadAppContext(),
-      renderTodoList({ data: deps }),
-    ]);
-    return { config, TodoList };
+    const TodoList = await renderTodoList({ data: deps });
+    return { TodoList };
   },
-  head: ({ loaderData }) => {
-    if (!loaderData) return {};
-    const { meta, links } = buildHead(loaderData.config, { path: "/" });
+  head: ({ match }) => {
+    const config = match.context?.config;
+    if (!config) return {};
+    const { meta, links } = buildHead(config, { path: "/" });
     return { meta, links };
   },
   component: HomePage,

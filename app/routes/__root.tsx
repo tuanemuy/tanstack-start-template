@@ -26,12 +26,13 @@ const SITE_ASSET_LINKS = [
 
 export const Route = createRootRoute({
   staleTime: Number.POSITIVE_INFINITY,
-  loader: () => loadAppContext(),
-  head: ({ loaderData }) => {
+  beforeLoad: () => loadAppContext(),
+  head: ({ match }) => {
     const stylesheet = { rel: "stylesheet", href: appCss };
     const baseLinks = [...SITE_ASSET_LINKS, stylesheet];
-    if (!loaderData) return { links: baseLinks };
-    const { meta, links } = buildHead(loaderData.config);
+    const config = match.context?.config;
+    if (!config) return { links: baseLinks };
+    const { meta, links } = buildHead(config);
     return { meta, links: [...baseLinks, ...links] };
   },
   component: RootComponent,
