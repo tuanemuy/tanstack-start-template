@@ -217,21 +217,53 @@ import { CompositeComponent } from "@tanstack/react-start/rsc";
 
 ---
 
+## Server-only エントリポイントの canonical 形
+
+サーバー側で usecase を呼ぶ箇所は **常に `app/core/presentation/serverAction.ts`
+の wrapper 経由** でアクセスするのがテンプレ標準。`getContainer()` を直接呼ぶ
+書き方も技術的には動くが、本テンプレでは wrapper に一本化する。
+
+### 提供される 2 つの wrapper
+
+| wrapper | 用途 |
+|---|---|
+| `serverData(loadModule, run)` | サーバーコンポーネント / loader からの **読み取り** |
+| `serverAction(schema, loadModule, handler, opts?)` | server function 経由の **mutation** |
+
+両方とも以下を吸収する:
+
+- `getContainer()` の **dynamic import**。server adapter graph が client の
+  static import グラフに混入する事故を構造的にブロックする (`import
+  "@tanstack/react-start/server-only"` は runtime ガードに過ぎないので、
+  静的 import を 1 行追加された時点では検知できない)。
+- usecase モジュールの **dynamic import**（同じ理由 + container 取得と
+  parallel load）。
+- `serverAction` は `defineServerFn` + `inputValidator(schema)` も束ねる。
+  handler は `({ data, container }, module) => ...` の 1 行で書ける。
+
+### `getContainer()` を直接呼んでよい例外
+
+`container.authProvider` のような **特定の port を 1 行で叩くだけ** で
+usecase モジュールが要らない helper 関数は、wrapper を介さず
+`getContainer()` を直接呼んでよい (後述の `getCurrentUser` 参照)。
+ファイル冒頭に `import "@tanstack/react-start/server-only";` を必ず置く。
+
+---
+
 ## サーバーコンポーネント (データフェッチ込み)
 
-サーバーコンポーネント自体が `async` 関数として `container` のユースケースを直接呼ぶ。
-React の `cache()` で同一リクエスト内のデータ重複取得を抑える。
+サーバーコンポーネント自体が `async` 関数として `serverData` で wrap した
+loader を呼ぶ。React の `cache()` で同一リクエスト内のデータ重複取得を抑える。
 
 ```tsx
 // app/components/post/PostDetail.tsx (サーバーコンポーネント)
 
 import { cache } from "react";
-import { notFound, redirect } from "@tanstack/react-router";
+import { notFound } from "@tanstack/react-router";
 import { getRequestHeaders } from "@tanstack/react-start/server";
 
-import { getContainer } from "@/core/application/di/server";
-import { getPost } from "@/core/application/post/getPost";
 import { isNotFoundError } from "@/core/application/errors";
+import { serverData } from "@/core/presentation/serverAction";
 import { RelatedPosts } from "./RelatedPosts";
 
 // 同一リクエスト内で同じ postId を呼んでも 1 回だけフェッチする。
@@ -239,20 +271,28 @@ import { RelatedPosts } from "./RelatedPosts";
 // `loadPost("b")` は別キャッシュとして独立して評価される。異なる引数で
 // 呼ぶほど dedupe は効かず、引数を全く取らない関数でも `cache(() => ...)`
 // してから関数参照経由で呼ばないと dedupe されない点に注意。
-const loadPost = cache(async (postId: string) => {
-  const headers = getRequestHeaders();
-
-  try {
-    return await getPost({
-      container: await getContainer(),
-      headers,
-      input: { postId },
-    });
-  } catch (e) {
-    if (isNotFoundError(e)) throw notFound();
-    throw e;
-  }
-});
+//
+// `serverData` が container 取得と usecase モジュールの dynamic import を
+// parallel に走らせ、`{ container }` と展開済みモジュールをコールバックに
+// 渡してくれる。直に `getContainer()` を呼ばないことで server adapter graph
+// の client 静的 import 流出を構造的に防ぐ。
+const loadPost = cache(
+  serverData(
+    () => import("@/core/application/post/getPost"),
+    async ({ container }, { getPost }, postId: string) => {
+      try {
+        return await getPost({
+          container,
+          headers: getRequestHeaders(),
+          input: { postId },
+        });
+      } catch (e) {
+        if (isNotFoundError(e)) throw notFound();
+        throw e;
+      }
+    },
+  ),
+);
 
 export async function PostDetail({ postId }: { postId: string }) {
   const { post } = await loadPost(postId);
@@ -276,11 +316,13 @@ export async function PostDetail({ postId }: { postId: string }) {
 - 認証・存在チェック後の例外マッピングは `try/catch` + `throw redirect/notFound` で十分。
 - **`cache()` の dedupe スコープは同一リクエスト + 同一引数**。`loadPost(id)` を
   同一 RSC ツリー内で複数回呼んでも実行は 1 回、異なる `id` は別キャッシュで独立評価。
-  引数を取らない loader は `cache(async () => ...)` で包んだうえで **同じ関数参照**
-  経由で呼ぶ（例: `app/components/todo/TodoList.tsx` の `loadTodos()`）。
-- DI コンテナは `@/core/application/di/server` の `getContainer()` を呼ぶ。ファイル冒頭に
-  `import "@tanstack/react-start/server-only";` を入れてクライアント混入を防ぐ。
-- `getContainer()` は `Promise<Container>` を返すので `await` が必要。
+  引数を取らない loader は `cache(serverData(...))` で包んだうえで **同じ関数参照**
+  経由で呼ぶ（例: `app/components/todo/TodoList/action.ts` の `loadTodos`）。
+- usecase 呼び出し用の DI / module ロードは `serverData` wrapper に統一する。
+  `getContainer()` を直接呼ぶと `import "@tanstack/react-start/server-only";`
+  を都度書く必要があり、誰かが静的 import を 1 行追加した瞬間に server graph
+  が client に漏れるリスクが生まれるため、wrapper による dynamic import で
+  構造的に塞ぐ。
 
 ---
 
@@ -339,7 +381,9 @@ function PostPage() {
 ## 共有サーバーロジック (認証ヘルパー)
 
 複数のサーバーコンポーネント / サーバー関数で使う認証取得は関数として切り出して
-`cache()` でメモ化する。
+`cache()` でメモ化する。usecase モジュールを伴わない **port 1 行アクセス**
+なので、ここは `serverData` ではなく `getContainer()` を直接呼ぶ
+escape-hatch パターンに該当する。
 
 ```typescript
 // app/lib/server/currentUser.ts
@@ -368,6 +412,10 @@ export async function requireCurrentUser(): Promise<User> {
 サーバーコンポーネントやサーバー関数から `await requireCurrentUser()` を呼ぶだけで
 認証チェックが済む。`createMiddleware` を使う代わりに、シンプルなヘルパーで揃える方が
 RSC との相性が良い。
+
+ファイル冒頭の `import "@tanstack/react-start/server-only";` は escape-hatch を
+取るときの必須ガード。usecase 呼び出しが入る箇所は `serverData` /
+`serverAction` 経由に切り替えてここから卒業する。
 
 ---
 
@@ -465,17 +513,18 @@ export function validateInput<T extends ZodType>(schema: T) {
 
 ```typescript
 // app/components/todo/actions.ts
-import { getContainer } from "@/core/application/di/server";
-import { createTodo } from "@/core/application/todo/createTodo";
-import { defineServerFn } from "@/core/presentation/serverFn";
-import { validateInput } from "@/core/presentation/validator";
+import { serverAction } from "@/core/presentation/serverAction";
 import { createTodoSchema } from "./schema";
 
-export const createTodoFn = defineServerFn({ method: "POST" })
-  .inputValidator(validateInput(createTodoSchema))
-  .handler(async ({ data }) =>
-    createTodo({ container: await getContainer(), input: data }),
-  );
+// `serverAction` が `defineServerFn` + `inputValidator(schema)` +
+// `getContainer()` の dynamic import + usecase モジュールの dynamic import を
+// すべて束ねる。handler は `({ data, container }, module) => ...` の 1 行。
+export const createTodoFn = serverAction(
+  createTodoSchema,
+  () => import("@/core/application/todo/createTodo"),
+  ({ data, container }, { createTodo }) =>
+    createTodo({ container, input: data }),
+);
 ```
 
 ### フォーム送信は `useActionState`
@@ -844,6 +893,9 @@ try {
   定義ファイルには置かず、handler 内の dynamic import で server-only 側へ入る
 - クライアントからの server function 呼び出し: **`useServerFn(fn)` でラップ**
   (redirect の自動ハンドル付き)
+- usecase を呼ぶ server-side エントリポイントは
+  **`serverData` / `serverAction` wrapper に統一**。`getContainer()` を
+  直接呼ぶのは port 1 行アクセスの helper だけ (escape-hatch)
 - RSC 値を Query に入れるときは `structuralSharing: false` 必須
 - 低レベル API (`renderToReadableStream` / `createFromReadableStream` /
   `createFromFetch`) はカスタムトランスポートが必要なときだけ

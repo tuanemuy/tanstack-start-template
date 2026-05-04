@@ -42,6 +42,7 @@ app/core/
 │   ├── types.ts                   ServiceArgs<T>
 │   └── ${domain}/
 │       ├── view.ts
+│       ├── eventDecoders.ts       outbox row → DomainEvent 再水和（SystemError に依存するため application 側）
 │       ├── ${usecase}.ts
 │       └── __tests__/
 ├── presentation/
@@ -154,36 +155,56 @@ export const FooEvents = {
     aggregateId: fooId,
   }),
 };
-
-export const fooEventDecoders: Readonly<
-  Record<FooEvent["type"], EventDecoder<FooEvent>>
-> = {
-  "foo.created": (_type, payload, meta) => {
-    const parsed = fooCreatedPayloadSchema.parse(payload);
-    return {
-      ...meta,
-      type: "foo.created",
-      payload: { fooId: FooId.create(parsed.fooId) },
-    };
-  },
-  "foo.deleted": (_type, payload, meta) => {
-    const parsed = fooDeletedPayloadSchema.parse(payload);
-    return {
-      ...meta,
-      type: "foo.deleted",
-      payload: { fooId: FooId.create(parsed.fooId) },
-    };
-  },
-};
 ```
 
 ポイント:
 - factory は `id: EventId` を引数で受ける（usecase が `EventId.create(container.idGenerator.next())` でミントして渡す）
-- decoder map のキーは **完全な `event.type` 文字列**（`"foo.created"`）
-- map 自体を `Record<FooEvent["type"], EventDecoder<FooEvent>>` で型付けして網羅性を強制
-- 各 entry は throw する（relay worker が per-row catch してログに流す）
+- domain には event 型と factory のみを置き、decoder は application 層へ（依存方向を inward に保つ）
+
+#### Event Decoder（application 層）
+
+decoder は `buildEventDecoder(type, schema, rehydrate)` ヘルパーで宣言的に書く。
+schema 定義 + brand 再構築だけ書けば、shape assert / `SystemError` 変換 / meta 転送は
+ヘルパーが吸収する。
+
+```ts
+// app/core/application/foo/eventDecoders.ts
+import { z } from "zod";
+import type { EventDecoder } from "@/core/domain/common/event";
+import type { FooEvent } from "@/core/domain/foo/events";
+import { FooId } from "@/core/domain/foo/valueObject";
+import { buildEventDecoder } from "../events/buildDecoder";
+
+const fooCreatedSchema = z.object({ fooId: z.string() }).strict();
+const fooDeletedSchema = z.object({ fooId: z.string() }).strict();
+
+export type FooEventDecoders = {
+  readonly [K in FooEvent["type"]]: EventDecoder<
+    Extract<FooEvent, { type: K }>
+  >;
+};
+
+export const fooEventDecoders: FooEventDecoders = {
+  "foo.created": buildEventDecoder("foo.created", fooCreatedSchema, (p) => ({
+    fooId: FooId.create(p.fooId),
+  })),
+  "foo.deleted": buildEventDecoder("foo.deleted", fooDeletedSchema, (p) => ({
+    fooId: FooId.create(p.fooId),
+  })),
+};
+```
+
+ポイント:
+- decoder は **application 層** に置く。decode 失敗を `SystemError(DataIntegrityError)` に
+  マップする以上、application のエラー契約に依存するため inward 方向の domain には置けない
+- ドメイン追加時の差分は「schema 定義 + brand 再構築」だけ。shape assert / error 変換
+  ロジックは `buildEventDecoder` に閉じ込める
 - payload schema は `z.object(...).strict()` で extra field を拒否
-- ブランド型は decoder で `FooId.create(parsed.fooId)` を経由して再構築
+- map 全体を `[K in FooEvent["type"]]: EventDecoder<Extract<...>>` で型付けして
+  網羅性を強制（map に登録漏れがあると型エラー）
+- ブランド型は `rehydrate` 関数内で `FooId.create(p.fooId)` を経由して再構築
+- decode 失敗時は `SystemError(DataIntegrityError)` を throw（relay worker が
+  per-row catch してログに流す）
 
 ### Repository Port
 
@@ -348,10 +369,12 @@ await processOutboxEvents(container, async (event) => {
 ポイント:
 - 単一プロセス前提
 - consumer は `event.id` ベースで冪等に書く（at-least-once delivery）
-- decode / dispatch 失敗は logger に出して row を pending のまま残す
+- decode / dispatch 失敗は logger に出して `attempts++` + exponential backoff で `next_attempt_at` を再スケジュール
+- `attempts` が `maxAttempts`（デフォルト 5）に達した行は `failed_at` をセットしてクワランティン化。`listPending` から外れるので poison row が hot path をブロックしない。再キックは `failed_at` / `next_attempt_at` を NULL に戻して `attempts` を 0 にリセット。
 
-新しいドメインを足したら、その events ファイルから `<domain>EventDecoders` を export し、
-`eventRelayWorker.ts` の `defaultEventDecoderRegistry` に spread で 1 行追加する：
+新しいドメインを足したら、`app/core/application/${domain}/eventDecoders.ts` から
+`<domain>EventDecoders` を export し、`eventRelayWorker.ts` の
+`defaultEventDecoderRegistry` に spread で 1 行追加する：
 
 ```ts
 export const defaultEventDecoderRegistry: EventDecoderRegistry = {

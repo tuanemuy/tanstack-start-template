@@ -47,6 +47,23 @@ export async function createContainer(
 }
 
 let _containerPromise: Promise<Container> | null = null;
+/**
+ * Process-wide singleton container.
+ *
+ * This template assumes a single long-running Node process (e.g. `pnpm start`)
+ * backed by a single SQLite database. The container holds:
+ * - a SQLite handle that is intentionally shared across requests (one
+ *   connection per process is the desired SQLite usage),
+ * - stateless ports (`clock`, `idGenerator`, `logger`) safe to share,
+ * - a UoW provider whose per-request transactional state is created inside
+ *   `UnitOfWorkProvider.run(fn)`, not on the provider itself.
+ *
+ * This pattern is **not** suitable for multi-tenant request isolation or
+ * serverless cold-start environments. For those, replace this module with
+ * an AsyncLocalStorage-scoped factory.
+ *
+ * Tests use a separate `FakeContainer` and never touch this singleton.
+ */
 export function getContainer(): Promise<Container> {
   if (_containerPromise !== null) return _containerPromise;
   _containerPromise = createContainer(readServerConfig());
