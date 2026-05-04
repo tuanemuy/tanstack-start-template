@@ -76,7 +76,10 @@ describe("DrizzleSqliteOutboxRepository.listPending (integration)", () => {
       .set({ processedAt: new Date() })
       .where(eq(schema.outboxEvents.id, a.id));
 
-    const pending = await container.outboxRepository.listPending(10);
+    const pending = await container.outboxRepository.listPending(
+      10,
+      new Date(),
+    );
     expect(pending).toHaveLength(1);
     expect(pending[0]?.id).toBe(b.id);
   });
@@ -93,7 +96,10 @@ describe("DrizzleSqliteOutboxRepository.listPending (integration)", () => {
       collectEvents([a, b, c]);
     });
 
-    const pending = await container.outboxRepository.listPending(10);
+    const pending = await container.outboxRepository.listPending(
+      10,
+      new Date(),
+    );
     // FakeIdGenerator hands out monotonically increasing ids, so insertion
     // order is preserved by the (createdAt, id) ordering even when
     // occurredAt ties.

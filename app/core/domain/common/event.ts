@@ -29,8 +29,11 @@ export type DomainEventBase<
 
 export type DomainEvent = DomainEventBase;
 
+// Decoders are looked up by `event.type` in the registry, so the type is
+// already known by construction at the call site — passing it again would
+// be redundant. The `type` literal lives inside `TEvent["type"]` and is
+// re-attached by the decoder body.
 export type EventDecoder<TEvent extends DomainEvent = DomainEvent> = (
-  type: string,
   payload: Record<string, unknown>,
   meta: Readonly<{ id: EventId; occurredAt: Date; aggregateId: string }>,
 ) => TEvent;

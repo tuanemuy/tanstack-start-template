@@ -1,8 +1,20 @@
-import { and, asc, inArray, isNotNull, isNull, lt } from "drizzle-orm";
+import {
+  and,
+  asc,
+  eq,
+  inArray,
+  isNotNull,
+  isNull,
+  lt,
+  lte,
+  or,
+  sql,
+} from "drizzle-orm";
 import { SystemError, SystemErrorCode } from "@/core/application/errors";
 import { isUuidV7 } from "@/core/application/ports/idGenerator";
 import type {
   OutboxEntry,
+  OutboxFailure,
   OutboxRepository,
 } from "@/core/application/ports/outboxRepository";
 import type { DomainEvent, EventId } from "@/core/domain/common/event";
@@ -25,6 +37,7 @@ function rowToEntry(row: OutboxEventRow): OutboxEntry {
     payload: row.payload as Record<string, unknown>,
     occurredAt: row.occurredAt,
     aggregateId: row.aggregateId,
+    attempts: row.attempts,
   };
 }
 
@@ -46,12 +59,21 @@ export class DrizzleSqliteOutboxRepository implements OutboxRepository {
     );
   }
 
-  async listPending(limit: number): Promise<readonly OutboxEntry[]> {
+  async listPending(limit: number, now: Date): Promise<readonly OutboxEntry[]> {
     return mapDbError("Failed to list pending outbox events", async () => {
       const rows = await this.executor
         .select()
         .from(outboxEvents)
-        .where(isNull(outboxEvents.processedAt))
+        .where(
+          and(
+            isNull(outboxEvents.processedAt),
+            isNull(outboxEvents.failedAt),
+            or(
+              isNull(outboxEvents.nextAttemptAt),
+              lte(outboxEvents.nextAttemptAt, now),
+            ),
+          ),
+        )
         .orderBy(asc(outboxEvents.createdAt), asc(outboxEvents.id))
         .limit(limit);
       return rows.map(rowToEntry);
@@ -65,12 +87,39 @@ export class DrizzleSqliteOutboxRepository implements OutboxRepository {
         .update(outboxEvents)
         .set({ processedAt: now })
         .where(
-          and(
-            inArray(outboxEvents.id, ids as readonly string[] as string[]),
-            isNull(outboxEvents.processedAt),
-          ),
+          and(inArray(outboxEvents.id, ids), isNull(outboxEvents.processedAt)),
         ),
     );
+  }
+
+  async markFailed(
+    failures: readonly OutboxFailure[],
+    now: Date,
+  ): Promise<void> {
+    if (failures.length === 0) return;
+    await mapDbError("Failed to mark outbox events as failed", async () => {
+      // One UPDATE per row: per-row `error` and `nextAttemptAt` differ, and
+      // batching them into a single CASE expression buys little for the
+      // batch sizes the relay worker hands us. Stays inside the surrounding
+      // executor (transactional when the caller wrapped it).
+      for (const failure of failures) {
+        await this.executor
+          .update(outboxEvents)
+          .set({
+            attempts: sql`${outboxEvents.attempts} + 1`,
+            lastError: failure.error,
+            nextAttemptAt: failure.nextAttemptAt,
+            failedAt: failure.nextAttemptAt === null ? now : null,
+          })
+          .where(
+            and(
+              eq(outboxEvents.id, failure.id),
+              isNull(outboxEvents.processedAt),
+              isNull(outboxEvents.failedAt),
+            ),
+          );
+      }
+    });
   }
 
   async pruneProcessed(olderThan: Date): Promise<{ deleted: number }> {

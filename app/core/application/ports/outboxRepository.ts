@@ -9,6 +9,19 @@ export type OutboxEntry = Readonly<{
   payload: Record<string, unknown>;
   occurredAt: Date;
   aggregateId: string;
+  // Number of dispatch/decode failures the relay worker has already
+  // recorded for this row. Used to drive backoff and quarantine decisions.
+  attempts: number;
+}>;
+
+// Per-row failure update applied after a decode or dispatch error.
+// `nextAttemptAt === null` means the row has exhausted its retry budget
+// and should be quarantined (excluded from `listPending`); a non-null
+// value schedules the next retry.
+export type OutboxFailure = Readonly<{
+  id: string;
+  error: string;
+  nextAttemptAt: Date | null;
 }>;
 
 export interface OutboxRepository {
@@ -17,9 +30,16 @@ export interface OutboxRepository {
   // the application `Clock` so a fake clock freezes outbox `createdAt` too.
   save(events: readonly DomainEvent[], now: Date): Promise<void>;
 
-  listPending(limit: number): Promise<readonly OutboxEntry[]>;
+  // Returns rows that are unprocessed, not quarantined, and whose
+  // scheduled `nextAttemptAt` (if any) has elapsed by `now`.
+  listPending(limit: number, now: Date): Promise<readonly OutboxEntry[]>;
 
   markProcessed(ids: readonly EventId[], now: Date): Promise<void>;
+
+  // Increments `attempts`, records the latest error, and either schedules
+  // the next retry (`nextAttemptAt`) or quarantines the row by stamping
+  // `failedAt = now` (when `nextAttemptAt === null`).
+  markFailed(failures: readonly OutboxFailure[], now: Date): Promise<void>;
 
   pruneProcessed(olderThan: Date): Promise<{ deleted: number }>;
 }

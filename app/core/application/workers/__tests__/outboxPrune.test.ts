@@ -38,6 +38,7 @@ function makeStubOutboxRepository({
     save: vi.fn(async () => {}),
     listPending: vi.fn(async () => []),
     markProcessed: vi.fn(async () => {}),
+    markFailed: vi.fn(async () => {}),
     pruneProcessed: vi.fn(async (olderThan: Date) => {
       pruneSpy?.(olderThan);
       return { deleted };

@@ -277,6 +277,138 @@ describe("processOutboxEvents", () => {
     expect(dispatch).not.toHaveBeenCalled();
   });
 
+  it("schedules a backed-off retry after a dispatch failure", async () => {
+    const container = getContainer();
+    const id = nextTodoId();
+    const title = TodoTitle.create("retry-backoff");
+    await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
+      collectEvents([TodoEvents.created(nextId(), id, title, T0)]);
+    });
+
+    const dispatch: EventDispatcher = vi.fn(async () => {
+      throw new Error("transient downstream blip");
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await processOutboxEvents(container, dispatch, {
+      backoffMs: () => 60_000,
+    });
+    errorSpy.mockRestore();
+
+    const rows = await container.db.select().from(schema.outboxEvents);
+    const row = rows[0];
+    if (!row) return;
+    expect(row.attempts).toBe(1);
+    expect(row.processedAt).toBeNull();
+    expect(row.failedAt).toBeNull();
+    expect(row.lastError).toMatch(/transient downstream blip/);
+    expect(row.nextAttemptAt).toBeInstanceOf(Date);
+  });
+
+  it("excludes rows whose nextAttemptAt is still in the future from listPending", async () => {
+    const container = getContainer();
+    const id = nextTodoId();
+    const title = TodoTitle.create("not-yet");
+    await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
+      collectEvents([TodoEvents.created(nextId(), id, title, T0)]);
+    });
+
+    const failing: EventDispatcher = vi.fn(async () => {
+      throw new Error("first failure");
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await processOutboxEvents(container, failing, {
+      backoffMs: () => 60_000,
+    });
+
+    // Second tick immediately after: row is still cooling off, so the
+    // worker should skip it without ever calling dispatch again.
+    const followUp: EventDispatcher = vi.fn(async () => {});
+    const { processed } = await processOutboxEvents(container, followUp, {
+      backoffMs: () => 60_000,
+    });
+    errorSpy.mockRestore();
+
+    expect(processed).toBe(0);
+    expect(followUp).not.toHaveBeenCalled();
+  });
+
+  it("quarantines a row once it crosses the maxAttempts threshold", async () => {
+    const container = getContainer();
+    const logger = new FakeLogger();
+    const containerWithLogger = { ...container, logger };
+    const id = nextTodoId();
+    const title = TodoTitle.create("poison");
+    await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
+      collectEvents([TodoEvents.created(nextId(), id, title, T0)]);
+    });
+
+    // Pre-bump the row to one attempt below the cap so a single failing
+    // tick is enough to trip the quarantine branch.
+    await container.db.update(schema.outboxEvents).set({ attempts: 1 });
+
+    const dispatch: EventDispatcher = vi.fn(async () => {
+      throw new Error("still angry");
+    });
+    await processOutboxEvents(containerWithLogger, dispatch, {
+      maxAttempts: 2,
+      backoffMs: () => 60_000,
+    });
+
+    const rows = await container.db.select().from(schema.outboxEvents);
+    const row = rows[0];
+    if (!row) return;
+    expect(row.attempts).toBe(2);
+    expect(row.failedAt).toBeInstanceOf(Date);
+    expect(row.nextAttemptAt).toBeNull();
+    expect(row.processedAt).toBeNull();
+
+    const errors = logger.byLevel("error");
+    expect(errors.some((e) => /quarantining/.test(e.message))).toBe(true);
+
+    // A subsequent tick must NOT re-pick a quarantined row.
+    const followUp: EventDispatcher = vi.fn(async () => {});
+    const { processed } = await processOutboxEvents(
+      containerWithLogger,
+      followUp,
+    );
+    expect(processed).toBe(0);
+    expect(followUp).not.toHaveBeenCalled();
+  });
+
+  it("quarantines a poison decoder row after the configured attempts", async () => {
+    const container = getContainer();
+    const poisonId = "01950000-0000-7000-8000-000000000abc";
+    await container.db.insert(schema.outboxEvents).values({
+      id: poisonId,
+      eventType: "mystery.happened",
+      aggregateId: poisonId,
+      payload: {},
+      occurredAt: new Date(0),
+      createdAt: new Date(0),
+    });
+
+    const dispatch: EventDispatcher = vi.fn(async () => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    // First tick: bumps attempts to 1, schedules retry.
+    await processOutboxEvents(container, dispatch, {
+      maxAttempts: 2,
+      backoffMs: () => 0,
+    });
+    // Second tick: bumps to 2 → quarantine.
+    await processOutboxEvents(container, dispatch, {
+      maxAttempts: 2,
+      backoffMs: () => 0,
+    });
+    errorSpy.mockRestore();
+
+    const rows = await container.db.select().from(schema.outboxEvents);
+    const row = rows[0];
+    if (!row) return;
+    expect(row.attempts).toBe(2);
+    expect(row.failedAt).toBeInstanceOf(Date);
+    expect(row.lastError).toMatch(/No decoder registered/);
+  });
+
   it("matches by full event type, not by domain prefix", async () => {
     // Lookup is keyed on the full `event.type` (e.g. `todo.created`), not on
     // the `"todo"` prefix. A registry that only holds the prefix should NOT
