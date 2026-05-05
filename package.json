@@ -18,8 +18,11 @@
     "test:domain-layer": "vitest run app/core/domain/${TEST_DOMAIN}",
     "db:generate": "drizzle-kit generate --config=./app/core/adapters/drizzleSqlite/drizzle.config.ts",
     "db:migrate": "drizzle-kit migrate --config=./app/core/adapters/drizzleSqlite/drizzle.config.ts",
+    "db:push": "drizzle-kit push --config=./app/core/adapters/drizzleSqlite/drizzle.config.ts",
     "db:studio": "drizzle-kit studio --host 0.0.0.0 --config=./app/core/adapters/drizzleSqlite/drizzle.config.ts",
-    "db:seed": "tsx ./app/core/adapters/drizzleSqlite/seed.ts"
+    "db:drop": "tsx ./app/core/adapters/drizzleSqlite/drop.ts",
+    "db:seed": "tsx ./app/core/adapters/drizzleSqlite/seed.ts",
+    "db:reset": "pnpm db:drop && pnpm db:push && pnpm db:seed"
   },
   "dependencies": {
     "@libsql/client": "^0.17.0",
