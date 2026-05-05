@@ -34,7 +34,7 @@ function rowToEntry(row: OutboxEventRow): OutboxEntry {
   return {
     id: row.id,
     type: row.eventType,
-    payload: row.payload as Record<string, unknown>,
+    payload: row.payload,
     occurredAt: row.occurredAt,
     aggregateId: row.aggregateId,
     attempts: row.attempts,

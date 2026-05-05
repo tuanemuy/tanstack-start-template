@@ -3,10 +3,13 @@ import type { DomainEvent, EventId } from "@/core/domain/common/event";
 // `id` stays as a raw string here: it is the at-rest wire representation
 // from the outbox row, validated into `EventId` only when the worker hands
 // it to a decoder (so an invalid row fails per-event, not for the batch).
+// `payload` is `unknown` because the adapter has no way to prove the JSON
+// it read from disk matches any shape; the decoder validates it per-row
+// via zod, and a mismatch flows through the per-row failure path.
 export type OutboxEntry = Readonly<{
   id: string;
   type: string;
-  payload: Record<string, unknown>;
+  payload: unknown;
   occurredAt: Date;
   aggregateId: string;
   // Number of dispatch/decode failures the relay worker has already
