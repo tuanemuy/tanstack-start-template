@@ -3,6 +3,19 @@ import {
   type SerializedError,
 } from "@/core/presentation/errorResponse";
 
+function renderConflictMessage(code: string | null): string {
+  switch (code) {
+    case "OPTIMISTIC_LOCK_FAILURE":
+      return "他の操作と競合しました。もう一度お試しください";
+    case "UNIQUE_VIOLATION":
+      return "すでに登録されています";
+    case "FOREIGN_KEY_VIOLATION":
+      return "依存関係があるため操作できません";
+    default:
+      return "他の操作と競合しました。もう一度お試しください";
+  }
+}
+
 function formatFieldErrors(
   fieldErrors: Readonly<Record<string, readonly string[]>>,
 ): string | null {
@@ -22,7 +35,7 @@ export function renderErrorMessage(error: SerializedError): string {
     case "notFound":
       return "対象が見つかりません";
     case "conflict":
-      return "他の操作と競合しました。もう一度お試しください";
+      return renderConflictMessage(error.code);
     case "validation": {
       if (error.fieldErrors !== undefined) {
         const formatted = formatFieldErrors(error.fieldErrors);
