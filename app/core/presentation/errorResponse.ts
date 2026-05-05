@@ -52,31 +52,42 @@ function isSerializedError(
 
 const SYSTEM_ERROR_PUBLIC_MESSAGE = "System error";
 
-function redactSystem(serialized: SerializedError): SerializedError {
-  return serialized.kind === "system"
-    ? { ...serialized, message: SYSTEM_ERROR_PUBLIC_MESSAGE }
-    : serialized;
-}
-
 function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === "string") return error;
   return "Unexpected error";
 }
 
+// Raw structural projection. Kept un-redacted so server-side observers
+// (logger, tracing) can see the original `code` / `message`. The transport
+// boundary (`errorResponseMiddleware`) is responsible for running
+// `redactForClient` exactly once before the value crosses to the client.
 export function serializeError(error: unknown): SerializedError {
   if (!isSerializableError(error)) {
     return { kind: "unknown", code: null, message: errorMessage(error) };
   }
   const serialized = error.toSerialized();
   if (isSerializedError(serialized)) {
-    return redactSystem(serialized);
+    return serialized;
   }
   return {
     kind: "unknown",
     code: serialized.code,
     message: serialized.message,
   };
+}
+
+// Strips server-internal detail before a `SerializedError` crosses the
+// transport boundary. `system` and `unknown` can carry messages / codes that
+// hint at internal layering (driver names, table names, network targets);
+// exposing them to clients adds reconnaissance value with no UX upside.
+// Apply at the response boundary only — server-side logs must use the raw
+// form so operators retain the original code / message for triage.
+export function redactForClient(serialized: SerializedError): SerializedError {
+  if (serialized.kind === "system" || serialized.kind === "unknown") {
+    return { ...serialized, code: null, message: SYSTEM_ERROR_PUBLIC_MESSAGE };
+  }
+  return serialized;
 }
 
 // `null` is the intentional fall-through to the framework's default 500.

@@ -5,9 +5,6 @@ import {
   type SerializedValidationError,
 } from "./errorResponse";
 
-// Transport-boundary validation error. Owned by presentation because the only
-// throw site is `validateInput` (Zod against incoming wire payloads). Business
-// invariants are enforced by `BusinessRuleError` inside value-object factories.
 class InputValidationError extends CodedError {
   override readonly name = "InputValidationError";
 
@@ -26,10 +23,9 @@ class InputValidationError extends CodedError {
   }
 }
 
-// Structural / DoS guard at the transport boundary. Business-rule validation
-// belongs in value-object factories — keeping this scope narrow avoids
-// dragging Zod through the application/domain layers and keeps it safe to
-// run inside the client bundle that `inputValidator` enters.
+// Structural / DoS guard at the transport boundary. Business invariants live in
+// value-object factories — keeping Zod out of application/domain also keeps
+// this safe to run inside the client bundle `inputValidator` enters.
 export function validateInput<T extends ZodType>(schema: T) {
   return (input: unknown): z.infer<T> => {
     const parsed = schema.safeParse(input);
