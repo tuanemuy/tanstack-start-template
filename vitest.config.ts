@@ -18,6 +18,11 @@ export default defineConfig({
     // Workers isolate via `vitest.config.integration.ts` (`pnpm test:d1`).
     // Excluded here because Node-pool execution cannot resolve
     // `cloudflare:test`.
-    exclude: ["**/node_modules/**", "**/dist/**", "app/core/adapters/d1/**"],
+    exclude: [
+      "**/node_modules/**",
+      "**/dist/**",
+      "app/core/adapters/d1/**",
+      "app/worker/**",
+    ],
   },
 });

@@ -26,14 +26,19 @@ export default defineConfig({
         compatibilityDate: "2026-01-01",
         compatibilityFlags: ["nodejs_compat"],
         d1Databases: ["DB"],
+        queueProducers: { EVENTS_QUEUE: "tanstack-start-template-events" },
         bindings: {
           MIGRATIONS: migrations,
+          APP_URL: "http://localhost:8787",
         },
       },
     }),
   ],
   test: {
-    include: ["app/core/adapters/d1/**/*.integration.test.ts"],
+    include: [
+      "app/core/adapters/d1/**/*.integration.test.ts",
+      "app/worker/**/*.integration.test.ts",
+    ],
     setupFiles: ["app/core/adapters/d1/__tests__/setup.ts"],
   },
 });
