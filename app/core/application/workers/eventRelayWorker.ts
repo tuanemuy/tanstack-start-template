@@ -110,6 +110,14 @@ export async function processOutboxEvents(
   };
 
   type DecodedRow = { id: EventId; entry: OutboxEntry; event: DomainEvent };
+  type DispatchOutcome =
+    | { readonly kind: "success"; readonly id: EventId }
+    | {
+        readonly kind: "failure";
+        readonly row: DecodedRow;
+        readonly error: unknown;
+      };
+
   const decoded: DecodedRow[] = [];
   for (const entry of entries) {
     try {
@@ -124,28 +132,36 @@ export async function processOutboxEvents(
     }
   }
 
+  const outcomes: DispatchOutcome[] =
+    decoded.length === 0
+      ? []
+      : (
+          await Promise.allSettled(decoded.map((row) => dispatch(row.event)))
+        ).flatMap((result, index): DispatchOutcome[] => {
+          const row = decoded[index];
+          if (!row) return [];
+          return [
+            result.status === "fulfilled"
+              ? { kind: "success", id: row.id }
+              : { kind: "failure", row, error: result.reason },
+          ];
+        });
+
   const dispatchedIds: EventId[] = [];
-  if (decoded.length > 0) {
-    const results = await Promise.allSettled(
-      decoded.map((row) => dispatch(row.event)),
+  for (const outcome of outcomes) {
+    if (outcome.kind === "success") {
+      dispatchedIds.push(outcome.id);
+      continue;
+    }
+    logger.error(
+      `[outbox] dispatch failed for event ${outcome.row.event.id} (${outcome.row.event.type})`,
+      {
+        eventId: outcome.row.event.id,
+        eventType: outcome.row.event.type,
+        cause: outcome.error,
+      },
     );
-    results.forEach((result, index) => {
-      const row = decoded[index];
-      if (!row) return;
-      if (result.status === "fulfilled") {
-        dispatchedIds.push(row.id);
-      } else {
-        logger.error(
-          `[outbox] dispatch failed for event ${row.event.id} (${row.event.type})`,
-          {
-            eventId: row.event.id,
-            eventType: row.event.type,
-            cause: result.reason,
-          },
-        );
-        failures.push(planFailure(row.entry, result.reason));
-      }
-    });
+    failures.push(planFailure(outcome.row.entry, outcome.error));
   }
 
   if (failures.length > 0) {
