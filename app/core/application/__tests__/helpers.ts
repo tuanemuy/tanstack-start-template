@@ -2,8 +2,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createClient } from "@libsql/client";
+import { pushSQLiteSchema } from "drizzle-kit/api";
 import { drizzle } from "drizzle-orm/libsql";
-import { migrate } from "drizzle-orm/libsql/migrator";
 import { afterEach, beforeEach } from "vitest";
 import { content } from "@/config";
 import { DrizzleSqliteOutboxRepository } from "@/core/adapters/drizzleSqlite/repositories/outboxRepository";
@@ -13,8 +13,6 @@ import type { Container } from "@/core/application/di/types";
 import { SystemClock } from "@/core/application/ports/clock";
 import { UuidV7Generator } from "@/core/application/ports/idGenerator";
 import { ConsoleLogger } from "@/core/application/ports/logger";
-
-const MIGRATIONS_FOLDER = "app/core/adapters/drizzleSqlite/migrations";
 
 export type TestDatabase = ReturnType<typeof drizzle<typeof schema>>;
 export type TestDatabaseWithCleanup = {
@@ -30,7 +28,8 @@ export async function createTestDatabase(): Promise<TestDatabaseWithCleanup> {
   const url = `file:${join(dir, "db.sqlite")}`;
   const client = createClient({ url });
   const db = drizzle(client, { schema });
-  await migrate(db, { migrationsFolder: MIGRATIONS_FOLDER });
+  const { apply } = await pushSQLiteSchema(schema, db);
+  await apply();
 
   return {
     db,
