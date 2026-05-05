@@ -24,9 +24,6 @@
     ],
     "rules": {
       "recommended": true,
-      "security": {
-        "noDangerouslySetInnerHtml": "off"
-      },
       "nursery": {},
       "style": {
         "noParameterAssign": "error",
