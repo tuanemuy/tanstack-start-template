@@ -3,6 +3,10 @@
 このテンプレートのバックエンド層は **ヘキサゴナル + DDD + Outbox パターン** で構成されている。
 Todo ドメインの実装が canonical example。新しいドメインを足すときも同じ構造をなぞれば良い。
 
+> **このドキュメントの位置づけ**: 原則 / 抽象概念の出典は `CLAUDE.md`。本ドキュメントは
+> 「その原則を具体的にどう書くか」の写経用パターン集。原則の "なぜ" を辿るときは
+> CLAUDE.md、同じ構造を別ドメインに展開するときはここ。両方に同じ説明を重複させない。
+
 ## レイヤー責務一覧
 
 | レイヤー | 責務 | 依存方向 |
@@ -18,7 +22,7 @@ Todo ドメインの実装が canonical example。新しいドメインを足す
 app/core/
 ├── domain/
 │   ├── common/
-│   │   ├── event.ts               DomainEventBase, EventDecoder, WithEvents
+│   │   ├── event.ts               DomainEventBase, EventDraft, EventDecoder, WithEventDrafts
 │   │   └── pagination.ts
 │   ├── error.ts                   BusinessRuleError
 │   └── ${domain}/
@@ -35,6 +39,8 @@ app/core/
 │   │   ├── logger.ts
 │   │   └── outboxRepository.ts
 │   ├── errors/index.ts            NotFound / Conflict / Validation / SystemError + helpers
+│   ├── events/
+│   │   └── buildDecoder.ts
 │   ├── execution/unitOfWork.ts    UnitOfWorkContext がリポジトリスロットを直接 enumerate
 │   ├── workers/
 │   │   ├── eventRelayWorker.ts
@@ -101,30 +107,29 @@ export type Foo = ActiveFoo | CompletedFoo;
 
 export const Foo = {
   create: (
-    params: { id: string; eventId: EventId; /* ...domain inputs... */ },
+    params: { id: string; /* ...domain inputs... */ },
     now: Date,
-  ): WithEvents<ActiveFoo, FooEvent> => {
+  ): WithEventDrafts<ActiveFoo, FooEvent> => {
     const id = FooId.create(params.id);
     const foo: ActiveFoo = { ...params, id, version: 0, createdAt: now, updatedAt: now };
-    return { entity: foo, events: [FooEvents.created(params.eventId, foo.id, now)] };
+    return { entity: foo, eventDrafts: [FooEvents.created(foo.id, now)] };
   },
 
   complete: (
     foo: ActiveFoo,
-    eventId: EventId,
     now: Date,
-  ): WithEvents<CompletedFoo, FooEvent> => {
+  ): WithEventDrafts<CompletedFoo, FooEvent> => {
     const next: CompletedFoo = { ...foo, status: "completed", version: foo.version + 1, updatedAt: now };
-    return { entity: next, events: [FooEvents.completed(eventId, next.id, now)] };
+    return { entity: next, eventDrafts: [FooEvents.completed(next.id, now)] };
   },
 };
 ```
 
 ポイント:
 - 状態を discriminated union で表現 → 不正な遷移は型エラー
-- `Todo.create` のように **VO 生成は entity factory に集約**（application 層は `id` を raw string、`eventId` は `EventId` brand で渡す）
-- `now: Date` と必要な `id` / `eventId` を引数で受ける（domain は `new Date()` も `uuidv7()` も呼ばない）
-- 状態遷移は `WithEvents<TEntity, TEvent>` を返してイベントとセットで扱う
+- `Todo.create` のように **VO 生成は entity factory に集約**（application 層は `id` を raw string で渡す）
+- `now: Date` と必要な `id` を引数で受ける（domain は `new Date()` も `uuidv7()` も呼ばない）
+- 状態遷移は `WithEventDrafts<TEntity, TEvent>` を返して **identity-less な draft** とセットで扱う。`EventId` の付与は application 層責務（`attachEventIds`）
 - 削除のように後続エンティティが無い操作は domain にメソッドを置かず、usecase が
   `FooEvents.deleted(...)` を直接 emit する
 
@@ -139,16 +144,14 @@ export type FooCreatedEvent = DomainEventBase<
 export type FooEvent = FooCreatedEvent | FooDeletedEvent;
 
 export const FooEvents = {
-  created: (id: EventId, fooId: FooId, occurredAt: Date): FooCreatedEvent => ({
-    id,
+  created: (fooId: FooId, occurredAt: Date): EventDraft<FooCreatedEvent> => ({
     type: "foo.created",
     payload: { fooId },
     occurredAt,
     aggregateId: fooId,
   }),
 
-  deleted: (id: EventId, fooId: FooId, occurredAt: Date): FooDeletedEvent => ({
-    id,
+  deleted: (fooId: FooId, occurredAt: Date): EventDraft<FooDeletedEvent> => ({
     type: "foo.deleted",
     payload: { fooId },
     occurredAt,
@@ -158,7 +161,8 @@ export const FooEvents = {
 ```
 
 ポイント:
-- factory は `id: EventId` を引数で受ける（usecase が `EventId.create(container.idGenerator.next())` でミントして渡す）
+- factory は **identity-less な draft** を返す。`EventId` の付与は **UoW 内部** で `idGenerator` 経由でミントされる（usecase は `collectEvents(drafts)` を呼ぶだけ）
+- これによりドメイン関数の引数から `EventId` が消え、ID 生成責務は UoW adapter 一箇所に集約される
 - domain には event 型と factory のみを置き、decoder は application 層へ（依存方向を inward に保つ）
 
 #### Event Decoder（application 層）
@@ -245,17 +249,16 @@ export async function createFoo({
 }: ServiceArgs<CreateFooInput>): Promise<CreateFooOutput> {
   const now = container.clock.now();
   const id = container.idGenerator.next();
-  const eventId = EventId.create(container.idGenerator.next());
 
-  const { entity: foo, events } = Foo.create(
-    { id, eventId, /* ...input fields... */ },
+  const { entity: foo, eventDrafts } = Foo.create(
+    { id, /* ...input fields... */ },
     now,
   );
 
   await container.unitOfWorkProvider.run(
     async ({ fooRepository, collectEvents }) => {
       await fooRepository.save(foo);
-      collectEvents(events);
+      collectEvents(eventDrafts);
     },
   );
 
@@ -270,22 +273,22 @@ export async function deleteFoo({
   input,
 }: ServiceArgs<DeleteFooInput>): Promise<void> {
   const now = container.clock.now();
-  const eventId = EventId.create(container.idGenerator.next());
 
   await container.unitOfWorkProvider.run(
     async ({ fooRepository, collectEvents }) => {
       const current = await fooRepository.findById(input.id);
       if (!current) throw new NotFoundError("FOO_NOT_FOUND", `...`);
       await fooRepository.delete(current.id, current.version);
-      collectEvents([FooEvents.deleted(eventId, current.id, now)]);
+      collectEvents([FooEvents.deleted(current.id, now)]);
     },
   );
 }
 ```
 
 ポイント:
-- `now` / `id` / `eventId` を usecase 冒頭で resolve
+- `now` / `id` を usecase 冒頭で resolve。`EventId` は **UoW が `collectEvents` 内部で** `idGenerator` 経由でミントするので、usecase は気にしなくていい
 - VO 生成点は entity factory / adapter 再水和 / event decoder の 3 箇所だけ
+- ドメイン関数は identity-less な draft を返し、`collectEvents(drafts)` でそのまま流すだけ。型引数の明示も不要
 - `collectEvents` で Outbox パターンに乗せる（同一 tx で flush）
 - 戻り値は DTO（`view.ts` 内の helper で射影）
 
@@ -299,7 +302,11 @@ export async function createContainer(config: ServerConfig): Promise<Container> 
   const db = await getDatabase(config.databaseUrl);
   return {
     config: { appUrl: config.appUrl },
-    unitOfWorkProvider: new DrizzleSqliteUnitOfWorkProvider(db, SystemClock),
+    unitOfWorkProvider: new DrizzleSqliteUnitOfWorkProvider(
+      db,
+      SystemClock,
+      UuidV7Generator,
+    ),
     outboxRepository: new DrizzleSqliteOutboxRepository(db),
     clock: SystemClock,
     idGenerator: UuidV7Generator,
@@ -307,6 +314,11 @@ export async function createContainer(config: ServerConfig): Promise<Container> 
   };
 }
 ```
+
+`UnitOfWorkProvider` には `idGenerator` を渡す。これは `collectEvents` が
+draft を outbox に flush する際に `EventId` をミントするのに使う。Container
+本体の `idGenerator` と同じ instance を渡せば、テストで Fake に差し替えるとき
+にも 1 箇所で済む。
 
 env を読むパスは `readServerConfig()` に集約する。production 起動時は同じ
 ファイル内で eager validate されるが、out-of-band な entry point（`seed.ts` など）
@@ -366,11 +378,37 @@ await processOutboxEvents(container, async (event) => {
 }, { batchSize: 100 });
 ```
 
-ポイント:
-- 単一プロセス前提
-- consumer は `event.id` ベースで冪等に書く（at-least-once delivery）
-- decode / dispatch 失敗は logger に出して `attempts++` + exponential backoff で `next_attempt_at` を再スケジュール
-- `attempts` が `maxAttempts`（デフォルト 5）に達した行は `failed_at` をセットしてクワランティン化。`listPending` から外れるので poison row が hot path をブロックしない。再キックは `failed_at` / `next_attempt_at` を NULL に戻して `attempts` を 0 にリセット。
+### Delivery contract（consumer 実装で守るべき落とし穴）
+
+CLAUDE.md key concepts の通り、Outbox は **at-least-once delivery / ordering なし** で
+動く。consumer はその前提で書く。原則の "なぜ" は CLAUDE.md、ここでは「実装で何を
+守るべきか」を展開する。
+
+- **At-least-once（同じ event が 2 回以上届く）** — relay worker は「dispatch 成功 →
+  outbox 行の `processed_at` 更新」の順で動く。dispatch は通ったが update 直前で
+  プロセスが落ちると同じ event が次のラウンドで再 dispatch される。consumer は
+  `event.id` ベースの dedupe（処理済み id テーブル / unique index）か、natural key の
+  upsert で **同じ event を N 回処理しても結果が変わらない** ように書く。「副作用を
+  1 回だけ起こす」前提のコード（外部送信・課金・通知の "送りっぱなし"）はそのまま
+  だと at-most-once が崩れた瞬間に重複する。
+- **Ordering なし（順序保証ゼロ）** — 各行は `next_attempt_at`（backoff + jitter で
+  ばらける）と `attempts` の状態で個別に再スケジュールされるため、`foo.created` の
+  前に `foo.updated` / `foo.deleted` が届く並びは普通に起こる。consumer 側で
+  「`deleted` を見たら `created` も見ているはず」のような状態遷移を仮定したロジックは
+  書かない。順序が必要なら **aggregate の現在状態を read してから判断する** か、
+  event payload に必要な状態を全部載せて self-contained にする。
+- **Quarantine（poison row 隔離）** — `attempts` が `maxAttempts`（デフォルト 5）に
+  達した行は `failed_at` をセットしてクワランティン化される。partial index で
+  `listPending` から外れるので poison row が hot path をブロックしない。再キックは
+  `failed_at` / `next_attempt_at` を NULL に戻して `attempts` を 0 リセット。
+  decode 失敗（payload schema 不一致）も同じ retry path に乗る — schema 修正後に
+  再キックして再 dispatch される。
+
+### ポイント
+
+- 単一プロセス前提（複数プロセスで同じ outbox を回すと競合する設計ではない）
+- decode / dispatch 失敗は logger に出して `attempts++` + exponential backoff で
+  `next_attempt_at` を再スケジュール
 
 新しいドメインを足したら、`app/core/application/${domain}/eventDecoders.ts` から
 `<domain>EventDecoders` を export し、`eventRelayWorker.ts` の

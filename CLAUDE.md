@@ -54,6 +54,13 @@ Each of these is enforced in code and documented in library-level JSDoc at the r
 - HTTP status mapping is presentation-only, driven by the serialized `kind`. Errors themselves do not carry transport concerns.
 - Avoid broad `try / catch` in ordinary application logic. Use it only at explicit boundaries (server-function serialization, per-row tolerance in workers).
 
+### Cross-layer catch policy
+
+- **adapter → application**: adapters catch driver-specific errors and translate them into the shared error contracts. Application code never sees provider-native errors.
+- **domain → application**: domain errors flow through usecases unchanged. Do not re-translate at the usecase boundary — invariant violations and transport-shape violations are intentionally distinct kinds.
+- **application → presentation**: the server-function boundary catches and serializes any thrown error structurally via its `kind`-tagged form. Usecases themselves do not serialize.
+- **worker → root**: workers wrap per-row processing in `try / catch` for partial-failure tolerance. This is the only place a broad `catch` is expected in application-layer code.
+
 ## Examples
 
-`docs/backend_implementation_example.md`, `docs/frontend_implementation_example.md`.
+`docs/backend_implementation_example.md`, `docs/frontend_implementation_example.md`. このファイルは原則 / 抽象概念の出典、examples は「具体的にどう書くか」の写経用パターン集。両方に同じ説明を重複させない方針。
