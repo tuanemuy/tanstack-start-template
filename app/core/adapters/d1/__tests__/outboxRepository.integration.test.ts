@@ -23,7 +23,7 @@ import { createTestContainer } from "./helpers";
  * focused on outbox semantics rather than UoW plumbing, the helper
  * below builds a one-off `PendingBatch`, calls `save`, and flushes —
  * giving the test full control over event ids and timestamps the way
- * the libSQL adapter's tests do.
+ * giving the test full control over event ids and timestamps.
  */
 
 let counter = 0;

@@ -1,6 +1,6 @@
 import { asc, isNull } from "drizzle-orm";
 import { describe, expect, it, vi } from "vitest";
-import * as schema from "@/core/adapters/drizzleSqlite/schema";
+import * as schema from "@/core/adapters/d1/schema";
 import { TodoEvents } from "@/core/domain/todo/events";
 import { TodoId, TodoTitle } from "@/core/domain/todo/valueObject";
 import { FakeIdGenerator, FakeLogger } from "../../__tests__/fakes";

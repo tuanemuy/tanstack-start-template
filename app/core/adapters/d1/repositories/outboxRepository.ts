@@ -93,10 +93,11 @@ export class D1OutboxRepository implements OutboxRepository {
     const { limit, now, workerId, leaseMs } = args;
     const claimCutoff = new Date(now.getTime() - leaseMs);
     return mapDbError("Failed to claim pending outbox events", async () => {
-      // Same shape as the libSQL adapter: inner SELECT picks eligible
-      // rows, outer UPDATE stamps the claim. SQLite serializes writes
-      // at the database level (also true on D1 primary), so two
-      // workers racing here cannot both UPDATE the same row.
+      // Inner SELECT picks eligible rows, outer UPDATE stamps the
+      // claim. D1's primary serializes writes at the database level,
+      // so two workers racing here cannot both UPDATE the same row —
+      // the loser's WHERE no longer matches because `claimed_at` has
+      // already been advanced.
       const eligibleIds = this.db
         .select({ id: outboxEvents.id })
         .from(outboxEvents)

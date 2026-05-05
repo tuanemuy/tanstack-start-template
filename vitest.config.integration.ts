@@ -6,11 +6,10 @@ import {
 import tsconfigPaths from "vite-tsconfig-paths";
 import { defineConfig } from "vitest/config";
 
-// D1 integration tests run inside a Workers isolate (Miniflare) with a
-// real `env.DB` D1 binding backed by an in-memory SQLite database. The
-// libSQL-based integration tests under `app/core/adapters/drizzleSqlite`
-// continue to run via the existing `vitest.config.ts` and are excluded
-// here.
+// Integration tests run inside a Workers isolate (Miniflare) with a
+// real `env.DB` D1 binding backed by an in-memory SQLite database.
+// Anything matching `*.integration.test.ts` is included; pure unit
+// tests run via the Node-pool `vitest.config.ts` instead.
 const migrationsPath = path.join(
   import.meta.dirname,
   "app/core/adapters/d1/migrations",
@@ -35,10 +34,7 @@ export default defineConfig({
     }),
   ],
   test: {
-    include: [
-      "app/core/adapters/d1/**/*.integration.test.ts",
-      "app/worker/**/*.integration.test.ts",
-    ],
+    include: ["app/**/*.integration.test.ts"],
     setupFiles: ["app/core/adapters/d1/__tests__/setup.ts"],
   },
 });

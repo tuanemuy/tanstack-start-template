@@ -9,7 +9,12 @@
 # server-side code that imports `node:async_hooks`, `node:stream`,
 # `node:crypto`, and `node:util`.
 name = "tanstack-start-template"
-main = "app/worker.ts"
+# `pnpm deploy` runs `vite build` first; `dist/server/server.js` is the
+# pre-bundled TanStack Start server entry (with all `tanstack-start-*:v`
+# virtual modules already resolved). Pointing wrangler at the built
+# artifact rather than `app/worker.ts` avoids re-bundling and the
+# resulting "Could not resolve tanstack-start-manifest:v" failures.
+main = "dist/server/server.js"
 compatibility_date = "2026-01-01"
 compatibility_flags = ["nodejs_compat"]
 

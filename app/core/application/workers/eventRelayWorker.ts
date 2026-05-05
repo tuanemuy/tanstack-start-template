@@ -4,7 +4,7 @@ import {
   EventId,
 } from "@/core/domain/common/event";
 import type { TodoEvent } from "@/core/domain/todo/events";
-import type { Container } from "../di/server";
+import type { Container } from "../di/types";
 import type { OutboxEntry, OutboxFailure } from "../ports/outboxRepository";
 import { todoEventDecoders } from "../todo/eventDecoders";
 

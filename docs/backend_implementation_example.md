@@ -21,7 +21,7 @@ app/core/
 │       ├── errorCode.ts
 │       └── ports/${domain}Repository.ts
 ├── application/
-│   ├── di/server.ts               Container, createContainer, getContainer, readServerConfig
+│   ├── di/d1.ts                   Container, createD1Container, getContainer, readD1ServerConfig, installContainerStore
 │   ├── ports/
 │   │   ├── clock.ts
 │   │   ├── idGenerator.ts
@@ -47,15 +47,16 @@ app/core/
 │   ├── errorDisplay.ts            displayError, sanitizeRouteError
 │   └── validator.ts               validateInput(schema) — transport-boundary shape check
 └── adapters/
-    └── drizzleSqlite/
+    └── d1/
         ├── client.ts
-        ├── schema.ts
-        ├── unitOfWork.ts          tx 内で各リポジトリを new して UoW context を組む
+        ├── schema.ts              ドメインテーブル + `_occ_guard` (deferred-batch UoW の OCC abort用)
+        ├── unitOfWork.ts          PendingBatch を組み立てて db.batch() で flush する D1UnitOfWorkProvider
+        ├── pendingBatch.ts        Drizzle BatchItem buffer + OCC guard 自動付与
         ├── repositories/
-        │   ├── helpers.ts         mapDbError
+        │   ├── helpers.ts         mapDbError + isOccGuardViolation
         │   ├── ${domain}Repository.ts
         │   └── outboxRepository.ts
-        └── migrations/
+        └── migrations/            wrangler が読む SQL マイグレーション
 
 app/lib/
 └── error.ts                       CodedError 基底 + SerializedErrorBase / FieldErrors / SerializableError interface（構造のみ。union は presentation で組立）
@@ -215,7 +216,7 @@ lookup key は plain `string`。ブランドは adapter の `toFoo`（再水和�
 新しいドメインを足すときは:
 
 1. `UnitOfWorkContext` にスロットを 1 行追加（`app/core/application/execution/unitOfWork.ts`）
-2. Drizzle adapter (`app/core/adapters/drizzleSqlite/unitOfWork.ts`) で tx 内に
+2. D1 adapter (`app/core/adapters/d1/unitOfWork.ts`) で `PendingBatch` を共有しつつ
    リポジトリインスタンスを生成し context に詰める
 
 ```ts
@@ -346,15 +347,21 @@ async save(foo: Foo): Promise<void> {
 
 ### Unit of Work
 
-`app/core/adapters/drizzleSqlite/unitOfWork.ts` が `UnitOfWorkProvider.run(fn)` を実装する:
+`app/core/adapters/d1/unitOfWork.ts` が `UnitOfWorkProvider.run(fn)` を実装する:
 
-1. `db.transaction(...)` を開く
-2. tx 内で repository / outbox インスタンスを構築し、`UnitOfWorkContext` に詰める
+1. `PendingBatch` (Drizzle BatchItem buffer) を新規生成
+2. repository / outbox インスタンスを共有 PendingBatch とともに構築し、`UnitOfWorkContext` に詰める
 3. `collectEvents` のバッファを集めるコンテキストを fn に渡す
-4. fn 解決後、collected events を outbox に save（同一 tx）
+4. fn 解決後、collected events も同じ PendingBatch に積む
+5. `db.batch(pending.build())` でアトミックに flush
 
-`SQLITE_BUSY` / `SQLITE_LOCKED` は driver-level の implementation detail なので、
-adapter が `run()` 内部で exponential backoff retry する。application 層へ leak させない。
+D1 にはインタラクティブ tx が無いため、書き込みは UoW 内で都度実行されず PendingBatch
+に蓄積される。読み取りは binding 直叩きで即時。OCC mismatch は `_occ_guard` テーブル
+の CHECK 制約で batch 全体を abort させ、`ConflictError("OPTIMISTIC_LOCK_FAILURE")`
+として presentation 層に届ける。
+
+driver-level の transient エラーは Cloudflare の binding 側がハンドルするため
+application-level retry は無い。
 
 ## Outbox Worker
 

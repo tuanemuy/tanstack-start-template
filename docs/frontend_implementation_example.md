@@ -390,7 +390,7 @@ import { cache } from "react";
 import { redirect } from "@tanstack/react-router";
 import { getRequestHeaders } from "@tanstack/react-start/server";
 
-import { getContainer } from "@/core/application/di/server";
+import { getContainer } from "@/core/application/di/d1";
 import type { User } from "@/core/domain/user/entity";
 
 export const getCurrentUser = cache(async (): Promise<User | null> => {

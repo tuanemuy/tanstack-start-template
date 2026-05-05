@@ -79,16 +79,21 @@ concurrent / OCC 挙動を検証する integration 層を分けることで、�
 
 ## Real DB test（integration）方針
 
-- `setupTestContainer()` が `:memory:` SQLite client を作り、migration を流し、
-  `DrizzleSqliteUnitOfWorkProvider(db, SystemClock)` の production 相当ワイヤリングで
-  コンテナを返す。adapter は `SQLITE_BUSY` / `SQLITE_LOCKED` を内部で
-  retry するので、application 層は transient 失敗を意識しない。
-- afterEach で libsql client を close。adapter の transient retry の
-  指数バックオフが乗るので `testTimeout: 15_000` を `vitest.config.ts` で
-  設定している。
+- 統合テストは `vitest-pool-workers` 経由で **Workers isolate + Miniflare の
+  D1 binding** に対して走る。`vitest.config.integration.ts` がプール設定、
+  `app/core/adapters/d1/__tests__/setup.ts` がマイグレーション適用と
+  `beforeEach` の TRUNCATE を担う。
+- `setupTestContainer()` (`app/core/application/__tests__/helpers.ts`) が
+  `env.DB` から D1 backed の production 相当コンテナを返す。テスト間の
+  状態クリーンアップはグローバル setup が見るので、helper は単なる
+  factory + getter。
+- ファイル名は `*.integration.test.ts`。Node プールの `vitest.config.ts`
+  はこのパターンを除外して unit テストのみ走らせる。
 - concurrent / OCC を意識したテストを書くときは、`Promise.all` で
   `run` を同時発火させて `OptimisticLockFailure` を観測する、
-  などのパターンを使う。
+  などのパターンを使う。D1 の deferred-batch UoW では race の片側が
+  `_occ_guard` の CHECK 違反、もう片側が空 batch、と分岐するため、
+  どちらの失敗形でも通るようアサーションを緩めにすると安定する。
 
 ## Property-based 方針
 

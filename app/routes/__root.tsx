@@ -12,7 +12,7 @@ import { defineServerFn } from "@/core/presentation/serverFn";
 import appCss from "../styles/index.css?url";
 
 export const loadAppContext = defineServerFn().handler(async () => {
-  const { getContainer } = await import("@/core/application/di/server");
+  const { getContainer } = await import("@/core/application/di/d1");
   const container = await getContainer();
   return { config: container.config };
 });

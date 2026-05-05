@@ -87,8 +87,9 @@ export class D1TodoRepository implements TodoRepository {
   }
 
   // Buffered. Returns immediately; the actual write lands on the next
-  // `db.batch()` call inside the UoW. The `Promise<void>` shape is kept
-  // so domain / usecase code is identical to the libSQL adapter.
+  // `db.batch()` call inside the UoW. The `Promise<void>` shape is
+  // kept so domain / usecase code does not need to know whether a
+  // write is synchronous or batched.
   async save(todo: Todo): Promise<void> {
     if (todo.version === 0) {
       this.pending.add(

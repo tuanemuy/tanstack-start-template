@@ -1,101 +1,59 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { createClient } from "@libsql/client";
-import { pushSQLiteSchema } from "drizzle-kit/api";
-import { drizzle } from "drizzle-orm/libsql";
-import { afterEach, beforeEach } from "vitest";
+// Test harness for application-layer integration tests.
+//
+// Runs inside a Workers isolate via `vitest-pool-workers`; the
+// `cloudflare:test` `env.DB` binding is a real D1 SQLite database
+// (in-memory under Miniflare). Per-test row cleanup is owned by
+// `app/core/adapters/d1/__tests__/setup.ts` (TRUNCATE in `beforeEach`),
+// so the harness here is intentionally thin: each call to
+// `createTestContainer()` just builds a fresh DI container around the
+// shared binding.
+import { env } from "cloudflare:test";
+import { beforeEach } from "vitest";
 import { content } from "@/config";
-import { DrizzleSqliteOutboxRepository } from "@/core/adapters/drizzleSqlite/repositories/outboxRepository";
-import * as schema from "@/core/adapters/drizzleSqlite/schema";
-import { DrizzleSqliteUnitOfWorkProvider } from "@/core/adapters/drizzleSqlite/unitOfWork";
+import { type Database, getDatabase } from "@/core/adapters/d1/client";
+import { D1OutboxRepository } from "@/core/adapters/d1/repositories/outboxRepository";
+import { D1UnitOfWorkProvider } from "@/core/adapters/d1/unitOfWork";
 import type { Container } from "@/core/application/di/types";
 import { SystemClock } from "@/core/application/ports/clock";
 import { UuidV7Generator } from "@/core/application/ports/idGenerator";
 import { ConsoleLogger } from "@/core/application/ports/logger";
 
-export type TestDatabase = ReturnType<typeof drizzle<typeof schema>>;
-export type TestDatabaseWithCleanup = {
-  db: TestDatabase;
-  cleanup: () => Promise<void>;
-};
-
-// Per-test on-disk SQLite under a unique temp dir. libsql does not let
-// `cache=shared` memory DBs be name-disambiguated, so two parallel test
-// files inside the same vitest worker would otherwise see each other's rows.
-export async function createTestDatabase(): Promise<TestDatabaseWithCleanup> {
-  const dir = mkdtempSync(join(tmpdir(), "tst-sqlite-"));
-  const url = `file:${join(dir, "db.sqlite")}`;
-  const client = createClient({ url });
-  const db = drizzle(client, { schema });
-  const { apply } = await pushSQLiteSchema(schema, db);
-  await apply();
-
-  return {
-    db,
-    cleanup: async () => {
-      client.close();
-      rmSync(dir, { recursive: true, force: true });
-    },
-  };
-}
-
-export type TestContainerOptions = {
-  config?: Partial<Container["config"]>;
-  dbWithCleanup?: TestDatabaseWithCleanup;
-};
-
 export type TestContainer = Container & {
-  db: TestDatabase;
+  db: Database;
 };
 
-export async function createTestContainer(
-  options: TestContainerOptions = {},
-): Promise<TestContainer> {
-  const dbWithCleanup = options.dbWithCleanup ?? (await createTestDatabase());
-  const db = dbWithCleanup.db;
-
+export function createTestContainer(): TestContainer {
+  const db = getDatabase(env.DB);
   return {
     config: {
       ...content,
-      appUrl: "http://localhost:3000",
-      ...options.config,
+      appUrl: "http://localhost:8787",
     },
-    unitOfWorkProvider: new DrizzleSqliteUnitOfWorkProvider(
+    unitOfWorkProvider: new D1UnitOfWorkProvider(
       db,
       SystemClock,
       UuidV7Generator,
     ),
-    outboxRepository: new DrizzleSqliteOutboxRepository(db, UuidV7Generator),
+    outboxRepository: new D1OutboxRepository(db, UuidV7Generator),
     clock: SystemClock,
     idGenerator: UuidV7Generator,
     logger: ConsoleLogger,
     shutdown: async () => {
-      await dbWithCleanup.cleanup();
+      // D1 binding lifecycle is owned by Miniflare — no-op.
     },
     db,
   };
 }
 
-export function setupTestContainer(
-  options: TestContainerOptions = {},
-): () => TestContainer {
+/**
+ * Suite hook that yields a fresh `TestContainer` per test. Row
+ * cleanup happens globally in the D1 pool's `setup.ts`, so this is
+ * just a constructor + getter — no `afterEach` work is needed.
+ */
+export function setupTestContainer(): () => TestContainer {
   let container: TestContainer;
-  beforeEach(async () => {
-    container = await createTestContainer(options);
-  });
-  afterEach(async () => {
-    await container.shutdown();
+  beforeEach(() => {
+    container = createTestContainer();
   });
   return () => container;
-}
-
-export function createMockHeaders(headers?: Record<string, string>): Headers {
-  const h = new Headers();
-  if (headers) {
-    for (const [key, value] of Object.entries(headers)) {
-      h.set(key, value);
-    }
-  }
-  return h;
 }

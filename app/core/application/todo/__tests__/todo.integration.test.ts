@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import * as schema from "@/core/adapters/drizzleSqlite/schema";
+import * as schema from "@/core/adapters/d1/schema";
 import { Todo } from "@/core/domain/todo/entity";
 import { TodoId } from "@/core/domain/todo/valueObject";
 import { setupTestContainer } from "../../__tests__/helpers";
@@ -54,7 +54,17 @@ describe("concurrent deleteTodo", () => {
 
     const rejection = rejected[0];
     if (rejection && rejection.status === "rejected") {
-      expect(isNotFoundError(rejection.reason)).toBe(true);
+      // The deferred-batch UoW lets both UoWs see the row at find time,
+      // then surfaces the racing loser one of two ways depending on
+      // batch interleaving:
+      //   - the loser's UoW commits no rows  → NotFoundError surfaced
+      //     when its delete UPDATE matches nothing (interleaving A);
+      //   - the loser hits the OCC guard     → ConflictError on the
+      //     `_occ_guard` CHECK violation       (interleaving B).
+      // Both indicate "the row was already deleted by the racing peer",
+      // which is the contract this test pins.
+      const reason = rejection.reason;
+      expect(isNotFoundError(reason) || isConflictError(reason)).toBe(true);
     }
 
     const rows = await container.db.select().from(schema.todos);

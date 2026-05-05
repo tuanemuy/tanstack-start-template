@@ -11,10 +11,12 @@ type SqliteBatchItem = BatchItem<"sqlite">;
  *
  * Two responsibilities:
  *
- * 1. **Aggregation.** Repository methods on D1 do not execute their writes
- *    immediately; they push a Drizzle query expression here and return so
- *    the caller can keep the `Promise<void>` shape that the libSQL adapter
- *    has. Reads still run immediately against the `Database`.
+ * 1. **Aggregation.** Repository methods on D1 do not execute their
+ *    writes immediately; they push a Drizzle query expression here
+ *    and return so the caller keeps the `Promise<void>` repository
+ *    contract regardless of whether the underlying engine supports
+ *    interactive transactions. Reads still run immediately against
+ *    the `Database`.
  *
  * 2. **OCC abort.** D1 batches treat an `UPDATE … WHERE version = ?`
  *    matching zero rows as a normal success and commit the rest. Each

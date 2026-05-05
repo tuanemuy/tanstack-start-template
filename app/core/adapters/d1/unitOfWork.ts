@@ -18,8 +18,8 @@ import { isOccGuardViolation, mapDbError } from "./repositories/helpers";
 /**
  * D1 implementation of `UnitOfWorkProvider`.
  *
- * D1 has no interactive transactions, so the libSQL adapter's
- * `db.transaction(fn)` shape is replaced by a deferred-batch model:
+ * D1 has no interactive transactions, so a `db.transaction(fn)` shape
+ * is impossible. The replacement is a deferred-batch model:
  *
  *   1. The caller's `fn` runs through to completion. Reads execute
  *      immediately against `db`; writes (and outbox events) accumulate
@@ -37,8 +37,8 @@ import { isOccGuardViolation, mapDbError } from "./repositories/helpers";
  *
  * No application-level retry: D1 surfaces transient conditions
  * (`SQLITE_BUSY` / `SQLITE_LOCKED`) as connection-level errors that
- * the binding handles upstream of this adapter. The libSQL adapter's
- * exponential-backoff loop is intentionally absent here.
+ * the binding handles upstream of this adapter, and OCC mismatches
+ * are caller-visible signals rather than retry candidates.
  */
 export class D1UnitOfWorkProvider implements UnitOfWorkProvider {
   constructor(
