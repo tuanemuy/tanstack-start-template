@@ -53,18 +53,19 @@ describe("todoEventDecoders", () => {
     ).toThrow();
   });
 
-  it("rejects extra wire fields", () => {
+  it("strips unknown wire fields so additive schema evolution is non-breaking", () => {
     const id = todoId(4);
-    const title = TodoTitle.create("strict");
-    expect(() =>
-      todoEventDecoders["todo.created"](
-        { todoId: id, title, extra: true },
-        {
-          id: eventId(4),
-          occurredAt: new Date(),
-          aggregateId: id,
-        },
-      ),
-    ).toThrow();
+    const title = TodoTitle.create("forward-compat");
+    const decoded = todoEventDecoders["todo.created"](
+      { todoId: id, title, futureField: true },
+      {
+        id: eventId(4),
+        occurredAt: new Date(),
+        aggregateId: id,
+      },
+    );
+
+    expect(decoded.payload).toEqual({ todoId: id, title });
+    expect(decoded.payload).not.toHaveProperty("futureField");
   });
 });

@@ -4,16 +4,19 @@ import type { TodoEvent } from "@/core/domain/todo/events";
 import { TodoId, TodoTitle } from "@/core/domain/todo/valueObject";
 import { buildEventDecoder } from "../events/buildDecoder";
 
-const todoCreatedSchema = z
-  .object({ todoId: z.string(), title: z.string() })
-  .strict();
-const todoToggledSchema = z
-  .object({ todoId: z.string(), completed: z.boolean() })
-  .strict();
-const todoRenamedSchema = z
-  .object({ todoId: z.string(), title: z.string() })
-  .strict();
-const todoDeletedSchema = z.object({ todoId: z.string() }).strict();
+const todoCreatedSchema = z.object({
+  todoId: z.string(),
+  title: z.string(),
+});
+const todoToggledSchema = z.object({
+  todoId: z.string(),
+  completed: z.boolean(),
+});
+const todoRenamedSchema = z.object({
+  todoId: z.string(),
+  title: z.string(),
+});
+const todoDeletedSchema = z.object({ todoId: z.string() });
 
 export type TodoEventDecoders = {
   readonly [K in TodoEvent["type"]]: EventDecoder<
