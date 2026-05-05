@@ -1,12 +1,17 @@
-// Workers `scheduled` and `queue` handlers, isolated from the TanStack
-// Start fetch pipeline so unit tests can drive them without booting
-// the React/RSC server graph. The combined entry that exposes all three
-// to wrangler lives in `app/worker.ts`.
+// Worker handler logic, factored out of any specific entrypoint so the
+// three deployable Workers (relay producer, queue consumer, outbox
+// pruner) can each export only the function they need.
+//
+// One Worker per responsibility was a deliberate choice over a single
+// combined entry: it eliminates the `controller.cron === ...` string
+// match that would otherwise be required to fan out a shared
+// `scheduled` handler, isolates failures, and lets each Worker declare
+// only the bindings it actually uses (the pruner needs no Queue, the
+// consumer needs no D1 producer write path, etc.).
 import type {
   ExecutionContext,
   MessageBatch,
   Queue,
-  ScheduledController,
 } from "@cloudflare/workers-types";
 import {
   createD1Container,
@@ -24,13 +29,29 @@ import {
 } from "@/core/application/workers/outboxPrune";
 import type { DomainEvent } from "@/core/domain/common/event";
 
-export type WorkerEnv = D1Env &
+/**
+ * Bindings shared by the relay producer Worker — it reads from D1 and
+ * publishes to the events queue.
+ */
+export type RelayEnv = D1Env &
   Readonly<{
     EVENTS_QUEUE: Queue<DomainEvent>;
   }>;
 
-export const RELAY_CRON = "*/1 * * * *"; // every minute
-export const PRUNE_CRON = "0 3 * * *"; // 03:00 UTC daily
+/**
+ * Bindings for the outbox pruner Worker. It only needs D1; nothing
+ * else is wired so the principle of least privilege is enforced at
+ * the deployment manifest.
+ */
+export type PrunerEnv = D1Env;
+
+/**
+ * Bindings for the queue consumer Worker. D1 is included so subscribers
+ * (read-model projections, idempotency stamps, etc.) can write through
+ * the application container; remove if your consumers are stateless.
+ */
+export type ConsumerEnv = D1Env;
+
 const PRUNE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 /**
@@ -39,7 +60,7 @@ const PRUNE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
  * processed iff the producer accepts the message.
  */
 export async function runRelayTick(
-  env: WorkerEnv,
+  env: RelayEnv,
   options?: ProcessOutboxEventsOptions,
 ): Promise<{ processed: number }> {
   const container = createD1Container(readD1ServerConfig(env));
@@ -55,33 +76,11 @@ export async function runRelayTick(
  * can inspect them.
  */
 export async function runPruneTick(
-  env: WorkerEnv,
+  env: PrunerEnv,
   options: PruneOutboxOptions = { retentionMs: PRUNE_RETENTION_MS },
 ): Promise<{ deleted: number }> {
   const container = createD1Container(readD1ServerConfig(env));
   return pruneOutbox(container, options);
-}
-
-export async function handleScheduled(
-  controller: ScheduledController,
-  env: WorkerEnv,
-  ctx: ExecutionContext,
-): Promise<void> {
-  if (controller.cron === RELAY_CRON) {
-    ctx.waitUntil(runRelayTick(env));
-    return;
-  }
-  if (controller.cron === PRUNE_CRON) {
-    ctx.waitUntil(runPruneTick(env));
-    return;
-  }
-  // Defensive: a cron expression that reaches here is one configured
-  // in `wrangler.toml` but unhandled in code — surface it instead of
-  // silently dropping the tick.
-  const container = createD1Container(readD1ServerConfig(env));
-  container.logger.warn(
-    `[scheduled] no handler registered for cron ${controller.cron}`,
-  );
 }
 
 /**
@@ -95,7 +94,7 @@ export async function handleScheduled(
  */
 export async function handleQueue(
   batch: MessageBatch<DomainEvent>,
-  env: WorkerEnv,
+  env: ConsumerEnv,
   _ctx: ExecutionContext,
 ): Promise<void> {
   const container = createD1Container(readD1ServerConfig(env));

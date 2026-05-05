@@ -1,62 +1,30 @@
-# Cloudflare Workers configuration.
+# Main app Worker — TanStack Start fetch handler only.
 #
-# Production deploy targets a single Worker that combines:
-#   - the TanStack Start fetch handler,
-#   - the outbox relay (Cron-driven, claims rows and produces to Queue),
-#   - the Queue consumer (drains events to subscribers).
+# Cron / Queue responsibilities ship in three sibling Workers:
+#   - wrangler.relay.toml     (Cron-driven outbox relay producer)
+#   - wrangler.consumer.toml  (Queue consumer)
+#   - wrangler.pruner.toml    (Cron-driven outbox pruner)
 #
 # `nodejs_compat` is required because @tanstack/react-start ships
 # server-side code that imports `node:async_hooks`, `node:stream`,
-# `node:crypto`, and `node:util`. workerd polyfills these under the
-# flag — without it, the build is rejected at deploy time.
+# `node:crypto`, and `node:util`.
 name = "tanstack-start-template"
 main = "app/worker.ts"
 compatibility_date = "2026-01-01"
 compatibility_flags = ["nodejs_compat"]
 
-# Static assets produced by `vite build` (`dist/client`). Adjust the
-# `directory` if the build output path changes.
+# Static assets produced by `vite build` (`dist/client`).
 [assets]
 directory = "./dist/client"
 binding = "ASSETS"
 
-# Public env, surfaced via `env.APP_URL` in the Worker. Secrets (auth
-# tokens, etc.) belong in `wrangler secret put` not in this file.
 [vars]
 APP_URL = "http://localhost:8787"
 
-# D1 binding. Replace `database_id` with the value returned by
-# `wrangler d1 create tanstack-start-template-d1` before the first
-# remote deploy. The ID below is a placeholder used by the local
-# Miniflare integration tests (see vitest.config.integration.ts).
+# D1: read/write for the request path. Outbox writes happen here
+# transactionally with aggregate writes — see app/core/adapters/d1/.
 [[d1_databases]]
 binding = "DB"
 database_name = "tanstack-start-template-d1"
 database_id = "00000000-0000-0000-0000-000000000000"
 migrations_dir = "app/core/adapters/d1/migrations"
-
-# Outbox dispatch transport. The relay's Cron handler publishes to this
-# queue; the Worker's `queue` handler consumes from it. Producer and
-# consumer share the same Worker — Cloudflare allows this and it keeps
-# the deployment unit small.
-[[queues.producers]]
-binding = "EVENTS_QUEUE"
-queue = "tanstack-start-template-events"
-
-[[queues.consumers]]
-queue = "tanstack-start-template-events"
-max_batch_size = 25
-max_batch_timeout = 5
-max_retries = 5
-# Poison messages land here after retries are exhausted. Create with
-# `wrangler queues create tanstack-start-template-events-dlq` before
-# the first deploy.
-dead_letter_queue = "tanstack-start-template-events-dlq"
-
-# Cron Triggers fire `scheduled(controller, env, ctx)`. The handler
-# branches on `controller.cron` to dispatch to relay vs. prune.
-[triggers]
-crons = [
-	"*/1 * * * *", # outbox relay tick (every minute)
-	"0 3 * * *",   # outbox prune (daily at 03:00 UTC)
-]

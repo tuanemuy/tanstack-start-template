@@ -1,16 +1,14 @@
 import {
   createExecutionContext,
   createMessageBatch,
-  createScheduledController,
   env,
   getQueueResult,
-  waitOnExecutionContext,
 } from "cloudflare:test";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { getDatabase } from "@/core/adapters/d1/client";
-import { D1OutboxRepository } from "@/core/adapters/d1/repositories/outboxRepository";
 import { PendingBatch } from "@/core/adapters/d1/pendingBatch";
+import { D1OutboxRepository } from "@/core/adapters/d1/repositories/outboxRepository";
 import { outboxEvents } from "@/core/adapters/d1/schema";
 import {
   type DomainEvent,
@@ -20,20 +18,23 @@ import {
 import { TodoEvents } from "@/core/domain/todo/events";
 import { TodoId, TodoTitle } from "@/core/domain/todo/valueObject";
 import {
+  type ConsumerEnv,
   handleQueue,
-  handleScheduled,
-  PRUNE_CRON,
-  RELAY_CRON,
-  type WorkerEnv,
+  type PrunerEnv,
+  type RelayEnv,
+  runPruneTick,
+  runRelayTick,
 } from "../handlers";
 
-// End-to-end integration of the Workers handlers against a real D1
-// binding and a real Miniflare queue. The relay tick claims rows from
-// the DB, posts them onto `EVENTS_QUEUE`, and marks the rows
-// processed; the queue consumer drains messages and acks them. The
-// fetch handler is intentionally NOT exercised here — its
-// TanStack Start dependency would require booting the full RSC graph,
-// which is the wrong layer to validate from a worker integration test.
+// End-to-end integration of the per-Worker handler functions against
+// a real D1 binding and a real Miniflare queue. Tests target the pure
+// `runRelayTick` / `runPruneTick` / `handleQueue` functions directly
+// rather than going through any Worker entry — entries are 1-line
+// adapters and have nothing to verify beyond their type signature.
+//
+// The fetch handler is intentionally not exercised; it lives in the
+// main app Worker (`app/worker.ts`) and is gated on TanStack Start's
+// build pipeline.
 
 let counter = 0;
 const nextEventId = (): EventId => {
@@ -69,19 +70,19 @@ async function seedOutbox(events: readonly DomainEvent[]): Promise<void> {
   }
 }
 
-const workerEnv = (): WorkerEnv => env as unknown as WorkerEnv;
+const relayEnv = (): RelayEnv => env as unknown as RelayEnv;
+const prunerEnv = (): PrunerEnv => env as unknown as PrunerEnv;
+const consumerEnv = (): ConsumerEnv => env as unknown as ConsumerEnv;
 
-describe("worker scheduled handler — relay cron", () => {
+describe("relay producer Worker — runRelayTick", () => {
   it("claims pending outbox rows, sends them to the queue, and marks processed", async () => {
     const todoId = nextTodoId();
     const title = TodoTitle.create("relay");
     const event = withId(TodoEvents.created(todoId, title, new Date()));
     await seedOutbox([event]);
 
-    const controller = createScheduledController({ cron: RELAY_CRON });
-    const ctx = createExecutionContext();
-    await handleScheduled(controller, workerEnv(), ctx);
-    await waitOnExecutionContext(ctx);
+    const result = await runRelayTick(relayEnv());
+    expect(result.processed).toBe(1);
 
     const db = getDatabase(env.DB);
     const rows = await db
@@ -93,16 +94,12 @@ describe("worker scheduled handler — relay cron", () => {
   });
 
   it("is a no-op when the outbox has no pending rows", async () => {
-    const controller = createScheduledController({ cron: RELAY_CRON });
-    const ctx = createExecutionContext();
-    await handleScheduled(controller, workerEnv(), ctx);
-    await waitOnExecutionContext(ctx);
-    // No assertion beyond "did not throw"; the relay logic itself is
-    // covered by the application-layer unit tests.
+    const result = await runRelayTick(relayEnv());
+    expect(result.processed).toBe(0);
   });
 });
 
-describe("worker scheduled handler — prune cron", () => {
+describe("pruner Worker — runPruneTick", () => {
   it("deletes processed rows older than the retention window", async () => {
     const todoId = nextTodoId();
     const title = TodoTitle.create("prune");
@@ -110,24 +107,42 @@ describe("worker scheduled handler — prune cron", () => {
     await seedOutbox([event]);
 
     const db = getDatabase(env.DB);
-    // Mark it processed well before the 7-day retention window.
+    // Mark processed well before the 7-day retention window.
     const longAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
     await db
       .update(outboxEvents)
       .set({ processedAt: longAgo })
       .where(eq(outboxEvents.id, event.id));
 
-    const controller = createScheduledController({ cron: PRUNE_CRON });
-    const ctx = createExecutionContext();
-    await handleScheduled(controller, workerEnv(), ctx);
-    await waitOnExecutionContext(ctx);
+    const result = await runPruneTick(prunerEnv());
+    expect(result.deleted).toBe(1);
 
     const remaining = await db.select().from(outboxEvents);
     expect(remaining).toHaveLength(0);
   });
+
+  it("retains processed rows newer than the retention window", async () => {
+    const todoId = nextTodoId();
+    const title = TodoTitle.create("recent");
+    const event = withId(TodoEvents.created(todoId, title, new Date()));
+    await seedOutbox([event]);
+
+    const db = getDatabase(env.DB);
+    const recent = new Date(Date.now() - 60 * 1000); // 1 min ago
+    await db
+      .update(outboxEvents)
+      .set({ processedAt: recent })
+      .where(eq(outboxEvents.id, event.id));
+
+    const result = await runPruneTick(prunerEnv());
+    expect(result.deleted).toBe(0);
+
+    const remaining = await db.select().from(outboxEvents);
+    expect(remaining).toHaveLength(1);
+  });
 });
 
-describe("worker queue handler", () => {
+describe("consumer Worker — handleQueue", () => {
   it("acks every message in the batch on the happy path", async () => {
     const todoId = nextTodoId();
     const title = TodoTitle.create("queue-ack");
@@ -145,12 +160,10 @@ describe("worker queue handler", () => {
       ],
     );
     const ctx = createExecutionContext();
-    await handleQueue(batch, workerEnv(), ctx);
+    await handleQueue(batch, consumerEnv(), ctx);
     const result = await getQueueResult(batch, ctx);
 
     // Default disposition + no explicit retries = every message acked.
-    // `retryBatch.retry` is true only if `retryAll()` was invoked or
-    // if individual messages were retried; here we expect neither.
     expect(result.retryBatch.retry).toBe(false);
   });
 });

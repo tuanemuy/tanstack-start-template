@@ -1,0 +1,28 @@
+# Events Queue consumer Worker.
+#
+# Single responsibility: drain dispatched events from the events Queue
+# and run subscribers (read-model projections, external webhooks, …).
+# No fetch handler, no cron — just `queue` + the bindings subscribers
+# need.
+name = "tanstack-start-template-consumer"
+main = "app/worker/consumer.ts"
+compatibility_date = "2026-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+APP_URL = "http://localhost:8787"
+
+# D1 is included so subscribers can write read-model projections /
+# idempotency stamps. Trim if your consumers are stateless.
+[[d1_databases]]
+binding = "DB"
+database_name = "tanstack-start-template-d1"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "app/core/adapters/d1/migrations"
+
+[[queues.consumers]]
+queue = "tanstack-start-template-events"
+max_batch_size = 25
+max_batch_timeout = 5
+max_retries = 5
+dead_letter_queue = "tanstack-start-template-events-dlq"

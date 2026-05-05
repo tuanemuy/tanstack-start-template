@@ -1,12 +1,11 @@
-# Standalone outbox relay Worker.
+# Outbox relay producer Worker.
 #
-# Ships independently of the TanStack Start fetch Worker (`wrangler.toml`),
-# so the relay can be deployed and scaled separately from the request
-# path and is not blocked by the main app's build pipeline.
+# Single responsibility: claim pending outbox rows on a 1-minute cron
+# and publish them to the events Queue. No fetch handler, no consumer
+# wiring — just `scheduled` + D1 read/update + Queue producer.
 #
-# `nodejs_compat` covers the application layer's use of `node:async_hooks`
-# (via the `Clock`-driven `Date` ports) — D1's binding itself does not
-# need it.
+# `nodejs_compat` covers `node:async_hooks` reachable through the
+# application container's port boundaries.
 name = "tanstack-start-template-relay"
 main = "app/worker/relay.ts"
 compatibility_date = "2026-01-01"
@@ -15,32 +14,15 @@ compatibility_flags = ["nodejs_compat"]
 [vars]
 APP_URL = "http://localhost:8787"
 
-# Same D1 database the main Worker writes to. The relay is a read /
-# update consumer of the outbox table — claims pending rows, marks them
-# processed/failed, deletes old processed rows.
 [[d1_databases]]
 binding = "DB"
 database_name = "tanstack-start-template-d1"
 database_id = "00000000-0000-0000-0000-000000000000"
 migrations_dir = "app/core/adapters/d1/migrations"
 
-# Relay produces onto the events queue; the main Worker (or this same
-# Worker — both ship a `queue` handler from `handlers.ts`) consumes
-# from it. Deploy-time choice of which Worker is the consumer is made
-# by the `[[queues.consumers]]` declaration in each wrangler config.
 [[queues.producers]]
 binding = "EVENTS_QUEUE"
 queue = "tanstack-start-template-events"
 
-[[queues.consumers]]
-queue = "tanstack-start-template-events"
-max_batch_size = 25
-max_batch_timeout = 5
-max_retries = 5
-dead_letter_queue = "tanstack-start-template-events-dlq"
-
 [triggers]
-crons = [
-	"*/1 * * * *", # outbox relay tick (every minute)
-	"0 3 * * *",   # outbox prune (daily at 03:00 UTC)
-]
+crons = ["*/1 * * * *"] # every minute
