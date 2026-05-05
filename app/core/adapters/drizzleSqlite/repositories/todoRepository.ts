@@ -4,67 +4,44 @@ import {
   SystemError,
   SystemErrorCode,
 } from "@/core/application/errors";
-import { isUuidV7 } from "@/core/application/ports/idGenerator";
+import type { IdGenerator } from "@/core/application/ports/idGenerator";
 import type {
   Pagination,
   PaginationResult,
 } from "@/core/domain/common/pagination";
-import { BusinessRuleError } from "@/core/domain/error";
-import type {
-  ActiveTodo,
-  CompletedTodo,
-  Todo,
-} from "@/core/domain/todo/entity";
+import { Todo } from "@/core/domain/todo/entity";
 import type { TodoRepository } from "@/core/domain/todo/ports/todoRepository";
-import { TodoId, TodoTitle } from "@/core/domain/todo/valueObject";
 import type { Executor } from "../client";
 import { todos } from "../schema";
 import { mapDbError } from "./helpers";
 
 type TodoRow = typeof todos.$inferSelect;
 
-function toTodo(row: TodoRow): Todo {
-  try {
-    if (!Number.isInteger(row.version) || row.version < 0) {
-      throw new SystemError(
-        SystemErrorCode.DataIntegrityError,
-        `Stored todo has invalid version: ${row.version}`,
-      );
-    }
-    if (row.status !== "active" && row.status !== "completed") {
-      throw new SystemError(
-        SystemErrorCode.DataIntegrityError,
-        `Stored todo has invalid status: ${row.status}`,
-      );
-    }
-    if (!isUuidV7(row.id)) {
+export class DrizzleSqliteTodoRepository implements TodoRepository {
+  constructor(
+    private readonly executor: Executor,
+    private readonly idGenerator: IdGenerator,
+  ) {}
+
+  private toTodo(row: TodoRow): Todo {
+    // Storage-format check (deployment-level — paired with the `IdGenerator`
+    // implementation). Domain invariants live in `Todo.reconstruct`.
+    if (!this.idGenerator.validate(row.id)) {
       throw new SystemError(
         SystemErrorCode.DataIntegrityError,
         `Stored todo has malformed id: ${row.id}`,
       );
     }
-    const base = {
-      id: TodoId.create(row.id),
-      title: TodoTitle.create(row.title),
-      version: row.version,
-      createdAt: row.createdAt,
-      updatedAt: row.updatedAt,
-    };
-    return row.status === "completed"
-      ? ({ ...base, status: "completed" } satisfies CompletedTodo)
-      : ({ ...base, status: "active" } satisfies ActiveTodo);
-  } catch (error) {
-    if (error instanceof SystemError) throw error;
-    const message =
-      error instanceof BusinessRuleError
-        ? "Stored todo violates invariants"
-        : "Failed to map stored todo row";
-    throw new SystemError(SystemErrorCode.DataIntegrityError, message, error);
+    try {
+      return Todo.reconstruct(row);
+    } catch (error) {
+      throw new SystemError(
+        SystemErrorCode.DataIntegrityError,
+        "Stored todo violates invariants",
+        error,
+      );
+    }
   }
-}
-
-export class DrizzleSqliteTodoRepository implements TodoRepository {
-  constructor(private readonly executor: Executor) {}
 
   findById(id: string): Promise<Todo | null> {
     return mapDbError("Failed to find todo", async () => {
@@ -74,7 +51,7 @@ export class DrizzleSqliteTodoRepository implements TodoRepository {
         .where(eq(todos.id, id))
         .limit(1);
       const row = rows[0];
-      return row ? toTodo(row) : null;
+      return row ? this.toTodo(row) : null;
     });
   }
 
@@ -91,7 +68,7 @@ export class DrizzleSqliteTodoRepository implements TodoRepository {
         this.executor.select({ count: sql<number>`count(*)` }).from(todos),
       ]);
       return {
-        items: rows.map(toTodo),
+        items: rows.map((row) => this.toTodo(row)),
         count: Number(countRows[0]?.count ?? 0),
       };
     });

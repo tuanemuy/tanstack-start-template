@@ -58,8 +58,8 @@ concurrent / OCC 挙動を検証する integration 層を分けることで、�
 `app/core/application/__tests__/fakes/` に在庫しているのは現状以下の 2 つ：
 
 - **`FakeIdGenerator`** — カウンタを UUIDv7 のテンプレに埋め込む形で決定論的な
-  id を返す。出力は adapter 側の rehydration validation（`isUuidV7`）を通る
-  形になっており、storage 経由の round-trip テストでも format 検証で落ちない。
+  id を返す。出力は adapter 側の rehydration validation（`IdGenerator.validate`）
+  を通る形になっており、storage 経由の round-trip テストでも format 検証で落ちない。
   `seed` で開始番号を固定でき、生成 id がテストの outbox 行よりも後に並ぶよう
   prefix を `f0...` にしてある（`(createdAt, id)` ソート時にテスト固定の
   `01950000-...` 系より後に来る）。

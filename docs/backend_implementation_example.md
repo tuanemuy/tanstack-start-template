@@ -1,20 +1,9 @@
 # Backend Implementation Guide
 
-このテンプレートのバックエンド層は **ヘキサゴナル + DDD + Outbox パターン** で構成されている。
 Todo ドメインの実装が canonical example。新しいドメインを足すときも同じ構造をなぞれば良い。
 
-> **このドキュメントの位置づけ**: 原則 / 抽象概念の出典は `CLAUDE.md`。本ドキュメントは
-> 「その原則を具体的にどう書くか」の写経用パターン集。原則の "なぜ" を辿るときは
-> CLAUDE.md、同じ構造を別ドメインに展開するときはここ。両方に同じ説明を重複させない。
-
-## レイヤー責務一覧
-
-| レイヤー | 責務 | 依存方向 |
-|---|---|---|
-| Domain | エンティティ / 値オブジェクト / ドメインイベント / ポート定義 | 何にも依存しない |
-| Application | usecase オーケストレーション / DI / Outbox 連携 | → Domain |
-| Adapter | DB / 外部 API の具体実装 | → Domain (port を実装) |
-| Presentation | server function 境界 / エラーシリアライズ | → Application |
+> 原則 / 抽象概念は `CLAUDE.md` を参照。本ドキュメントは「具体的にどう書くか」の
+> 写経用パターン集。
 
 ## ファイル配置
 
@@ -69,8 +58,7 @@ app/core/
         └── migrations/
 
 app/lib/
-├── error.ts                       CodedError 基底 + SerializedErrorBase / FieldErrors / SerializableError interface（構造のみ。union は presentation で組立）
-└── path.ts
+└── error.ts                       CodedError 基底 + SerializedErrorBase / FieldErrors / SerializableError interface（構造のみ。union は presentation で組立）
 ```
 
 ## Domain Layer
@@ -96,7 +84,7 @@ export const FooId = {
 - factory が唯一の作成経路
 - 不正値は `BusinessRuleError` を throw（Result 型は使わない）
 - **`generate()` は置かない**。id 生成は application 層の `IdGenerator` port 経由
-- domain は id を「不透明な非空文字列」として扱う。format（UUIDv7 / ULID / KSUID 等）は `IdGenerator` 実装の責務で、storage adapter が rehydration 時に再検証する（`isUuidV7` 参照）。これで生成側の format を差し替えても VO を触らない
+- domain は id を「不透明な非空文字列」として扱う。format（UUIDv7 / ULID / KSUID 等）は `IdGenerator` 実装の責務で、storage adapter が rehydration 時に `IdGenerator.validate(id)` で再検証する。生成と検証を同じ port にまとめることで、generator を差し替えたときに validator もペアで自動的に切り替わり、VO を触らずに format を入れ替えられる
 
 ### Entity
 
@@ -307,7 +295,7 @@ export async function createContainer(config: ServerConfig): Promise<Container> 
       SystemClock,
       UuidV7Generator,
     ),
-    outboxRepository: new DrizzleSqliteOutboxRepository(db),
+    outboxRepository: new DrizzleSqliteOutboxRepository(db, UuidV7Generator),
     clock: SystemClock,
     idGenerator: UuidV7Generator,
     logger: ConsoleLogger,

@@ -4,7 +4,11 @@ import type {
 } from "@/core/application/execution/unitOfWork";
 import type { Clock } from "@/core/application/ports/clock";
 import type { IdGenerator } from "@/core/application/ports/idGenerator";
-import { type DomainEvent, EventId } from "@/core/domain/common/event";
+import {
+  attachEventIds,
+  type DomainEvent,
+  EventId,
+} from "@/core/domain/common/event";
 import type { Database, Executor } from "./client";
 import { DrizzleSqliteOutboxRepository } from "./repositories/outboxRepository";
 import { DrizzleSqliteTodoRepository } from "./repositories/todoRepository";
@@ -100,8 +104,14 @@ export class DrizzleSqliteUnitOfWorkProvider implements UnitOfWorkProvider {
   private runOnce<T>(fn: (ctx: UnitOfWorkContext) => Promise<T>): Promise<T> {
     return this.db.transaction(async (tx) => {
       const executor: Executor = tx;
-      const todoRepository = new DrizzleSqliteTodoRepository(executor);
-      const outbox = new DrizzleSqliteOutboxRepository(executor);
+      const todoRepository = new DrizzleSqliteTodoRepository(
+        executor,
+        this.idGenerator,
+      );
+      const outbox = new DrizzleSqliteOutboxRepository(
+        executor,
+        this.idGenerator,
+      );
       const collected: DomainEvent[] = [];
       const ctx: UnitOfWorkContext = {
         todoRepository,
@@ -110,12 +120,11 @@ export class DrizzleSqliteUnitOfWorkProvider implements UnitOfWorkProvider {
         // application-layer concern. Domain factories return identity-less
         // drafts; usecases never see `idGenerator`.
         collectEvents: (drafts) => {
-          for (const draft of drafts) {
-            collected.push({
-              ...draft,
-              id: EventId.create(this.idGenerator.next()),
-            } as DomainEvent);
-          }
+          collected.push(
+            ...attachEventIds(drafts, () =>
+              EventId.create(this.idGenerator.next()),
+            ),
+          );
         },
       };
 

@@ -1,12 +1,12 @@
 import type { WithEventDrafts } from "@/core/domain/common/event";
+import { Version } from "@/core/domain/common/version";
 import { type TodoEvent, TodoEvents } from "./events";
-import { TodoId, TodoTitle } from "./valueObject";
+import { TodoId, TodoStatus, TodoTitle } from "./valueObject";
 
 type TodoBase = Readonly<{
   id: TodoId;
   title: TodoTitle;
-  // Monotonic revision counter for optimistic locking.
-  version: number;
+  version: Version;
   createdAt: Date;
   updatedAt: Date;
 }>;
@@ -23,7 +23,7 @@ function complete(
   const next: CompletedTodo = {
     ...todo,
     status: "completed",
-    version: todo.version + 1,
+    version: Version.next(todo.version),
     updatedAt: now,
   };
   return {
@@ -39,7 +39,7 @@ function reopen(
   const next: ActiveTodo = {
     ...todo,
     status: "active",
-    version: todo.version + 1,
+    version: Version.next(todo.version),
     updatedAt: now,
   };
   return {
@@ -60,7 +60,7 @@ function rename(
   const next: Todo = {
     ...todo,
     title,
-    version: todo.version + 1,
+    version: Version.next(todo.version),
     updatedAt: now,
   };
   return {
@@ -68,6 +68,17 @@ function rename(
     eventDrafts: [TodoEvents.renamed(next.id, title, now)],
   };
 }
+
+// Loose-typed because adapters feed untrusted persistence rows; each field
+// is re-validated through its value object inside `reconstruct`.
+type ReconstructInput = Readonly<{
+  id: string;
+  title: string;
+  status: string;
+  version: number;
+  createdAt: Date;
+  updatedAt: Date;
+}>;
 
 export const Todo = {
   isActive: (todo: Todo): todo is ActiveTodo => todo.status === "active",
@@ -78,12 +89,11 @@ export const Todo = {
     params: { id: string; title: string },
     now: Date,
   ): WithEventDrafts<ActiveTodo, TodoEvent> => {
-    const id = TodoId.create(params.id);
     const todo: ActiveTodo = {
       status: "active",
-      id,
+      id: TodoId.create(params.id),
       title: TodoTitle.create(params.title),
-      version: 0,
+      version: Version.initial(),
       createdAt: now,
       updatedAt: now,
     };
@@ -91,6 +101,20 @@ export const Todo = {
       entity: todo,
       eventDrafts: [TodoEvents.created(todo.id, todo.title, now)],
     };
+  },
+
+  reconstruct: (input: ReconstructInput): Todo => {
+    const base = {
+      id: TodoId.create(input.id),
+      title: TodoTitle.create(input.title),
+      version: Version.create(input.version),
+      createdAt: input.createdAt,
+      updatedAt: input.updatedAt,
+    };
+    const status = TodoStatus.create(input.status);
+    return status === "completed"
+      ? ({ ...base, status } satisfies CompletedTodo)
+      : ({ ...base, status } satisfies ActiveTodo);
   },
 
   rename,

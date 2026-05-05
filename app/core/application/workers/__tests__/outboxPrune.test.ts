@@ -60,7 +60,10 @@ function makeContainer(overrides: Partial<Container>): Container {
     outboxRepository:
       overrides.outboxRepository ?? makeStubOutboxRepository({ deleted: 0 }),
     clock: overrides.clock ?? { now: () => new Date(0) },
-    idGenerator: { next: () => "00000000-0000-7000-8000-000000000000" },
+    idGenerator: {
+      next: () => "00000000-0000-7000-8000-000000000000",
+      validate: () => true,
+    },
     logger: overrides.logger ?? new FakeLogger(),
     shutdown: async () => {},
     ...overrides,

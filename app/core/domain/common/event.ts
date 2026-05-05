@@ -68,3 +68,14 @@ export type WithEventDrafts<
   entity: TEntity;
   eventDrafts: readonly EventDraft<TEvent>[];
 }>;
+
+// `Omit<TEvent, "id"> & { id: EventId }` is structurally `TEvent`, but TS
+// cannot prove that for arbitrary distributive `TEvent`. The unsafe cast is
+// centralised here so the assumption lives in exactly one place — callers
+// see a fully typed `TEvent[]`.
+export function attachEventIds<TEvent extends DomainEvent>(
+  drafts: readonly EventDraft<TEvent>[],
+  mintId: () => EventId,
+): readonly TEvent[] {
+  return drafts.map((draft) => ({ ...draft, id: mintId() }) as TEvent);
+}

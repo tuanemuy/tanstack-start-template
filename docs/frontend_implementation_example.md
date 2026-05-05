@@ -232,12 +232,8 @@ import { CompositeComponent } from "@tanstack/react-start/rsc";
 
 両方とも以下を吸収する:
 
-- `getContainer()` の **dynamic import**。server adapter graph が client の
-  static import グラフに混入する事故を構造的にブロックする (`import
-  "@tanstack/react-start/server-only"` は runtime ガードに過ぎないので、
-  静的 import を 1 行追加された時点では検知できない)。
-- usecase モジュールの **dynamic import**（同じ理由 + container 取得と
-  parallel load）。
+- `getContainer()` と usecase モジュールの **dynamic import**（理由は
+  `serverAction.ts` の JSDoc 参照）と parallel load。
 - `serverAction` は `defineServerFn` + `inputValidator(schema)` も束ねる。
   handler は `({ data, container }, module) => ...` の 1 行で書ける。
 

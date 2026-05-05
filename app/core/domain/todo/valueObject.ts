@@ -42,3 +42,17 @@ export const TodoTitle = {
     return trimmed as TodoTitle;
   },
 };
+
+export type TodoStatus = "active" | "completed";
+
+export const TodoStatus = {
+  create: (raw: string): TodoStatus => {
+    if (raw !== "active" && raw !== "completed") {
+      throw new BusinessRuleError(
+        TodoErrorCode.InvalidStatus,
+        `Invalid todo status: ${raw}`,
+      );
+    }
+    return raw;
+  },
+};

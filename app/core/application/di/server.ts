@@ -39,7 +39,7 @@ export async function createContainer(
       SystemClock,
       UuidV7Generator,
     ),
-    outboxRepository: new DrizzleSqliteOutboxRepository(db),
+    outboxRepository: new DrizzleSqliteOutboxRepository(db, UuidV7Generator),
     clock: SystemClock,
     idGenerator: UuidV7Generator,
     logger: ConsoleLogger,

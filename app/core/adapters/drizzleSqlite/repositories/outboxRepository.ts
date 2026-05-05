@@ -11,7 +11,7 @@ import {
   sql,
 } from "drizzle-orm";
 import { SystemError, SystemErrorCode } from "@/core/application/errors";
-import { isUuidV7 } from "@/core/application/ports/idGenerator";
+import type { IdGenerator } from "@/core/application/ports/idGenerator";
 import type {
   OutboxEntry,
   OutboxFailure,
@@ -24,25 +24,28 @@ import { mapDbError } from "./helpers";
 
 type OutboxEventRow = typeof outboxEvents.$inferSelect;
 
-function rowToEntry(row: OutboxEventRow): OutboxEntry {
-  if (!isUuidV7(row.id)) {
-    throw new SystemError(
-      SystemErrorCode.DataIntegrityError,
-      `Stored outbox event has malformed id: ${row.id}`,
-    );
-  }
-  return {
-    id: row.id,
-    type: row.eventType,
-    payload: row.payload,
-    occurredAt: row.occurredAt,
-    aggregateId: row.aggregateId,
-    attempts: row.attempts,
-  };
-}
-
 export class DrizzleSqliteOutboxRepository implements OutboxRepository {
-  constructor(private readonly executor: Executor) {}
+  constructor(
+    private readonly executor: Executor,
+    private readonly idGenerator: IdGenerator,
+  ) {}
+
+  private rowToEntry(row: OutboxEventRow): OutboxEntry {
+    if (!this.idGenerator.validate(row.id)) {
+      throw new SystemError(
+        SystemErrorCode.DataIntegrityError,
+        `Stored outbox event has malformed id: ${row.id}`,
+      );
+    }
+    return {
+      id: row.id,
+      type: row.eventType,
+      payload: row.payload,
+      occurredAt: row.occurredAt,
+      aggregateId: row.aggregateId,
+      attempts: row.attempts,
+    };
+  }
 
   async save(events: readonly DomainEvent[], now: Date): Promise<void> {
     if (events.length === 0) return;
@@ -76,7 +79,7 @@ export class DrizzleSqliteOutboxRepository implements OutboxRepository {
         )
         .orderBy(asc(outboxEvents.createdAt), asc(outboxEvents.id))
         .limit(limit);
-      return rows.map(rowToEntry);
+      return rows.map((row) => this.rowToEntry(row));
     });
   }
 
