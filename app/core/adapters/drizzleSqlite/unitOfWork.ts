@@ -13,6 +13,18 @@ const RETRYABLE_SQLITE_CODES: ReadonlySet<string> = new Set([
   "SQLITE_LOCKED",
 ]);
 
+function getErrorCode(err: unknown): string | null {
+  if (
+    typeof err === "object" &&
+    err !== null &&
+    "code" in err &&
+    typeof err.code === "string"
+  ) {
+    return err.code;
+  }
+  return null;
+}
+
 // Walks the `cause` chain because `mapDbError` wraps driver errors in
 // `SystemError`, which exposes its own SystemErrorCode on `.code` and stashes
 // the original SQLite error (carrying SQLITE_BUSY / SQLITE_LOCKED) on `.cause`.
@@ -21,11 +33,11 @@ function isRetryableError(error: unknown): boolean {
   const seen = new Set<unknown>();
   while (current instanceof Error && !seen.has(current)) {
     seen.add(current);
-    const code = (current as { code?: unknown }).code;
-    if (typeof code === "string" && RETRYABLE_SQLITE_CODES.has(code)) {
+    const code = getErrorCode(current);
+    if (code !== null && RETRYABLE_SQLITE_CODES.has(code)) {
       return true;
     }
-    current = (current as { cause?: unknown }).cause;
+    current = current.cause;
   }
   return false;
 }
