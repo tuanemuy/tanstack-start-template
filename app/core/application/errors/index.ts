@@ -76,7 +76,6 @@ export function isConflictError(error: unknown): error is ConflictError {
  * your first external adapter, or keep as reference.
  */
 export const SystemErrorCode = {
-  InternalServerError: "INTERNAL_SERVER_ERROR",
   DatabaseError: "DATABASE_ERROR",
   DataIntegrityError: "DATA_INTEGRITY_ERROR",
   NetworkError: "NETWORK_ERROR",
