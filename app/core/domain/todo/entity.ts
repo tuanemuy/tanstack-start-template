@@ -1,4 +1,4 @@
-import type { EventId, WithEvents } from "@/core/domain/common/event";
+import type { WithEventDrafts } from "@/core/domain/common/event";
 import { type TodoEvent, TodoEvents } from "./events";
 import { TodoId, TodoTitle } from "./valueObject";
 
@@ -18,9 +18,8 @@ export type Todo = ActiveTodo | CompletedTodo;
 
 function complete(
   todo: ActiveTodo,
-  eventId: EventId,
   now: Date,
-): WithEvents<CompletedTodo, TodoEvent> {
+): WithEventDrafts<CompletedTodo, TodoEvent> {
   const next: CompletedTodo = {
     ...todo,
     status: "completed",
@@ -29,15 +28,14 @@ function complete(
   };
   return {
     entity: next,
-    events: [TodoEvents.toggled(eventId, next.id, true, now)],
+    eventDrafts: [TodoEvents.toggled(next.id, true, now)],
   };
 }
 
 function reopen(
   todo: CompletedTodo,
-  eventId: EventId,
   now: Date,
-): WithEvents<ActiveTodo, TodoEvent> {
+): WithEventDrafts<ActiveTodo, TodoEvent> {
   const next: ActiveTodo = {
     ...todo,
     status: "active",
@@ -46,19 +44,18 @@ function reopen(
   };
   return {
     entity: next,
-    events: [TodoEvents.toggled(eventId, next.id, false, now)],
+    eventDrafts: [TodoEvents.toggled(next.id, false, now)],
   };
 }
 
 function rename(
   todo: Todo,
   newTitle: string,
-  eventId: EventId,
   now: Date,
-): WithEvents<Todo, TodoEvent> {
+): WithEventDrafts<Todo, TodoEvent> {
   const title = TodoTitle.create(newTitle);
   if (title === todo.title) {
-    return { entity: todo, events: [] };
+    return { entity: todo, eventDrafts: [] };
   }
   const next: Todo = {
     ...todo,
@@ -68,7 +65,7 @@ function rename(
   };
   return {
     entity: next,
-    events: [TodoEvents.renamed(eventId, next.id, title, now)],
+    eventDrafts: [TodoEvents.renamed(next.id, title, now)],
   };
 }
 
@@ -78,9 +75,9 @@ export const Todo = {
     todo.status === "completed",
 
   create: (
-    params: { id: string; eventId: EventId; title: string },
+    params: { id: string; title: string },
     now: Date,
-  ): WithEvents<ActiveTodo, TodoEvent> => {
+  ): WithEventDrafts<ActiveTodo, TodoEvent> => {
     const id = TodoId.create(params.id);
     const todo: ActiveTodo = {
       status: "active",
@@ -92,7 +89,7 @@ export const Todo = {
     };
     return {
       entity: todo,
-      events: [TodoEvents.created(params.eventId, todo.id, todo.title, now)],
+      eventDrafts: [TodoEvents.created(todo.id, todo.title, now)],
     };
   },
 

@@ -34,7 +34,11 @@ export async function createContainer(
   const { databaseUrl: _databaseUrl, ...appConfig } = config;
   return {
     config: appConfig satisfies AppConfig,
-    unitOfWorkProvider: new DrizzleSqliteUnitOfWorkProvider(db, SystemClock),
+    unitOfWorkProvider: new DrizzleSqliteUnitOfWorkProvider(
+      db,
+      SystemClock,
+      UuidV7Generator,
+    ),
     outboxRepository: new DrizzleSqliteOutboxRepository(db),
     clock: SystemClock,
     idGenerator: UuidV7Generator,

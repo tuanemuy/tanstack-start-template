@@ -61,7 +61,11 @@ export async function createTestContainer(
       appUrl: "http://localhost:3000",
       ...options.config,
     },
-    unitOfWorkProvider: new DrizzleSqliteUnitOfWorkProvider(db, SystemClock),
+    unitOfWorkProvider: new DrizzleSqliteUnitOfWorkProvider(
+      db,
+      SystemClock,
+      UuidV7Generator,
+    ),
     outboxRepository: new DrizzleSqliteOutboxRepository(db),
     clock: SystemClock,
     idGenerator: UuidV7Generator,

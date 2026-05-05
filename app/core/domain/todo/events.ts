@@ -1,4 +1,4 @@
-import type { DomainEventBase, EventId } from "@/core/domain/common/event";
+import type { DomainEventBase, EventDraft } from "@/core/domain/common/event";
 import type { TodoId, TodoTitle } from "./valueObject";
 
 export type TodoCreatedEvent = DomainEventBase<
@@ -27,14 +27,14 @@ export type TodoEvent =
   | TodoRenamedEvent
   | TodoDeletedEvent;
 
+// Domain factories return identity-less drafts; `EventId` is attached by the
+// application layer so the domain remains free of `IdGenerator` concerns.
 export const TodoEvents = {
   created: (
-    id: EventId,
     todoId: TodoId,
     title: TodoTitle,
     occurredAt: Date,
-  ): TodoCreatedEvent => ({
-    id,
+  ): EventDraft<TodoCreatedEvent> => ({
     type: "todo.created",
     payload: { todoId, title },
     occurredAt,
@@ -42,12 +42,10 @@ export const TodoEvents = {
   }),
 
   toggled: (
-    id: EventId,
     todoId: TodoId,
     completed: boolean,
     occurredAt: Date,
-  ): TodoToggledEvent => ({
-    id,
+  ): EventDraft<TodoToggledEvent> => ({
     type: "todo.toggled",
     payload: { todoId, completed },
     occurredAt,
@@ -55,12 +53,10 @@ export const TodoEvents = {
   }),
 
   renamed: (
-    id: EventId,
     todoId: TodoId,
     title: TodoTitle,
     occurredAt: Date,
-  ): TodoRenamedEvent => ({
-    id,
+  ): EventDraft<TodoRenamedEvent> => ({
     type: "todo.renamed",
     payload: { todoId, title },
     occurredAt,
@@ -68,11 +64,9 @@ export const TodoEvents = {
   }),
 
   deleted: (
-    id: EventId,
     todoId: TodoId,
     occurredAt: Date,
-  ): TodoDeletedEvent => ({
-    id,
+  ): EventDraft<TodoDeletedEvent> => ({
     type: "todo.deleted",
     payload: { todoId },
     occurredAt,

@@ -3,7 +3,8 @@ import type {
   UnitOfWorkProvider,
 } from "@/core/application/execution/unitOfWork";
 import type { Clock } from "@/core/application/ports/clock";
-import type { DomainEvent } from "@/core/domain/common/event";
+import type { IdGenerator } from "@/core/application/ports/idGenerator";
+import { type DomainEvent, EventId } from "@/core/domain/common/event";
 import type { Database, Executor } from "./client";
 import { DrizzleSqliteOutboxRepository } from "./repositories/outboxRepository";
 import { DrizzleSqliteTodoRepository } from "./repositories/todoRepository";
@@ -73,6 +74,7 @@ export class DrizzleSqliteUnitOfWorkProvider implements UnitOfWorkProvider {
   constructor(
     private readonly db: Database,
     private readonly clock: Clock,
+    private readonly idGenerator: IdGenerator,
     private readonly retryConfig: DrizzleSqliteUnitOfWorkRetryConfig = DEFAULT_RETRY_CONFIG,
   ) {}
 
@@ -103,8 +105,17 @@ export class DrizzleSqliteUnitOfWorkProvider implements UnitOfWorkProvider {
       const collected: DomainEvent[] = [];
       const ctx: UnitOfWorkContext = {
         todoRepository,
-        collectEvents: (events) => {
-          collected.push(...events);
+        // `EventId` is minted here, on the path between domain emission and
+        // outbox persistence — keeping id generation a single, centralised
+        // application-layer concern. Domain factories return identity-less
+        // drafts; usecases never see `idGenerator`.
+        collectEvents: (drafts) => {
+          for (const draft of drafts) {
+            collected.push({
+              ...draft,
+              id: EventId.create(this.idGenerator.next()),
+            } as DomainEvent);
+          }
         },
       };
 

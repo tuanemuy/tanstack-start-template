@@ -1,4 +1,3 @@
-import { EventId } from "@/core/domain/common/event";
 import { Todo } from "@/core/domain/todo/entity";
 import { NotFoundError } from "../errors";
 import type { ServiceArgs } from "../types";
@@ -29,16 +28,10 @@ export async function renameTodo({
         );
       }
 
-      const eventId = EventId.create(container.idGenerator.next());
-      const { entity, events } = Todo.rename(
-        current,
-        input.title,
-        eventId,
-        now,
-      );
-      if (events.length === 0) return current;
+      const { entity, eventDrafts } = Todo.rename(current, input.title, now);
+      if (eventDrafts.length === 0) return current;
       await todoRepository.save(entity);
-      collectEvents(events);
+      collectEvents(eventDrafts);
       return entity;
     },
   );

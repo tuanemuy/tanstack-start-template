@@ -1,4 +1,4 @@
-import { EventId } from "@/core/domain/common/event";
+import type { EventDraft } from "@/core/domain/common/event";
 import { Todo } from "@/core/domain/todo/entity";
 import type { TodoEvent } from "@/core/domain/todo/events";
 import { NotFoundError } from "../errors";
@@ -21,7 +21,6 @@ export async function changeTodoStatus({
   input,
 }: ServiceArgs<ChangeTodoStatusInput>): Promise<ChangeTodoStatusOutput> {
   const now = container.clock.now();
-  const eventId = EventId.create(container.idGenerator.next());
 
   const next = await container.unitOfWorkProvider.run(
     async ({ todoRepository, collectEvents }) => {
@@ -33,10 +32,10 @@ export async function changeTodoStatus({
         );
       }
 
-      const transition = setStatusIfNeeded(current, input.status, eventId, now);
+      const transition = setStatusIfNeeded(current, input.status, now);
       if (transition === null) return current;
       await todoRepository.save(transition.entity);
-      collectEvents(transition.events);
+      collectEvents(transition.eventDrafts);
       return transition.entity;
     },
   );
@@ -47,13 +46,15 @@ export async function changeTodoStatus({
 function setStatusIfNeeded(
   todo: Todo,
   status: TodoStatusInput,
-  eventId: EventId,
   now: Date,
-): { entity: Todo; events: readonly TodoEvent[] } | null {
+): {
+  entity: Todo;
+  eventDrafts: readonly EventDraft<TodoEvent>[];
+} | null {
   if (status === "completed") {
     if (Todo.isCompleted(todo)) return null;
-    return Todo.complete(todo, eventId, now);
+    return Todo.complete(todo, now);
   }
   if (Todo.isActive(todo)) return null;
-  return Todo.reopen(todo, eventId, now);
+  return Todo.reopen(todo, now);
 }

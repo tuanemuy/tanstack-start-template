@@ -14,12 +14,12 @@ const eventId = (n: number): EventId =>
 describe("todoEventDecoders", () => {
   it("decodes a valid toggled payload without coercion", () => {
     const id = todoId(1);
-    const event = TodoEvents.toggled(eventId(1), id, false, T0);
+    const draft = TodoEvents.toggled(id, false, T0);
 
-    const decoded = todoEventDecoders["todo.toggled"](event.payload, {
-      id: event.id,
-      occurredAt: event.occurredAt,
-      aggregateId: event.aggregateId,
+    const decoded = todoEventDecoders["todo.toggled"](draft.payload, {
+      id: eventId(1),
+      occurredAt: draft.occurredAt,
+      aggregateId: draft.aggregateId,
     });
 
     expect(decoded.payload.completed).toBe(false);

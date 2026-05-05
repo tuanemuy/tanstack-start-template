@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { FakeIdGenerator } from "@/core/application/__tests__/fakes";
 import { setupTestContainer } from "@/core/application/__tests__/helpers";
 import { isConflictError } from "@/core/application/errors";
-import { EventId } from "@/core/domain/common/event";
 import { Todo } from "@/core/domain/todo/entity";
 import { TodoId, TodoTitle } from "@/core/domain/todo/valueObject";
 import * as schema from "../schema";
@@ -12,10 +11,8 @@ describe("DrizzleSqliteTodoRepository (integration)", () => {
   const NOW = new Date("2026-01-01T00:00:00.000Z");
 
   const ids = new FakeIdGenerator();
-  const nextEventId = () => EventId.create(ids.next());
   const nextTodoId = () => TodoId.create(ids.next());
-  const make = (title: string) =>
-    Todo.create({ id: nextTodoId(), eventId: nextEventId(), title }, NOW);
+  const make = (title: string) => Todo.create({ id: nextTodoId(), title }, NOW);
 
   it("save → findById round-trips an ActiveTodo with all fields intact", async () => {
     const container = getContainer();
@@ -51,7 +48,7 @@ describe("DrizzleSqliteTodoRepository (integration)", () => {
       await todoRepository.save(active);
     });
 
-    const { entity: completed } = Todo.complete(active, nextEventId(), NOW);
+    const { entity: completed } = Todo.complete(active, NOW);
     await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
       await todoRepository.save(completed);
     });
@@ -70,7 +67,7 @@ describe("DrizzleSqliteTodoRepository (integration)", () => {
       await todoRepository.save(active);
     });
 
-    const { entity: completed } = Todo.complete(active, nextEventId(), NOW);
+    const { entity: completed } = Todo.complete(active, NOW);
     await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
       await todoRepository.save(completed);
     });
@@ -87,16 +84,12 @@ describe("DrizzleSqliteTodoRepository (integration)", () => {
       await todoRepository.save(active);
     });
 
-    const { entity: completedFirst } = Todo.complete(
-      active,
-      nextEventId(),
-      NOW,
-    );
+    const { entity: completedFirst } = Todo.complete(active, NOW);
     await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
       await todoRepository.save(completedFirst);
     });
 
-    const { entity: stale } = Todo.complete(active, nextEventId(), NOW);
+    const { entity: stale } = Todo.complete(active, NOW);
     let caught: unknown;
     try {
       await container.unitOfWorkProvider.run(async ({ todoRepository }) => {

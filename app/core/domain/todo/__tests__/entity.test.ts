@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { EventId } from "@/core/domain/common/event";
 import { isBusinessRuleError } from "@/core/domain/error";
 import { Todo } from "../entity";
 import { TodoErrorCode } from "../errorCode";
@@ -21,32 +20,24 @@ const at = (ms: number) => new Date(T0.getTime() + ms);
 const ID_BASE = "00000000-0000-7000-8000-";
 const id = (n: number): TodoId =>
   TodoId.create(`${ID_BASE}${n.toString(16).padStart(12, "0")}`);
-const eventId = (n: number): EventId =>
-  EventId.create(`${ID_BASE}${(n + 1_000).toString(16).padStart(12, "0")}`);
 
 describe("Todo.create", () => {
   it("produces an active entity with the supplied TodoId", () => {
     const todoId = id(1);
-    const { entity } = Todo.create(
-      { id: todoId, eventId: eventId(1), title: "Buy milk" },
-      T0,
-    );
+    const { entity } = Todo.create({ id: todoId, title: "Buy milk" }, T0);
     expect(entity.status).toBe("active");
     expect(entity.id).toBe(todoId);
     expect(entity.title as unknown as string).toBe("Buy milk");
   });
 
   it("sets createdAt equal to updatedAt at creation time", () => {
-    const { entity } = Todo.create(
-      { id: id(2), eventId: eventId(2), title: "Write docs" },
-      T0,
-    );
+    const { entity } = Todo.create({ id: id(2), title: "Write docs" }, T0);
     expect(entity.createdAt.getTime()).toBe(entity.updatedAt.getTime());
   });
 
   it("uses the provided `now` for both createdAt and updatedAt", () => {
     const { entity } = Todo.create(
-      { id: id(3), eventId: eventId(3), title: "Pinned time" },
+      { id: id(3), title: "Pinned time" },
       at(123),
     );
     expect(entity.createdAt.getTime()).toBe(at(123).getTime());
@@ -54,82 +45,63 @@ describe("Todo.create", () => {
   });
 
   it("initializes version at 0", () => {
-    const { entity } = Todo.create(
-      { id: id(4), eventId: eventId(4), title: "Fresh" },
-      T0,
-    );
+    const { entity } = Todo.create({ id: id(4), title: "Fresh" }, T0);
     expect(entity.version).toBe(0);
   });
 
-  it("emits a single TodoCreatedEvent with matching todoId, title, occurredAt, and supplied event id", () => {
-    const evId = eventId(5);
-    const { entity, events } = Todo.create(
-      { id: id(5), eventId: evId, title: "Buy milk" },
+  it("emits a single TodoCreatedEvent draft with matching todoId, title, and occurredAt", () => {
+    const { entity, eventDrafts } = Todo.create(
+      { id: id(5), title: "Buy milk" },
       at(7),
     );
-    expect(events).toHaveLength(1);
-    const event = events[0];
-    expect(event).toBeDefined();
-    if (!event) return;
-    expect(event.id).toBe(evId);
-    expect(event.type).toBe("todo.created");
-    if (event.type !== "todo.created") return;
-    expect(event.payload.todoId).toBe(entity.id);
-    expect(event.payload.title).toBe(entity.title);
-    expect(event.aggregateId).toBe(entity.id);
-    expect(event.occurredAt.getTime()).toBe(at(7).getTime());
+    expect(eventDrafts).toHaveLength(1);
+    const draft = eventDrafts[0];
+    expect(draft).toBeDefined();
+    if (!draft) return;
+    expect(draft.type).toBe("todo.created");
+    if (draft.type !== "todo.created") return;
+    expect(draft.payload.todoId).toBe(entity.id);
+    expect(draft.payload.title).toBe(entity.title);
+    expect(draft.aggregateId).toBe(entity.id);
+    expect(draft.occurredAt.getTime()).toBe(at(7).getTime());
   });
 });
 
 describe("Todo.complete / Todo.reopen (narrowed transitions)", () => {
   it("complete requires ActiveTodo and returns CompletedTodo", () => {
-    const { entity: active } = Todo.create(
-      { id: id(10), eventId: eventId(10), title: "do it" },
-      T0,
-    );
-    const { entity: completed, events } = Todo.complete(
-      active,
-      eventId(11),
-      at(1),
-    );
+    const { entity: active } = Todo.create({ id: id(10), title: "do it" }, T0);
+    const { entity: completed, eventDrafts } = Todo.complete(active, at(1));
     expect(completed.status).toBe("completed");
     expect(completed.version).toBe(active.version + 1);
-    const event = events[0];
-    if (!event || event.type !== "todo.toggled") {
+    const draft = eventDrafts[0];
+    if (!draft || draft.type !== "todo.toggled") {
       expect.fail("expected a todo.toggled event");
       return;
     }
-    expect(event.payload.completed).toBe(true);
+    expect(draft.payload.completed).toBe(true);
   });
 
   it("reopen requires CompletedTodo and returns ActiveTodo", () => {
-    const { entity: active } = Todo.create(
-      { id: id(20), eventId: eventId(20), title: "do it" },
-      T0,
-    );
-    const { entity: completed } = Todo.complete(active, eventId(21), at(1));
-    const { entity: reopened, events } = Todo.reopen(
-      completed,
-      eventId(22),
-      at(2),
-    );
+    const { entity: active } = Todo.create({ id: id(20), title: "do it" }, T0);
+    const { entity: completed } = Todo.complete(active, at(1));
+    const { entity: reopened, eventDrafts } = Todo.reopen(completed, at(2));
     expect(reopened.status).toBe("active");
     expect(reopened.version).toBe(completed.version + 1);
-    const event = events[0];
-    if (!event || event.type !== "todo.toggled") {
+    const draft = eventDrafts[0];
+    if (!draft || draft.type !== "todo.toggled") {
       expect.fail("expected a todo.toggled event");
       return;
     }
-    expect(event.payload.completed).toBe(false);
+    expect(draft.payload.completed).toBe(false);
   });
 
   it("complete then reopen returns to the original status", () => {
     const { entity: active } = Todo.create(
-      { id: id(30), eventId: eventId(30), title: "round trip" },
+      { id: id(30), title: "round trip" },
       T0,
     );
-    const { entity: completed } = Todo.complete(active, eventId(31), at(1));
-    const { entity: reopened } = Todo.reopen(completed, eventId(32), at(2));
+    const { entity: completed } = Todo.complete(active, at(1));
+    const { entity: reopened } = Todo.reopen(completed, at(2));
     expect(reopened.status).toBe(active.status);
     // Each transition bumps version by 1 — round-trip lands at version 2.
     expect(reopened.version).toBe(active.version + 2);
@@ -138,32 +110,23 @@ describe("Todo.complete / Todo.reopen (narrowed transitions)", () => {
 
 describe("Todo type guards", () => {
   it("isActive / isCompleted narrow correctly", () => {
-    const { entity: active } = Todo.create(
-      { id: id(40), eventId: eventId(40), title: "guards" },
-      T0,
-    );
+    const { entity: active } = Todo.create({ id: id(40), title: "guards" }, T0);
     expect(Todo.isActive(active)).toBe(true);
     expect(Todo.isCompleted(active)).toBe(false);
 
-    const { entity: completed } = Todo.complete(active, eventId(41), at(1));
+    const { entity: completed } = Todo.complete(active, at(1));
     expect(Todo.isActive(completed)).toBe(false);
     expect(Todo.isCompleted(completed)).toBe(true);
   });
 });
 
 describe("Todo.rename", () => {
-  it("updates the title and advances updatedAt with a TodoRenamedEvent", () => {
+  it("updates the title and advances updatedAt with a TodoRenamedEvent draft", () => {
     const { entity: original } = Todo.create(
-      { id: id(50), eventId: eventId(50), title: "Old name" },
+      { id: id(50), title: "Old name" },
       T0,
     );
-    const renameEventId = eventId(51);
-    const { entity: next, events } = Todo.rename(
-      original,
-      "New",
-      renameEventId,
-      at(2),
-    );
+    const { entity: next, eventDrafts } = Todo.rename(original, "New", at(2));
 
     expect(next.title as unknown as string).toBe("New");
     expect(next.id).toBe(original.id);
@@ -172,54 +135,49 @@ describe("Todo.rename", () => {
       original.updatedAt.getTime(),
     );
 
-    expect(events).toHaveLength(1);
-    const event = events[0];
-    expect(event).toBeDefined();
-    if (!event) return;
-    expect(event.id).toBe(renameEventId);
-    expect(event.type).toBe("todo.renamed");
-    if (event.type !== "todo.renamed") return;
-    expect(event.payload.todoId).toBe(original.id);
-    expect(event.payload.title).toBe(next.title);
+    expect(eventDrafts).toHaveLength(1);
+    const draft = eventDrafts[0];
+    expect(draft).toBeDefined();
+    if (!draft) return;
+    expect(draft.type).toBe("todo.renamed");
+    if (draft.type !== "todo.renamed") return;
+    expect(draft.payload.todoId).toBe(original.id);
+    expect(draft.payload.title).toBe(next.title);
   });
 
   it("increments version by 1 when the title actually changes", () => {
     const { entity: original } = Todo.create(
-      { id: id(60), eventId: eventId(60), title: "Before" },
+      { id: id(60), title: "Before" },
       T0,
     );
-    const { entity: next } = Todo.rename(original, "After", eventId(61), at(1));
+    const { entity: next } = Todo.rename(original, "After", at(1));
     expect(next.version).toBe(original.version + 1);
   });
 
   it("is idempotent when the new title equals the current title (after normalization)", () => {
     const { entity: original } = Todo.create(
-      { id: id(70), eventId: eventId(70), title: "Stable" },
+      { id: id(70), title: "Stable" },
       T0,
     );
     // Even when called with a later "now", the no-op renaming must return
     // the same instance and not advance updatedAt — that's the contract that
     // protects against spurious outbox traffic.
-    const { entity: same, events } = Todo.rename(
+    const { entity: same, eventDrafts } = Todo.rename(
       original,
       "  Stable  ",
-      eventId(71),
       at(5),
     );
 
     expect(same).toBe(original);
     expect(same.version).toBe(original.version);
     expect(same.updatedAt.getTime()).toBe(original.updatedAt.getTime());
-    expect(events).toHaveLength(0);
+    expect(eventDrafts).toHaveLength(0);
   });
 
   it("preserves the status variant when renaming a completed todo", () => {
-    const { entity: active } = Todo.create(
-      { id: id(80), eventId: eventId(80), title: "A" },
-      T0,
-    );
-    const { entity: completed } = Todo.complete(active, eventId(81), at(1));
-    const { entity: renamed } = Todo.rename(completed, "B", eventId(82), at(2));
+    const { entity: active } = Todo.create({ id: id(80), title: "A" }, T0);
+    const { entity: completed } = Todo.complete(active, at(1));
+    const { entity: renamed } = Todo.rename(completed, "B", at(2));
     // At the type level `renamed` is inferred as CompletedTodo via the
     // generic signature; at runtime `status` is unchanged.
     expect(renamed.status).toBe("completed");
@@ -232,11 +190,11 @@ describe("Todo.rename", () => {
   // malformed-but-equal inputs silently short-circuit.
   it("throws BusinessRuleError(TitleEmpty) for invalid new title even when current title is valid", () => {
     const { entity: original } = Todo.create(
-      { id: id(90), eventId: eventId(90), title: "valid" },
+      { id: id(90), title: "valid" },
       T0,
     );
     try {
-      Todo.rename(original, "   ", eventId(91), at(1));
+      Todo.rename(original, "   ", at(1));
       expect.fail("should have thrown");
     } catch (error) {
       expect(isBusinessRuleError(error)).toBe(true);

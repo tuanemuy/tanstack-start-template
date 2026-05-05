@@ -1,7 +1,6 @@
 import { asc, isNull } from "drizzle-orm";
 import { describe, expect, it, vi } from "vitest";
 import * as schema from "@/core/adapters/drizzleSqlite/schema";
-import { EventId } from "@/core/domain/common/event";
 import { TodoEvents } from "@/core/domain/todo/events";
 import { TodoId, TodoTitle } from "@/core/domain/todo/valueObject";
 import { FakeIdGenerator, FakeLogger } from "../../__tests__/fakes";
@@ -13,11 +12,10 @@ import { type EventDispatcher, processOutboxEvents } from "../eventRelayWorker";
 
 const T0 = new Date(0);
 
-// A `FakeIdGenerator` shared across the file feeds deterministic ids to the
-// usecase + manual `TodoEvents.*` calls below — keeps assertions focused on
-// outbox behaviour rather than UUID minting.
+// A `FakeIdGenerator` shared across the file feeds deterministic `TodoId`s.
+// Outbox event ids are minted by the container's UoW when drafts are
+// buffered — tests no longer thread `EventId` through manually.
 const ids = new FakeIdGenerator();
-const nextId = (): EventId => EventId.create(ids.next());
 const nextTodoId = (): TodoId => TodoId.create(ids.next());
 
 describe("processOutboxEvents", () => {
@@ -88,9 +86,9 @@ describe("processOutboxEvents", () => {
     const title = TodoTitle.create("batched");
     await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
       collectEvents([
-        TodoEvents.created(nextId(), id, title, T0),
-        TodoEvents.toggled(nextId(), id, true, T0),
-        TodoEvents.deleted(nextId(), id, T0),
+        TodoEvents.created(id, title, T0),
+        TodoEvents.toggled(id, true, T0),
+        TodoEvents.deleted(id, T0),
       ]);
     });
 
@@ -184,7 +182,7 @@ describe("processOutboxEvents", () => {
       createdAt: new Date(0),
     });
     await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
-      collectEvents([TodoEvents.created(nextId(), goodId, goodTitle, T0)]);
+      collectEvents([TodoEvents.created(goodId, goodTitle, T0)]);
     });
 
     const dispatch: EventDispatcher = vi.fn(async () => {});
@@ -212,8 +210,8 @@ describe("processOutboxEvents", () => {
     const title = TodoTitle.create("allSettled");
     await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
       collectEvents([
-        TodoEvents.created(nextId(), idA, title, T0),
-        TodoEvents.created(nextId(), idB, title, T0),
+        TodoEvents.created(idA, title, T0),
+        TodoEvents.created(idB, title, T0),
       ]);
     });
 
@@ -242,7 +240,7 @@ describe("processOutboxEvents", () => {
     const id = nextTodoId();
     const title = TodoTitle.create("all-fail");
     await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
-      collectEvents([TodoEvents.created(nextId(), id, title, T0)]);
+      collectEvents([TodoEvents.created(id, title, T0)]);
     });
 
     const dispatch: EventDispatcher = vi.fn(async () => {
@@ -264,7 +262,7 @@ describe("processOutboxEvents", () => {
     const id = nextTodoId();
     const title = TodoTitle.create("custom-registry");
     await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
-      collectEvents([TodoEvents.created(nextId(), id, title, T0)]);
+      collectEvents([TodoEvents.created(id, title, T0)]);
     });
 
     const dispatch: EventDispatcher = vi.fn(async () => {});
@@ -282,7 +280,7 @@ describe("processOutboxEvents", () => {
     const id = nextTodoId();
     const title = TodoTitle.create("retry-backoff");
     await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
-      collectEvents([TodoEvents.created(nextId(), id, title, T0)]);
+      collectEvents([TodoEvents.created(id, title, T0)]);
     });
 
     const dispatch: EventDispatcher = vi.fn(async () => {
@@ -309,7 +307,7 @@ describe("processOutboxEvents", () => {
     const id = nextTodoId();
     const title = TodoTitle.create("not-yet");
     await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
-      collectEvents([TodoEvents.created(nextId(), id, title, T0)]);
+      collectEvents([TodoEvents.created(id, title, T0)]);
     });
 
     const failing: EventDispatcher = vi.fn(async () => {
@@ -339,7 +337,7 @@ describe("processOutboxEvents", () => {
     const id = nextTodoId();
     const title = TodoTitle.create("poison");
     await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
-      collectEvents([TodoEvents.created(nextId(), id, title, T0)]);
+      collectEvents([TodoEvents.created(id, title, T0)]);
     });
 
     // Pre-bump the row to one attempt below the cap so a single failing
@@ -418,7 +416,7 @@ describe("processOutboxEvents", () => {
     const id = nextTodoId();
     const title = TodoTitle.create("prefix-not-match");
     await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
-      collectEvents([TodoEvents.created(nextId(), id, title, T0)]);
+      collectEvents([TodoEvents.created(id, title, T0)]);
     });
 
     const dispatch: EventDispatcher = vi.fn(async () => {});

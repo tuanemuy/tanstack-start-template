@@ -1,9 +1,17 @@
-import type { DomainEvent } from "@/core/domain/common/event";
+import type { EventDraft } from "@/core/domain/common/event";
 import type { TodoRepository } from "@/core/domain/todo/ports/todoRepository";
 
 export interface UnitOfWorkContext {
   todoRepository: TodoRepository;
-  collectEvents(events: readonly DomainEvent[]): void;
+  /**
+   * Enqueue domain event drafts for outbox flush at commit time.
+   *
+   * Drafts are identity-less by design — `EventId` is minted by the UoW
+   * implementation against the application's `IdGenerator` port and
+   * attached as the draft is buffered. Domain code therefore never touches
+   * id generation, and usecases never thread `idGenerator` through manually.
+   */
+  collectEvents(drafts: readonly EventDraft[]): void;
 }
 
 export interface UnitOfWorkProvider {

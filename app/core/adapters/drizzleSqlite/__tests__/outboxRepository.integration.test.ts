@@ -2,7 +2,11 @@ import { eq, isNull } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { FakeIdGenerator } from "@/core/application/__tests__/fakes";
 import { setupTestContainer } from "@/core/application/__tests__/helpers";
-import { EventId } from "@/core/domain/common/event";
+import {
+  type DomainEvent,
+  type EventDraft,
+  EventId,
+} from "@/core/domain/common/event";
 import { TodoEvents } from "@/core/domain/todo/events";
 import { TodoId, TodoTitle } from "@/core/domain/todo/valueObject";
 import * as schema from "../schema";
@@ -17,14 +21,22 @@ import * as schema from "../schema";
  * - `listPending` skips already-processed rows and returns FIFO order.
  * - `markProcessed` only updates pending rows.
  *
- * Ids are minted from a `FakeIdGenerator` so the tests stay deterministic
- * (same id sequence across runs) — the domain layer no longer ships a
- * `TodoId.generate()`, ids come from the application port.
+ * These tests target the repository directly (`container.outboxRepository`)
+ * rather than going through the UoW. The UoW path mints `EventId`s
+ * internally, which would hide the ids the assertions need to reference;
+ * the repository's `save(events, now)` lets the test stay in control of
+ * both ids and timestamps.
  */
 
 const ids = new FakeIdGenerator();
-const nextId = (): EventId => EventId.create(ids.next());
+const nextEventId = (): EventId => EventId.create(ids.next());
 const nextTodoId = () => TodoId.create(ids.next());
+// `TodoEvents.*` factories return identity-less drafts. The UoW would mint
+// ids internally, but these repository-direct tests need the ids up-front
+// to assert against — so this helper attaches them at construction time.
+const withId = <TEvent extends DomainEvent>(
+  draft: EventDraft<TEvent>,
+): TEvent => ({ ...draft, id: nextEventId() }) as TEvent;
 
 describe("DrizzleSqliteOutboxRepository.save (integration)", () => {
   const getContainer = setupTestContainer();
@@ -33,11 +45,9 @@ describe("DrizzleSqliteOutboxRepository.save (integration)", () => {
     const container = getContainer();
     const todoId = nextTodoId();
     const title = TodoTitle.create("persistence");
-    const event = TodoEvents.created(nextId(), todoId, title, new Date());
+    const event = withId(TodoEvents.created(todoId, title, new Date()));
 
-    await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
-      collectEvents([event]);
-    });
+    await container.outboxRepository.save([event], new Date());
 
     const rows = await container.db.select().from(schema.outboxEvents);
     expect(rows).toHaveLength(1);
@@ -64,11 +74,9 @@ describe("DrizzleSqliteOutboxRepository.listPending (integration)", () => {
     const container = getContainer();
     const todoId = nextTodoId();
     const title = TodoTitle.create("claim");
-    const a = TodoEvents.created(nextId(), todoId, title, new Date(0));
-    const b = TodoEvents.toggled(nextId(), todoId, true, new Date(1000));
-    await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
-      collectEvents([a, b]);
-    });
+    const a = withId(TodoEvents.created(todoId, title, new Date(0)));
+    const b = withId(TodoEvents.toggled(todoId, true, new Date(1000)));
+    await container.outboxRepository.save([a, b], new Date());
 
     // Mark the first one as already processed — it must NOT be re-listed.
     await container.db
@@ -89,12 +97,10 @@ describe("DrizzleSqliteOutboxRepository.listPending (integration)", () => {
     const todoId = nextTodoId();
     const title = TodoTitle.create("ordered");
     const sameTime = new Date(0);
-    const a = TodoEvents.created(nextId(), todoId, title, sameTime);
-    const b = TodoEvents.toggled(nextId(), todoId, true, sameTime);
-    const c = TodoEvents.deleted(nextId(), todoId, sameTime);
-    await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
-      collectEvents([a, b, c]);
-    });
+    const a = withId(TodoEvents.created(todoId, title, sameTime));
+    const b = withId(TodoEvents.toggled(todoId, true, sameTime));
+    const c = withId(TodoEvents.deleted(todoId, sameTime));
+    await container.outboxRepository.save([a, b, c], new Date());
 
     const pending = await container.outboxRepository.listPending(
       10,
@@ -117,12 +123,10 @@ describe("DrizzleSqliteOutboxRepository.pruneProcessed (integration)", () => {
 
     // Three rows: a (processed long ago), b (processed recently),
     // c (still pending). Cutoff between (a) and (b).
-    const a = TodoEvents.created(nextId(), todoId, title, new Date(0));
-    const b = TodoEvents.toggled(nextId(), todoId, true, new Date(0));
-    const c = TodoEvents.deleted(nextId(), todoId, new Date(0));
-    await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
-      collectEvents([a, b, c]);
-    });
+    const a = withId(TodoEvents.created(todoId, title, new Date(0)));
+    const b = withId(TodoEvents.toggled(todoId, true, new Date(0)));
+    const c = withId(TodoEvents.deleted(todoId, new Date(0)));
+    await container.outboxRepository.save([a, b, c], new Date());
 
     const oldProcessedAt = new Date("2020-01-01T00:00:00Z");
     const recentProcessedAt = new Date("2030-01-01T00:00:00Z");
@@ -152,10 +156,8 @@ describe("DrizzleSqliteOutboxRepository.pruneProcessed (integration)", () => {
     const todoId = nextTodoId();
     const title = TodoTitle.create("prune-pending");
 
-    const a = TodoEvents.created(nextId(), todoId, title, new Date(0));
-    await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
-      collectEvents([a]);
-    });
+    const a = withId(TodoEvents.created(todoId, title, new Date(0)));
+    await container.outboxRepository.save([a], new Date());
 
     // Cutoff that would catch every conceivable processedAt — pending row
     // (processedAt IS NULL) must still survive.
@@ -184,10 +186,8 @@ describe("DrizzleSqliteOutboxRepository.pruneProcessed (integration)", () => {
     const todoId = nextTodoId();
     const title = TodoTitle.create("cutoff-boundary");
 
-    const a = TodoEvents.created(nextId(), todoId, title, new Date(0));
-    await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
-      collectEvents([a]);
-    });
+    const a = withId(TodoEvents.created(todoId, title, new Date(0)));
+    await container.outboxRepository.save([a], new Date());
 
     const exact = new Date("2025-01-01T00:00:00Z");
     await container.db
@@ -209,11 +209,9 @@ describe("DrizzleSqliteOutboxRepository.markProcessed (integration)", () => {
     const container = getContainer();
     const todoId = nextTodoId();
     const title = TodoTitle.create("scoped-mark");
-    const a = TodoEvents.created(nextId(), todoId, title, new Date());
-    const b = TodoEvents.toggled(nextId(), todoId, true, new Date());
-    await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
-      collectEvents([a, b]);
-    });
+    const a = withId(TodoEvents.created(todoId, title, new Date()));
+    const b = withId(TodoEvents.toggled(todoId, true, new Date()));
+    await container.outboxRepository.save([a, b], new Date());
 
     const now = new Date();
     await container.outboxRepository.markProcessed([b.id], now);
@@ -229,9 +227,10 @@ describe("DrizzleSqliteOutboxRepository.markProcessed (integration)", () => {
     const container = getContainer();
     const todoId = nextTodoId();
     const title = TodoTitle.create("empty-mark");
-    await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
-      collectEvents([TodoEvents.created(nextId(), todoId, title, new Date())]);
-    });
+    await container.outboxRepository.save(
+      [withId(TodoEvents.created(todoId, title, new Date()))],
+      new Date(),
+    );
 
     await container.outboxRepository.markProcessed([], new Date());
 
