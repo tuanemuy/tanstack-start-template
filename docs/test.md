@@ -32,7 +32,7 @@ concurrent / OCC 挙動を検証する integration 層を分けることで、�
   `:memory:` 上に migration を流したコンテナを組み、afterEach で client を
   close する。
 - **狙い**: transaction rollback、adapter 内蔵の `SQLITE_BUSY` リトライ、
-  `OptimisticLockFailure`、outbox の `listPending` / `markProcessed` を
+  `OptimisticLockFailure`、outbox の `claimPending` / `markProcessed` を
   リアルに確認する。
 - **速度**: unit の 10 倍程度。普段は `pnpm test:unit` で回し、adapter を
   触ったときや PR 前に `pnpm test:integration` を流す。

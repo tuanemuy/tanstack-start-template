@@ -37,12 +37,20 @@ export const outboxEvents = sqliteTable(
     lastError: text("last_error"),
     nextAttemptAt: integer("next_attempt_at", { mode: "timestamp_ms" }),
     failedAt: integer("failed_at", { mode: "timestamp_ms" }),
+    // Claim/lease pair so multiple relay workers cannot dispatch the same
+    // row. `claimed_at` is stamped at claim time; a row is re-claimable
+    // once `claimed_at <= now - leaseMs` (covers crashed workers without
+    // an explicit unclaim step). `claimed_by` is a free-form worker id
+    // (from `IdGenerator`) — used only for diagnostics.
+    claimedAt: integer("claimed_at", { mode: "timestamp_ms" }),
+    claimedBy: text("claimed_by"),
   },
   (table) => [
     // Pending = not yet processed, not quarantined, due for next attempt.
     // The relay worker queries this slice each tick; quarantined rows
     // (`failed_at IS NOT NULL`) are deliberately excluded from the index
-    // so a poison row no longer pollutes the hot path.
+    // so a poison row no longer pollutes the hot path. The claim/lease
+    // filter is checked on top of this slice at claim time.
     index("idx_outbox_pending")
       .on(table.nextAttemptAt, table.createdAt, table.id)
       .where(sql`processed_at IS NULL AND failed_at IS NULL`),

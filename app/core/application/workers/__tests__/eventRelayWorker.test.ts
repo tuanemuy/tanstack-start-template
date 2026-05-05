@@ -302,7 +302,7 @@ describe("processOutboxEvents", () => {
     expect(row.nextAttemptAt).toBeInstanceOf(Date);
   });
 
-  it("excludes rows whose nextAttemptAt is still in the future from listPending", async () => {
+  it("excludes rows whose nextAttemptAt is still in the future from claimPending", async () => {
     const container = getContainer();
     const id = nextTodoId();
     const title = TodoTitle.create("not-yet");
@@ -407,30 +407,32 @@ describe("processOutboxEvents", () => {
     expect(row.lastError).toMatch(/No decoder registered/);
   });
 
-  it("matches by full event type, not by domain prefix", async () => {
-    // Lookup is keyed on the full `event.type` (e.g. `todo.created`), not on
-    // the `"todo"` prefix. A registry that only holds the prefix should NOT
-    // match an event whose type starts with that prefix.
+  it("limits in-flight dispatches to the configured concurrency", async () => {
     const container = getContainer();
-
-    const id = nextTodoId();
-    const title = TodoTitle.create("prefix-not-match");
+    const title = TodoTitle.create("conc");
     await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
-      collectEvents([TodoEvents.created(id, title, T0)]);
+      collectEvents(
+        Array.from({ length: 10 }, () =>
+          TodoEvents.created(nextTodoId(), title, T0),
+        ),
+      );
     });
 
-    const dispatch: EventDispatcher = vi.fn(async () => {});
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const dispatch: EventDispatcher = vi.fn(async () => {
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise<void>((resolve) => setTimeout(resolve, 5));
+      inFlight--;
+    });
+
     const { processed } = await processOutboxEvents(container, dispatch, {
-      // A bare `"todo"` key would have matched under the old prefix-based
-      // lookup; under the full-event-type registry it does not.
-      decoderRegistry: { todo: () => ({}) as never },
+      concurrency: 3,
     });
-    errorSpy.mockRestore();
 
-    expect(processed).toBe(0);
-    expect(dispatch).not.toHaveBeenCalled();
-    const rows = await container.db.select().from(schema.outboxEvents);
-    expect(rows[0]?.processedAt).toBeNull();
+    expect(processed).toBe(10);
+    expect(dispatch).toHaveBeenCalledTimes(10);
+    expect(maxInFlight).toBe(3);
   });
 });

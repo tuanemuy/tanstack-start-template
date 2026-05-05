@@ -36,7 +36,7 @@ function makeStubOutboxRepository({
 }: StubRepoOptions): OutboxRepository {
   return {
     save: vi.fn(async () => {}),
-    listPending: vi.fn(async () => []),
+    claimPending: vi.fn(async () => []),
     markProcessed: vi.fn(async () => {}),
     markFailed: vi.fn(async () => {}),
     pruneProcessed: vi.fn(async (olderThan: Date) => {

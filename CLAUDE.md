@@ -44,7 +44,7 @@ TanStack Start with React 19 / RSC, TanStack Router (file-based routes), Tailwin
 Each of these is enforced in code and documented in library-level JSDoc at the relevant module — read there for the details.
 
 - **Unit of Work** — every transactional usecase runs inside `UnitOfWorkProvider.run(fn)`; the context exposes the repositories the callback may touch and the only path to enqueue domain events.
-- **Outbox / domain events** — events collected during a UoW are persisted transactionally and dispatched out-of-band by a relay worker. Delivery is at-least-once with no ordering guarantee; consumers must be idempotent.
+- **Outbox / domain events** — events collected during a UoW are persisted transactionally and dispatched out-of-band by a relay worker. Delivery is at-least-once with no ordering guarantee; consumers must be idempotent. The relay worker claims rows under a lease so multiple workers cannot dispatch the same row, and a crashed worker's claim is reclaimable once the lease lapses.
 - **Retry strategy** — driver-level transient errors are retried inside the adapter; application code never sees them. There is intentionally no application-level OCC retry decorator.
 - **Input validation** — validated at exactly two points: the transport boundary (shape / DoS) and value-object construction (business invariants). Usecases trust the static type in between.
 
@@ -63,4 +63,4 @@ Each of these is enforced in code and documented in library-level JSDoc at the r
 
 ## Examples
 
-`docs/backend_implementation_example.md`, `docs/frontend_implementation_example.md`. このファイルは原則 / 抽象概念の出典、examples は「具体的にどう書くか」の写経用パターン集。両方に同じ説明を重複させない方針。
+具体的な実装パターンは `docs/backend_implementation_example.md` / `docs/frontend_implementation_example.md` を参照。

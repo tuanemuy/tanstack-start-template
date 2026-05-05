@@ -387,27 +387,36 @@ CLAUDE.md key concepts の通り、Outbox は **at-least-once delivery / orderin
   event payload に必要な状態を全部載せて self-contained にする。
 - **Quarantine（poison row 隔離）** — `attempts` が `maxAttempts`（デフォルト 5）に
   達した行は `failed_at` をセットしてクワランティン化される。partial index で
-  `listPending` から外れるので poison row が hot path をブロックしない。再キックは
+  `claimPending` から外れるので poison row が hot path をブロックしない。再キックは
   `failed_at` / `next_attempt_at` を NULL に戻して `attempts` を 0 リセット。
   decode 失敗（payload schema 不一致）も同じ retry path に乗る — schema 修正後に
   再キックして再 dispatch される。
+- **Multi-worker 安全性（claim/lease）** — 行は claim+select の 1 トランザクションで
+  ロックされ、リース期間内は他 worker から不可視になる。worker クラッシュ時はリース
+  満了で再 claim 可能。複数 worker を起動しても同一行が二重 dispatch されない。
 
 ### ポイント
 
-- 単一プロセス前提（複数プロセスで同じ outbox を回すと競合する設計ではない）
 - decode / dispatch 失敗は logger に出して `attempts++` + exponential backoff で
   `next_attempt_at` を再スケジュール
 
 新しいドメインを足したら、`app/core/application/${domain}/eventDecoders.ts` から
 `<domain>EventDecoders` を export し、`eventRelayWorker.ts` の
-`defaultEventDecoderRegistry` に spread で 1 行追加する：
+`AllDomainEvents` 型ユニオンと `defaultEventDecoderRegistry` の双方に追加する：
 
 ```ts
-export const defaultEventDecoderRegistry: EventDecoderRegistry = {
+type AllDomainEvents = TodoEvent | FooEvent;        // ← union を拡張
+
+export const defaultEventDecoderRegistry = {
   ...todoEventDecoders,
-  ...fooEventDecoders,        // ← 追加
-};
+  ...fooEventDecoders,        // ← decoder を追加
+} satisfies DefaultEventDecoderRegistry;
 ```
+
+`DefaultEventDecoderRegistry` は `AllDomainEvents` から派生する完全マップ型で、
+`satisfies` がドメインを足し忘れたまま decoder だけ書いた／その逆をコンパイルエラーで
+弾く。`EventDecoderRegistry`（`Partial<DefaultEventDecoderRegistry>`）はテスト等で
+override を渡す際の型で、未知の event type を構文レベルで禁止する。
 
 ### Outbox Prune
 

@@ -16,17 +16,19 @@ import { todoEventDecoders } from "../todo/eventDecoders";
 // Consumers must be idempotent keyed on `event.id`.
 export type EventDispatcher = (event: DomainEvent) => Promise<void>;
 
-export type EventDecoderRegistry = Readonly<
-  Record<string, EventDecoder<DomainEvent>>
->;
-
 type AllDomainEvents = TodoEvent;
 
-type DefaultEventDecoderRegistry = {
+export type DefaultEventDecoderRegistry = {
   readonly [K in AllDomainEvents["type"]]: EventDecoder<
     Extract<AllDomainEvents, { type: K }>
   >;
 };
+
+// Caller-supplied registries are scoped to the closed `AllDomainEvents` set
+// so an unknown key (e.g. a typo or a stale event name) cannot slip past the
+// type fence. Add a new event type to `AllDomainEvents` before registering
+// its decoder.
+export type EventDecoderRegistry = Partial<DefaultEventDecoderRegistry>;
 
 export const defaultEventDecoderRegistry = {
   ...todoEventDecoders,
@@ -40,10 +42,23 @@ export type ProcessOutboxEventsOptions = {
   // (1-based: `attempts` after the increment). Capped internally to keep
   // the next-attempt timestamp finite.
   backoffMs?: (attempts: number) => number;
+  // Identifies this worker on the rows it claims (diagnostics only).
+  // Defaults to a fresh id from `container.idGenerator` per tick.
+  workerId?: string;
+  // How long a claimed row stays exclusive to this worker before another
+  // worker is allowed to re-claim it (covers a crashed worker without an
+  // explicit unclaim step). Should comfortably exceed the worst-case
+  // dispatch latency of a single batch.
+  leaseMs?: number;
+  // Maximum number of in-flight `dispatch` calls within a single batch.
+  // Caps fan-out to downstream consumers / external APIs.
+  concurrency?: number;
 };
 
 const DEFAULT_BATCH_SIZE = 100;
 const DEFAULT_MAX_ATTEMPTS = 5;
+const DEFAULT_LEASE_MS = 5 * 60 * 1000; // 5 min
+const DEFAULT_CONCURRENCY = 8;
 const MAX_BACKOFF_MS = 60 * 60 * 1000; // 1h ceiling
 
 const defaultBackoffMs = (attempts: number): number =>
@@ -53,7 +68,13 @@ function decodeEntry(
   entry: OutboxEntry,
   registry: EventDecoderRegistry,
 ): DomainEvent {
-  const decoder = registry[entry.type];
+  // `entry.type` is `string` from the at-rest row; the typed registry is
+  // keyed on `AllDomainEvents["type"]`. Cast at this single lookup point so
+  // unknown row types fall through to the per-row failure path instead of
+  // breaking the strict caller-facing type fence.
+  const decoder = (
+    registry as Readonly<Record<string, EventDecoder<DomainEvent> | undefined>>
+  )[entry.type];
   if (!decoder) {
     throw new Error(`No decoder registered for event type "${entry.type}"`);
   }
@@ -78,10 +99,18 @@ export async function processOutboxEvents(
   const registry = options.decoderRegistry ?? defaultEventDecoderRegistry;
   const maxAttempts = options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
   const backoffMs = options.backoffMs ?? defaultBackoffMs;
-  const { logger, clock, outboxRepository } = container;
+  const leaseMs = options.leaseMs ?? DEFAULT_LEASE_MS;
+  const concurrency = Math.max(1, options.concurrency ?? DEFAULT_CONCURRENCY);
+  const { logger, clock, outboxRepository, idGenerator } = container;
+  const workerId = options.workerId ?? idGenerator.next();
 
   const now = clock.now();
-  const entries = await outboxRepository.listPending(batchSize, now);
+  const entries = await outboxRepository.claimPending({
+    limit: batchSize,
+    now,
+    workerId,
+    leaseMs,
+  });
   if (entries.length === 0) return { processed: 0 };
 
   const failures: OutboxFailure[] = [];
@@ -132,20 +161,25 @@ export async function processOutboxEvents(
     }
   }
 
-  const outcomes: DispatchOutcome[] =
-    decoded.length === 0
-      ? []
-      : (
-          await Promise.allSettled(decoded.map((row) => dispatch(row.event)))
-        ).flatMap((result, index): DispatchOutcome[] => {
-          const row = decoded[index];
-          if (!row) return [];
-          return [
-            result.status === "fulfilled"
-              ? { kind: "success", id: row.id }
-              : { kind: "failure", row, error: result.reason },
-          ];
-        });
+  const outcomes: DispatchOutcome[] = [];
+  if (decoded.length > 0) {
+    let cursor = 0;
+    const runWorker = async (): Promise<void> => {
+      while (cursor < decoded.length) {
+        const index = cursor++;
+        const row = decoded[index];
+        if (!row) continue;
+        try {
+          await dispatch(row.event);
+          outcomes.push({ kind: "success", id: row.id });
+        } catch (error) {
+          outcomes.push({ kind: "failure", row, error });
+        }
+      }
+    };
+    const workerCount = Math.min(concurrency, decoded.length);
+    await Promise.all(Array.from({ length: workerCount }, runWorker));
+  }
 
   const dispatchedIds: EventId[] = [];
   for (const outcome of outcomes) {

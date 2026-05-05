@@ -19,12 +19,23 @@ export type OutboxEntry = Readonly<{
 
 // Per-row failure update applied after a decode or dispatch error.
 // `nextAttemptAt === null` means the row has exhausted its retry budget
-// and should be quarantined (excluded from `listPending`); a non-null
+// and should be quarantined (excluded from `claimPending`); a non-null
 // value schedules the next retry.
 export type OutboxFailure = Readonly<{
   id: string;
   error: string;
   nextAttemptAt: Date | null;
+}>;
+
+// Inputs for an atomic claim-and-list cycle. `workerId` identifies the
+// caller for diagnostics; `leaseMs` is the window after which an
+// outstanding claim is considered abandoned (covers crashed workers
+// without an explicit unclaim step).
+export type ClaimPendingArgs = Readonly<{
+  limit: number;
+  now: Date;
+  workerId: string;
+  leaseMs: number;
 }>;
 
 export interface OutboxRepository {
@@ -33,15 +44,20 @@ export interface OutboxRepository {
   // the application `Clock` so a fake clock freezes outbox `createdAt` too.
   save(events: readonly DomainEvent[], now: Date): Promise<void>;
 
-  // Returns rows that are unprocessed, not quarantined, and whose
-  // scheduled `nextAttemptAt` (if any) has elapsed by `now`.
-  listPending(limit: number, now: Date): Promise<readonly OutboxEntry[]>;
+  // Atomically claims and returns rows that are unprocessed, not
+  // quarantined, due for next attempt, and either unclaimed or whose
+  // outstanding claim has expired (`claimed_at <= now - leaseMs`). The
+  // claim makes the same row invisible to concurrent workers until it
+  // is finalized (`markProcessed` / `markFailed`) or its lease lapses,
+  // so this is safe for multi-worker deployments.
+  claimPending(args: ClaimPendingArgs): Promise<readonly OutboxEntry[]>;
 
   markProcessed(ids: readonly EventId[], now: Date): Promise<void>;
 
   // Increments `attempts`, records the latest error, and either schedules
   // the next retry (`nextAttemptAt`) or quarantines the row by stamping
-  // `failedAt = now` (when `nextAttemptAt === null`).
+  // `failedAt = now` (when `nextAttemptAt === null`). Releases the claim
+  // either way so the row is re-claimable on the next tick.
   markFailed(failures: readonly OutboxFailure[], now: Date): Promise<void>;
 
   pruneProcessed(olderThan: Date): Promise<{ deleted: number }>;
