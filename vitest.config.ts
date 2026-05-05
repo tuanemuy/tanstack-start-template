@@ -14,5 +14,10 @@ export default defineConfig({
     // for `*.integration.test.ts`.
     testTimeout: 15_000,
     hookTimeout: 15_000,
+    // The D1 adapter has its own integration suite that runs inside a
+    // Workers isolate via `vitest.config.integration.ts` (`pnpm test:d1`).
+    // Excluded here because Node-pool execution cannot resolve
+    // `cloudflare:test`.
+    exclude: ["**/node_modules/**", "**/dist/**", "app/core/adapters/d1/**"],
   },
 });

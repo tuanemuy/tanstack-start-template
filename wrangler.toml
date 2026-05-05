@@ -1,0 +1,18 @@
+# Cloudflare Workers configuration.
+#
+# This file is currently used only by the D1 integration test harness
+# (see vitest.config.integration.ts). The TanStack Start app continues
+# to deploy through its existing pipeline against libSQL; D1 is being
+# evaluated in parallel under app/core/adapters/d1/.
+name = "tanstack-start-template"
+compatibility_date = "2026-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# D1 binding name used inside tests as `env.DB`.
+# Tests run against an isolated in-memory D1 provided by Miniflare,
+# so the database_id placeholder is never contacted.
+[[d1_databases]]
+binding = "DB"
+database_name = "tanstack-start-template-d1"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "app/core/adapters/d1/migrations"
