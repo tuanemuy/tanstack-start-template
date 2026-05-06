@@ -7,8 +7,8 @@ import {
 } from "@/core/domain/common/event";
 import { TodoEvents } from "@/core/domain/todo/events";
 import { TodoId, TodoTitle } from "@/core/domain/todo/valueObject";
-import { D1OutboxRepository } from "../repositories/outboxRepository";
 import { PendingBatch } from "../pendingBatch";
+import { D1OutboxRepository } from "../repositories/outboxRepository";
 import * as schema from "../schema";
 import { createTestContainer } from "./helpers";
 
@@ -111,6 +111,31 @@ describe("D1OutboxRepository.claimPending (integration)", () => {
     );
     expect(pending).toHaveLength(1);
     expect(pending[0]?.id).toBe(b.id);
+  });
+
+  it("never returns the same row to two concurrent claimers", async () => {
+    const container = createTestContainer();
+    const todoId = nextTodoId();
+    const events = Array.from({ length: 8 }, (_, i) =>
+      withId(TodoEvents.toggled(todoId, i % 2 === 0, new Date(i))),
+    );
+    await manualSave(container, events, new Date(0));
+
+    const now = new Date(10_000);
+    const [first, second] = await Promise.all([
+      container.outboxRepository.claimPending({
+        ...claimArgs(now),
+        workerId: "worker-A",
+      }),
+      container.outboxRepository.claimPending({
+        ...claimArgs(now),
+        workerId: "worker-B",
+      }),
+    ]);
+
+    const ids = [...first.map((e) => e.id), ...second.map((e) => e.id)];
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids.length).toBe(events.length);
   });
 
   it("hides newly-claimed rows from concurrent claims until the lease lapses", async () => {

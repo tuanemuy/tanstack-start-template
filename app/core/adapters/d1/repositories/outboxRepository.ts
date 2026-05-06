@@ -93,35 +93,36 @@ export class D1OutboxRepository implements OutboxRepository {
     const { limit, now, workerId, leaseMs } = args;
     const claimCutoff = new Date(now.getTime() - leaseMs);
     return mapDbError("Failed to claim pending outbox events", async () => {
-      // Inner SELECT picks eligible rows, outer UPDATE stamps the
-      // claim. D1's primary serializes writes at the database level,
-      // so two workers racing here cannot both UPDATE the same row —
-      // the loser's WHERE no longer matches because `claimed_at` has
-      // already been advanced.
+      // Inner SELECT picks eligible rows; the outer UPDATE re-checks
+      // the same eligibility predicates so that two workers racing on
+      // the same tick can never both stamp the same row. SQLite/D1 do
+      // not guarantee an `IN (subquery)` is evaluated exactly once, so
+      // the redundancy is the correctness guarantee — not the comment
+      // about write serialization.
+      const eligible = and(
+        isNull(outboxEvents.processedAt),
+        isNull(outboxEvents.failedAt),
+        or(
+          isNull(outboxEvents.nextAttemptAt),
+          lte(outboxEvents.nextAttemptAt, now),
+        ),
+        or(
+          isNull(outboxEvents.claimedAt),
+          lte(outboxEvents.claimedAt, claimCutoff),
+        ),
+      );
+
       const eligibleIds = this.db
         .select({ id: outboxEvents.id })
         .from(outboxEvents)
-        .where(
-          and(
-            isNull(outboxEvents.processedAt),
-            isNull(outboxEvents.failedAt),
-            or(
-              isNull(outboxEvents.nextAttemptAt),
-              lte(outboxEvents.nextAttemptAt, now),
-            ),
-            or(
-              isNull(outboxEvents.claimedAt),
-              lte(outboxEvents.claimedAt, claimCutoff),
-            ),
-          ),
-        )
+        .where(eligible)
         .orderBy(asc(outboxEvents.createdAt), asc(outboxEvents.id))
         .limit(limit);
 
       const rows = await this.db
         .update(outboxEvents)
         .set({ claimedAt: now, claimedBy: workerId })
-        .where(inArray(outboxEvents.id, eligibleIds))
+        .where(and(inArray(outboxEvents.id, eligibleIds), eligible))
         .returning();
 
       // RETURNING does not preserve the inner ORDER BY; re-sort so the
