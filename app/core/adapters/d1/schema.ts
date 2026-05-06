@@ -65,6 +65,11 @@ export const outboxEvents = sqliteTable(
   ],
 );
 
+// Name of the CHECK constraint on `_occ_guard.n > 0`. Exported so the
+// adapter's OCC-violation detector can match against it without
+// re-declaring the literal — schema and detector must stay in lockstep.
+export const OCC_GUARD_CHECK_NAME = "occ_guard_positive";
+
 // `_occ_guard` is the abort lever for OCC failures inside a
 // `db.batch()`.
 //
@@ -86,5 +91,5 @@ export const occGuard = sqliteTable(
   {
     n: integer("n").notNull(),
   },
-  (table) => [check("occ_guard_positive", sql`${table.n} > 0`)],
+  (table) => [check(OCC_GUARD_CHECK_NAME, sql`${table.n} > 0`)],
 );

@@ -1,6 +1,6 @@
 import { env } from "cloudflare:test";
-import { drizzle } from "drizzle-orm/d1";
 import { sql } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/d1";
 import { describe, expect, it } from "vitest";
 import { occGuard, outboxEvents, todos } from "../schema";
 

@@ -4,6 +4,7 @@ import {
   SystemError,
   SystemErrorCode,
 } from "@/core/application/errors";
+import { OCC_GUARD_CHECK_NAME } from "../schema";
 
 // Walks the `cause` chain because driver errors (D1's `Error_` from
 // `@cloudflare/workers-types`) are wrapped by Drizzle before reaching the
@@ -22,14 +23,18 @@ function findSqliteCode(error: unknown): string | null {
     if (typeof code === "string" && code.startsWith("SQLITE_")) {
       return code;
     }
-    // D1 surfaces some constraint failures only via the message text:
-    // e.g. "D1_ERROR: CHECK constraint failed: occ_guard_positive".
-    const messageMatch =
-      typeof current.message === "string"
-        ? current.message.match(/SQLITE_\w+/)
-        : null;
-    if (messageMatch) {
-      return messageMatch[0];
+    // D1 surfaces some constraint failures only via the message text,
+    // e.g. "D1_ERROR: UNIQUE constraint failed: todos.id: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_PRIMARYKEY)".
+    // Both the generic and extended form appear in one string, so pick
+    // the longest (most specific) match — otherwise PK / UNIQUE / FK
+    // collisions get silently flattened into a generic CONSTRAINT_VIOLATION.
+    if (typeof current.message === "string") {
+      const matches = current.message.match(/SQLITE_\w+/g);
+      if (matches && matches.length > 0) {
+        return matches.reduce((longest, candidate) =>
+          candidate.length > longest.length ? candidate : longest,
+        );
+      }
     }
     current = (current as { cause?: unknown }).cause;
   }
@@ -39,10 +44,10 @@ function findSqliteCode(error: unknown): string | null {
 // `_occ_guard` is the deferred-batch UoW's abort lever for OCC failures.
 // Detection is by message substring because D1 surfaces CHECK violations
 // only as a generic `D1_ERROR: CHECK constraint failed: <name>` string —
-// no `extendedCode` reaches the adapter boundary. The guard's CHECK is
-// named `occ_guard_positive` (see d1/schema.ts), and that name is what
-// we match on; an unrelated CHECK on another table will not match here
-// and will surface as a `CONSTRAINT_VIOLATION` like any other adapter.
+// no `extendedCode` reaches the adapter boundary. The guard's CHECK name
+// is shared with `d1/schema.ts` via `OCC_GUARD_CHECK_NAME`; an unrelated
+// CHECK on another table will not match here and will surface as a
+// `CONSTRAINT_VIOLATION` like any other adapter.
 export function isOccGuardViolation(error: unknown): boolean {
   let current: unknown = error;
   const seen = new Set<unknown>();
@@ -50,7 +55,7 @@ export function isOccGuardViolation(error: unknown): boolean {
     seen.add(current);
     if (
       typeof current.message === "string" &&
-      current.message.includes("occ_guard_positive")
+      current.message.includes(OCC_GUARD_CHECK_NAME)
     ) {
       return true;
     }
