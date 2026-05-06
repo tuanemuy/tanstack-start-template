@@ -1,6 +1,7 @@
 import { asc, isNull } from "drizzle-orm";
 import { describe, expect, it, vi } from "vitest";
 import * as schema from "@/core/adapters/d1/schema";
+import type { DomainEvent } from "@/core/domain/common/event";
 import { TodoEvents } from "@/core/domain/todo/events";
 import { TodoId, TodoTitle } from "@/core/domain/todo/valueObject";
 import { FakeIdGenerator, FakeLogger } from "../../__tests__/fakes";
@@ -17,6 +18,20 @@ const T0 = new Date(0);
 // buffered — tests no longer thread `EventId` through manually.
 const ids = new FakeIdGenerator();
 const nextTodoId = (): TodoId => TodoId.create(ids.next());
+
+const makeAllSucceed = (): EventDispatcher =>
+  vi.fn(async (events: readonly DomainEvent[]) =>
+    events.map((event) => ({ kind: "success" as const, id: event.id })),
+  );
+
+const makeAllFail = (error: Error): EventDispatcher =>
+  vi.fn(async (events: readonly DomainEvent[]) =>
+    events.map((event) => ({
+      kind: "failure" as const,
+      id: event.id,
+      error,
+    })),
+  );
 
 describe("processOutboxEvents", () => {
   const getContainer = setupTestContainer();
@@ -41,15 +56,21 @@ describe("processOutboxEvents", () => {
     expect(beforeRows).toHaveLength(3);
     expect(beforeRows.every((r) => r.processedAt === null)).toBe(true);
 
-    const dispatch: EventDispatcher = vi.fn(async () => {});
+    const dispatch = makeAllSucceed();
     const { processed } = await processOutboxEvents(container, dispatch);
 
     expect(processed).toBe(3);
-    expect(dispatch).toHaveBeenCalledTimes(3);
+    expect(dispatch).toHaveBeenCalledTimes(1);
 
-    const calls = (dispatch as unknown as { mock: { calls: unknown[][] } }).mock
-      .calls;
-    const events = calls.map((c) => c[0] as { type: string; payload: unknown });
+    const calls = (
+      dispatch as unknown as {
+        mock: { calls: ReadonlyArray<readonly unknown[]> };
+      }
+    ).mock.calls;
+    const events = calls[0]?.[0] as ReadonlyArray<{
+      type: string;
+      payload: unknown;
+    }>;
     expect(events.map((e) => e.type)).toEqual([
       "todo.created",
       "todo.toggled",
@@ -74,7 +95,7 @@ describe("processOutboxEvents", () => {
 
   it("returns 0 and does not call the dispatcher when there is nothing to do", async () => {
     const container = getContainer();
-    const dispatch: EventDispatcher = vi.fn(async () => {});
+    const dispatch = makeAllSucceed();
     const { processed } = await processOutboxEvents(container, dispatch);
     expect(processed).toBe(0);
     expect(dispatch).not.toHaveBeenCalled();
@@ -92,13 +113,19 @@ describe("processOutboxEvents", () => {
       ]);
     });
 
-    const dispatch: EventDispatcher = vi.fn(async () => {});
+    const dispatch = makeAllSucceed();
     const { processed } = await processOutboxEvents(container, dispatch, {
       batchSize: 2,
     });
 
     expect(processed).toBe(2);
-    expect(dispatch).toHaveBeenCalledTimes(2);
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    const calls = (
+      dispatch as unknown as {
+        mock: { calls: ReadonlyArray<readonly unknown[]> };
+      }
+    ).mock.calls;
+    expect((calls[0]?.[0] as readonly unknown[]).length).toBe(2);
     const pending = await container.db
       .select({ id: schema.outboxEvents.id })
       .from(schema.outboxEvents)
@@ -118,7 +145,7 @@ describe("processOutboxEvents", () => {
       createdAt: new Date(),
     });
 
-    const dispatch: EventDispatcher = vi.fn(async () => {});
+    const dispatch = makeAllSucceed();
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const { processed } = await processOutboxEvents(container, dispatch);
     errorSpy.mockRestore();
@@ -144,7 +171,7 @@ describe("processOutboxEvents", () => {
       createdAt: new Date(),
     });
 
-    const dispatch: EventDispatcher = vi.fn(async () => {});
+    const dispatch = makeAllSucceed();
     const { processed } = await processOutboxEvents(
       containerWithLogger,
       dispatch,
@@ -185,13 +212,19 @@ describe("processOutboxEvents", () => {
       collectEvents([TodoEvents.created(goodId, goodTitle, T0)]);
     });
 
-    const dispatch: EventDispatcher = vi.fn(async () => {});
+    const dispatch = makeAllSucceed();
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const { processed } = await processOutboxEvents(container, dispatch);
     errorSpy.mockRestore();
 
     expect(processed).toBe(1);
     expect(dispatch).toHaveBeenCalledTimes(1);
+    const calls = (
+      dispatch as unknown as {
+        mock: { calls: ReadonlyArray<readonly unknown[]> };
+      }
+    ).mock.calls;
+    expect((calls[0]?.[0] as readonly unknown[]).length).toBe(1);
 
     const rows = await container.db
       .select()
@@ -215,16 +248,23 @@ describe("processOutboxEvents", () => {
       ]);
     });
 
-    let call = 0;
-    const dispatch: EventDispatcher = vi.fn(async () => {
-      call += 1;
-      if (call === 1) throw new Error("consumer is angry");
-    });
+    const dispatch: EventDispatcher = vi.fn(
+      async (events: readonly DomainEvent[]) =>
+        events.map((event, index) =>
+          index === 0
+            ? {
+                kind: "failure" as const,
+                id: event.id,
+                error: new Error("consumer is angry"),
+              }
+            : { kind: "success" as const, id: event.id },
+        ),
+    );
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const { processed } = await processOutboxEvents(container, dispatch);
     errorSpy.mockRestore();
 
-    expect(dispatch).toHaveBeenCalledTimes(2);
+    expect(dispatch).toHaveBeenCalledTimes(1);
     expect(processed).toBe(1);
 
     const rows = await container.db.select().from(schema.outboxEvents);
@@ -243,9 +283,7 @@ describe("processOutboxEvents", () => {
       collectEvents([TodoEvents.created(id, title, T0)]);
     });
 
-    const dispatch: EventDispatcher = vi.fn(async () => {
-      throw new Error("consumer is always angry");
-    });
+    const dispatch = makeAllFail(new Error("consumer is always angry"));
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const { processed } = await processOutboxEvents(container, dispatch);
     errorSpy.mockRestore();
@@ -265,7 +303,7 @@ describe("processOutboxEvents", () => {
       collectEvents([TodoEvents.created(id, title, T0)]);
     });
 
-    const dispatch: EventDispatcher = vi.fn(async () => {});
+    const dispatch = makeAllSucceed();
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     const { processed } = await processOutboxEvents(container, dispatch, {
       decoderRegistry: {},
@@ -283,9 +321,7 @@ describe("processOutboxEvents", () => {
       collectEvents([TodoEvents.created(id, title, T0)]);
     });
 
-    const dispatch: EventDispatcher = vi.fn(async () => {
-      throw new Error("transient downstream blip");
-    });
+    const dispatch = makeAllFail(new Error("transient downstream blip"));
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     await processOutboxEvents(container, dispatch, {
       backoffMs: () => 60_000,
@@ -302,6 +338,30 @@ describe("processOutboxEvents", () => {
     expect(row.nextAttemptAt).toBeInstanceOf(Date);
   });
 
+  it("caps a runaway error message before persisting it to last_error", async () => {
+    const container = getContainer();
+    const id = nextTodoId();
+    const title = TodoTitle.create("oversize-error");
+    await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
+      collectEvents([TodoEvents.created(id, title, T0)]);
+    });
+
+    const huge = "x".repeat(20_000);
+    const dispatch = makeAllFail(new Error(huge));
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await processOutboxEvents(container, dispatch, {
+      backoffMs: () => 60_000,
+    });
+    errorSpy.mockRestore();
+
+    const rows = await container.db.select().from(schema.outboxEvents);
+    const row = rows[0];
+    if (!row) return;
+    expect(row.lastError).not.toBeNull();
+    expect(row.lastError?.length ?? 0).toBeLessThanOrEqual(4096);
+    expect(row.lastError).toMatch(/…\(truncated\)$/);
+  });
+
   it("excludes rows whose nextAttemptAt is still in the future from claimPending", async () => {
     const container = getContainer();
     const id = nextTodoId();
@@ -310,9 +370,7 @@ describe("processOutboxEvents", () => {
       collectEvents([TodoEvents.created(id, title, T0)]);
     });
 
-    const failing: EventDispatcher = vi.fn(async () => {
-      throw new Error("first failure");
-    });
+    const failing = makeAllFail(new Error("first failure"));
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     await processOutboxEvents(container, failing, {
       backoffMs: () => 60_000,
@@ -320,7 +378,7 @@ describe("processOutboxEvents", () => {
 
     // Second tick immediately after: row is still cooling off, so the
     // worker should skip it without ever calling dispatch again.
-    const followUp: EventDispatcher = vi.fn(async () => {});
+    const followUp = makeAllSucceed();
     const { processed } = await processOutboxEvents(container, followUp, {
       backoffMs: () => 60_000,
     });
@@ -344,9 +402,7 @@ describe("processOutboxEvents", () => {
     // tick is enough to trip the quarantine branch.
     await container.db.update(schema.outboxEvents).set({ attempts: 1 });
 
-    const dispatch: EventDispatcher = vi.fn(async () => {
-      throw new Error("still angry");
-    });
+    const dispatch = makeAllFail(new Error("still angry"));
     await processOutboxEvents(containerWithLogger, dispatch, {
       maxAttempts: 2,
       backoffMs: () => 60_000,
@@ -364,7 +420,7 @@ describe("processOutboxEvents", () => {
     expect(errors.some((e) => /quarantining/.test(e.message))).toBe(true);
 
     // A subsequent tick must NOT re-pick a quarantined row.
-    const followUp: EventDispatcher = vi.fn(async () => {});
+    const followUp = makeAllSucceed();
     const { processed } = await processOutboxEvents(
       containerWithLogger,
       followUp,
@@ -385,7 +441,7 @@ describe("processOutboxEvents", () => {
       createdAt: new Date(0),
     });
 
-    const dispatch: EventDispatcher = vi.fn(async () => {});
+    const dispatch = makeAllSucceed();
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     // First tick: bumps attempts to 1, schedules retry.
     await processOutboxEvents(container, dispatch, {
@@ -407,9 +463,9 @@ describe("processOutboxEvents", () => {
     expect(row.lastError).toMatch(/No decoder registered/);
   });
 
-  it("limits in-flight dispatches to the configured concurrency", async () => {
+  it("hands the whole decoded batch to the dispatcher in a single call", async () => {
     const container = getContainer();
-    const title = TodoTitle.create("conc");
+    const title = TodoTitle.create("batched-call");
     await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
       collectEvents(
         Array.from({ length: 10 }, () =>
@@ -418,21 +474,78 @@ describe("processOutboxEvents", () => {
       );
     });
 
-    let inFlight = 0;
-    let maxInFlight = 0;
-    const dispatch: EventDispatcher = vi.fn(async () => {
-      inFlight++;
-      maxInFlight = Math.max(maxInFlight, inFlight);
-      await new Promise<void>((resolve) => setTimeout(resolve, 5));
-      inFlight--;
-    });
-
-    const { processed } = await processOutboxEvents(container, dispatch, {
-      concurrency: 3,
-    });
+    const dispatch = makeAllSucceed();
+    const { processed } = await processOutboxEvents(container, dispatch);
 
     expect(processed).toBe(10);
-    expect(dispatch).toHaveBeenCalledTimes(10);
-    expect(maxInFlight).toBe(3);
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    const calls = (
+      dispatch as unknown as {
+        mock: { calls: ReadonlyArray<readonly unknown[]> };
+      }
+    ).mock.calls;
+    expect((calls[0]?.[0] as readonly unknown[]).length).toBe(10);
+  });
+
+  it("treats a thrown dispatcher as a batch-wide failure", async () => {
+    const container = getContainer();
+    const title = TodoTitle.create("all-or-nothing");
+    await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
+      collectEvents([
+        TodoEvents.created(nextTodoId(), title, T0),
+        TodoEvents.created(nextTodoId(), title, T0),
+      ]);
+    });
+
+    const dispatch: EventDispatcher = vi.fn(async () => {
+      throw new Error("sendBatch refused the whole batch");
+    });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { processed } = await processOutboxEvents(container, dispatch, {
+      backoffMs: () => 60_000,
+    });
+    errorSpy.mockRestore();
+
+    expect(processed).toBe(0);
+    const rows = await container.db.select().from(schema.outboxEvents);
+    expect(rows.every((r) => r.processedAt === null)).toBe(true);
+    expect(rows.every((r) => r.attempts === 1)).toBe(true);
+    expect(rows.every((r) => r.lastError?.includes("sendBatch refused"))).toBe(
+      true,
+    );
+  });
+
+  it("treats events missing from the dispatcher's outcomes as failures", async () => {
+    const container = getContainer();
+    const title = TodoTitle.create("partial-outcome");
+    await container.unitOfWorkProvider.run(async ({ collectEvents }) => {
+      collectEvents([
+        TodoEvents.created(nextTodoId(), title, T0),
+        TodoEvents.created(nextTodoId(), title, T0),
+      ]);
+    });
+
+    const dispatch: EventDispatcher = vi.fn(
+      async (events: readonly DomainEvent[]) => {
+        const first = events[0];
+        if (!first) return [];
+        return [{ kind: "success" as const, id: first.id }];
+      },
+    );
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { processed } = await processOutboxEvents(container, dispatch, {
+      backoffMs: () => 60_000,
+    });
+    errorSpy.mockRestore();
+
+    expect(processed).toBe(1);
+    const rows = await container.db
+      .select()
+      .from(schema.outboxEvents)
+      .orderBy(asc(schema.outboxEvents.createdAt));
+    expect(rows[0]?.processedAt).not.toBeNull();
+    expect(rows[1]?.processedAt).toBeNull();
+    expect(rows[1]?.attempts).toBe(1);
+    expect(rows[1]?.lastError).toMatch(/no outcome/);
   });
 });

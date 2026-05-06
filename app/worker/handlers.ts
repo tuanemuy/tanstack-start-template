@@ -20,12 +20,12 @@ import {
 } from "@/core/application/di/server";
 import {
   type EventDispatcher,
-  processOutboxEvents,
   type ProcessOutboxEventsOptions,
+  processOutboxEvents,
 } from "@/core/application/workers/eventRelayWorker";
 import {
-  pruneOutbox,
   type PruneOutboxOptions,
+  pruneOutbox,
 } from "@/core/application/workers/outboxPrune";
 import type { DomainEvent } from "@/core/domain/common/event";
 
@@ -56,16 +56,32 @@ const PRUNE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 /**
  * Cron-driven outbox relay tick. Claims pending rows and dispatches
- * each event to the durable Queue; `processOutboxEvents` marks rows
- * processed iff the producer accepts the message.
+ * the whole decoded batch to the durable Queue in a single
+ * `sendBatch()` call (one subrequest, not N). `sendBatch` is
+ * all-or-nothing, so on rejection every event is reported as a failure
+ * and `processOutboxEvents` schedules them for retry; on success every
+ * event is reported success and the rows are marked processed.
  */
 export async function runRelayTick(
   env: RelayEnv,
   options?: ProcessOutboxEventsOptions,
 ): Promise<{ processed: number }> {
   const container = createContainer(readServerConfig(env));
-  const dispatch: EventDispatcher = async (event: DomainEvent) => {
-    await env.EVENTS_QUEUE.send(event);
+  const dispatch: EventDispatcher = async (events) => {
+    if (events.length === 0) return [];
+    try {
+      await env.EVENTS_QUEUE.sendBatch(events.map((body) => ({ body })));
+      return events.map((event) => ({
+        kind: "success" as const,
+        id: event.id,
+      }));
+    } catch (error) {
+      return events.map((event) => ({
+        kind: "failure" as const,
+        id: event.id,
+        error,
+      }));
+    }
   };
   return processOutboxEvents(container, dispatch, options);
 }

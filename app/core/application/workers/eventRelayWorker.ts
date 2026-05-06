@@ -14,7 +14,31 @@ import { todoEventDecoders } from "../todo/eventDecoders";
 // blocking the hot path. Quarantined rows stay in the table for operator
 // inspection — re-kick them by clearing `failed_at` / `next_attempt_at`.
 // Consumers must be idempotent keyed on `event.id`.
-export type EventDispatcher = (event: DomainEvent) => Promise<void>;
+//
+// The dispatcher receives the full decoded batch of a single relay tick
+// and returns a per-event outcome. The batched contract lets a Cloudflare
+// Queue producer collapse N `send()` subrequests into a single
+// `sendBatch()` call (subrequest-budget friendly), while finer-grained
+// dispatchers (HTTP webhook fan-out, in-process subscribers) can still
+// report per-event failures so a single bad row does not poison the rest
+// of the batch. All-or-nothing dispatchers report the same failure for
+// every event when the underlying call rejects.
+//
+// Outcomes may be returned in any order; rows are matched by event id.
+// A row whose id is missing from the returned outcomes is treated as a
+// failure for safety, so claimed rows always reach a terminal disposition
+// within the tick.
+export type EventDispatchOutcome =
+  | { readonly kind: "success"; readonly id: EventId }
+  | {
+      readonly kind: "failure";
+      readonly id: EventId;
+      readonly error: unknown;
+    };
+
+export type EventDispatcher = (
+  events: readonly DomainEvent[],
+) => Promise<readonly EventDispatchOutcome[]>;
 
 type AllDomainEvents = TodoEvent;
 
@@ -50,15 +74,11 @@ export type ProcessOutboxEventsOptions = {
   // explicit unclaim step). Should comfortably exceed the worst-case
   // dispatch latency of a single batch.
   leaseMs?: number;
-  // Maximum number of in-flight `dispatch` calls within a single batch.
-  // Caps fan-out to downstream consumers / external APIs.
-  concurrency?: number;
 };
 
 const DEFAULT_BATCH_SIZE = 100;
 const DEFAULT_MAX_ATTEMPTS = 5;
 const DEFAULT_LEASE_MS = 5 * 60 * 1000; // 5 min
-const DEFAULT_CONCURRENCY = 8;
 const MAX_BACKOFF_MS = 60 * 60 * 1000; // 1h ceiling
 
 const defaultBackoffMs = (attempts: number): number =>
@@ -85,9 +105,21 @@ function decodeEntry(
   });
 }
 
+// Cap the persisted `last_error` payload. Diagnostic-only column; the
+// head is by far the most useful part, and an unbounded driver-thrown
+// message (e.g. a SQL statement echoed back verbatim) would otherwise
+// bloat the row indefinitely across retries.
+const LAST_ERROR_MAX_LENGTH = 4096;
+const LAST_ERROR_TRUNCATION_SUFFIX = "…(truncated)";
+
 function describeError(error: unknown): string {
-  if (error instanceof Error) return `${error.name}: ${error.message}`;
-  return String(error);
+  const raw =
+    error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+  if (raw.length <= LAST_ERROR_MAX_LENGTH) return raw;
+  return (
+    raw.slice(0, LAST_ERROR_MAX_LENGTH - LAST_ERROR_TRUNCATION_SUFFIX.length) +
+    LAST_ERROR_TRUNCATION_SUFFIX
+  );
 }
 
 export async function processOutboxEvents(
@@ -100,7 +132,6 @@ export async function processOutboxEvents(
   const maxAttempts = options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
   const backoffMs = options.backoffMs ?? defaultBackoffMs;
   const leaseMs = options.leaseMs ?? DEFAULT_LEASE_MS;
-  const concurrency = Math.max(1, options.concurrency ?? DEFAULT_CONCURRENCY);
   const { logger, clock, outboxRepository, idGenerator } = container;
   const workerId = options.workerId ?? idGenerator.next();
 
@@ -138,14 +169,11 @@ export async function processOutboxEvents(
     };
   };
 
-  type DecodedRow = { id: EventId; entry: OutboxEntry; event: DomainEvent };
-  type DispatchOutcome =
-    | { readonly kind: "success"; readonly id: EventId }
-    | {
-        readonly kind: "failure";
-        readonly row: DecodedRow;
-        readonly error: unknown;
-      };
+  type DecodedRow = {
+    readonly id: EventId;
+    readonly entry: OutboxEntry;
+    readonly event: DomainEvent;
+  };
 
   const decoded: DecodedRow[] = [];
   for (const entry of entries) {
@@ -161,41 +189,55 @@ export async function processOutboxEvents(
     }
   }
 
-  const outcomes: DispatchOutcome[] = [];
-  if (decoded.length > 0) {
-    let cursor = 0;
-    const runWorker = async (): Promise<void> => {
-      while (cursor < decoded.length) {
-        const index = cursor++;
-        const row = decoded[index];
-        if (!row) continue;
-        try {
-          await dispatch(row.event);
-          outcomes.push({ kind: "success", id: row.id });
-        } catch (error) {
-          outcomes.push({ kind: "failure", row, error });
-        }
-      }
-    };
-    const workerCount = Math.min(concurrency, decoded.length);
-    await Promise.all(Array.from({ length: workerCount }, runWorker));
-  }
-
   const dispatchedIds: EventId[] = [];
-  for (const outcome of outcomes) {
-    if (outcome.kind === "success") {
-      dispatchedIds.push(outcome.id);
-      continue;
+  if (decoded.length > 0) {
+    const events = decoded.map((row) => row.event);
+    const rowsById = new Map(decoded.map((row) => [row.id, row] as const));
+    let outcomes: readonly EventDispatchOutcome[];
+    try {
+      outcomes = await dispatch(events);
+    } catch (error) {
+      // Contract is "return outcomes, do not throw". A throwing dispatcher
+      // is treated as a batch-wide failure so claimed rows still get their
+      // attempts bumped and a retry scheduled.
+      outcomes = decoded.map((row) => ({
+        kind: "failure" as const,
+        id: row.id,
+        error,
+      }));
     }
-    logger.error(
-      `[outbox] dispatch failed for event ${outcome.row.event.id} (${outcome.row.event.type})`,
-      {
-        eventId: outcome.row.event.id,
-        eventType: outcome.row.event.type,
-        cause: outcome.error,
-      },
-    );
-    failures.push(planFailure(outcome.row.entry, outcome.error));
+
+    const seen = new Set<EventId>();
+    for (const outcome of outcomes) {
+      const row = rowsById.get(outcome.id);
+      if (!row) continue;
+      seen.add(outcome.id);
+      if (outcome.kind === "success") {
+        dispatchedIds.push(outcome.id);
+        continue;
+      }
+      logger.error(
+        `[outbox] dispatch failed for event ${row.event.id} (${row.event.type})`,
+        {
+          eventId: row.event.id,
+          eventType: row.event.type,
+          cause: outcome.error,
+        },
+      );
+      failures.push(planFailure(row.entry, outcome.error));
+    }
+
+    for (const row of decoded) {
+      if (seen.has(row.id)) continue;
+      const error = new Error(
+        `dispatcher returned no outcome for event ${row.id}`,
+      );
+      logger.error(
+        `[outbox] dispatcher returned no outcome for event ${row.event.id} (${row.event.type})`,
+        { eventId: row.event.id, eventType: row.event.type },
+      );
+      failures.push(planFailure(row.entry, error));
+    }
   }
 
   if (failures.length > 0) {
