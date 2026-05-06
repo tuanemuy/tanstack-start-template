@@ -1,9 +1,9 @@
 import { renderServerComponent } from "@tanstack/react-start/rsc";
 import { paginationSchema } from "@/core/presentation/pagination";
-import { defineServerFn } from "@/core/presentation/serverFn";
+import { defineQueryFn } from "@/core/presentation/serverFn";
 import { validateInput } from "@/core/presentation/validator";
 
-export const renderTodoList = defineServerFn()
+export const renderTodoList = defineQueryFn()
   .inputValidator(validateInput(paginationSchema))
   .handler(async ({ data }) => {
     const { TodoList } = await import("@/components/todo/TodoList");

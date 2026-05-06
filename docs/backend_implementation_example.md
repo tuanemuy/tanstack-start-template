@@ -43,7 +43,7 @@ app/core/
 ├── presentation/
 │   ├── errorResponse.ts             AppServerError, serializeError, extractSerializedError, httpStatusFor
 │   ├── errorResponseMiddleware.ts   errorResponseMiddleware (wraps inputValidator + handler)
-│   ├── serverFn.ts                  defineServerFn (canonical createServerFn entry, pre-applies the middleware)
+│   ├── serverFn.ts                  defineServerFn (canonical createServerFn entry, pre-applies the middleware) / defineQueryFn (GET alias)
 │   ├── errorDisplay.ts            displayError, sanitizeRouteError
 │   └── validator.ts               validateInput(schema) — transport-boundary shape check
 └── adapters/

@@ -57,7 +57,7 @@ export function serverAction<TSchema extends z.ZodType, TModule, TResult>(
   ) => Promise<TResult>,
   options?: { method?: ServerActionMethod },
 ) {
-  return defineServerFn(options ?? { method: "POST" })
+  return defineServerFn({ method: options?.method ?? "POST" })
     .inputValidator(validateInput(schema))
     .handler(
       // The chain's `ServerFnReturnType` constraint can't be expressed

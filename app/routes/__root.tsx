@@ -8,10 +8,10 @@ import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import type { ReactNode } from "react";
 import { sanitizeRouteError } from "@/core/presentation/errorDisplay";
 import { buildHead } from "@/core/presentation/head";
-import { defineServerFn } from "@/core/presentation/serverFn";
+import { defineQueryFn } from "@/core/presentation/serverFn";
 import appCss from "../styles/index.css?url";
 
-export const loadAppContext = defineServerFn().handler(async () => {
+export const loadAppContext = defineQueryFn().handler(async () => {
   const { getContainer } = await import("@/core/application/di/server");
   const container = await getContainer();
   return { config: container.config };

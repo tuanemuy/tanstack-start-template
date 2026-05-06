@@ -334,9 +334,9 @@ import { createFileRoute } from "@tanstack/react-router";
 import { renderServerComponent } from "@tanstack/react-start/rsc";
 import { z } from "zod";
 
-import { defineServerFn } from "@/core/presentation/serverFn";
+import { defineQueryFn } from "@/core/presentation/serverFn";
 
-const renderPostDetail = defineServerFn({ method: "GET" })
+const renderPostDetail = defineQueryFn()
   .inputValidator(z.object({ postId: z.string() }))
   .handler(async ({ data }) => {
     const { PostDetail, getPostTitle } = await import(
@@ -417,7 +417,8 @@ RSC との相性が良い。
 
 ## Server Function (mutation)
 
-state を変える操作は `defineServerFn({ method: "POST" })` に集約する。
+state を変える操作は `defineServerFn()`(default `POST`) に集約する。読み取りは
+`defineQueryFn()`(GET) を使い、副作用ありかどうかを呼び出し名で表現する。
 `defineServerFn` は `createServerFn` に `errorResponseMiddleware` を予め
 適用したエントリポイントで、`inputValidator` と handler の **両方** の
 throw を同じ middleware で拾って `AppServerError` envelope と HTTP ステータスに
@@ -853,7 +854,8 @@ __root.tsx .errorComponent          ←  最終フォールバック（sanitizeR
 - `serializeError(error)` — Business / NotFound / Validation 等を `SerializedError`（`{ kind, code, message, retryable?, fieldErrors? }`）に畳み込む
 - `extractSerializedError(error)` — クライアント側で `SerializedError` を取り出す（`AppServerError` でも、plain object 化された残骸でも動く）
 - `errorResponseMiddleware`（`app/core/presentation/errorResponseMiddleware.ts`） — server function 全体（`inputValidator` と handler の両方）をラップして上記を適用し、`SerializedErrorKind` から HTTP ステータスを設定する。TanStack Router の `redirect()` / `notFound()` センチネルはそのまま rethrow
-- `defineServerFn(opts?)`（`app/core/presentation/serverFn.ts`） — `createServerFn(opts).middleware([errorResponseMiddleware])` を返す canonical エントリポイント。`createServerFn` を直接呼ばずこちらを使う
+- `defineServerFn(opts?)`（`app/core/presentation/serverFn.ts`） — `createServerFn(opts).middleware([errorResponseMiddleware])` を返す canonical エントリポイント。default は `POST`(mutation 中心テンプレのため)。`createServerFn` を直接呼ばずこちらを使う
+- `defineQueryFn()`（`app/core/presentation/serverFn.ts`） — `defineServerFn({ method: "GET" })` の薄いエイリアス。loader bridge / RSC レンダプロキシ等の冪等な読み取り用
 
 を用意している（`app/core/presentation/errorResponse.ts`）。
 
