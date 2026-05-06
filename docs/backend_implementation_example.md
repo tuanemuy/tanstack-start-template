@@ -21,7 +21,7 @@ app/core/
 │       ├── errorCode.ts
 │       └── ports/${domain}Repository.ts
 ├── application/
-│   ├── di/d1.ts                   Container, createD1Container, getContainer, readD1ServerConfig, installContainerStore
+│   ├── di/server.ts               Container, createContainer, getContainer, readServerConfig, installContainerStore
 │   ├── ports/
 │   │   ├── clock.ts
 │   │   ├── idGenerator.ts

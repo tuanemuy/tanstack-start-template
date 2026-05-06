@@ -1,17 +1,22 @@
-// D1 DI module. Imported from both:
+// Server-side DI module. Imported from both:
 //
-//   - server-side code (Worker entries, presentation server functions,
-//     RSC components) for `getContainer()` and the container factories;
+//   - server-side code (the TanStack Start server entry, presentation
+//     server functions, RSC components) for `getContainer()` and the
+//     container factories;
 //   - the client static graph indirectly, when a server-fn module
-//     declares `await import("@/core/application/di/d1")` inside a
-//     handler body. Vite traces those chunks during the client build,
-//     so this module MUST stay free of Node-only imports
+//     declares `await import("@/core/application/di/server")` inside
+//     a handler body. Vite traces those chunks during the client
+//     build, so this module MUST stay free of Node-only imports
 //     (`node:async_hooks`, `node:fs`, …).
 //
-// The `runWithContainer` half — which pulls in
-// `node:async_hooks` — lives in `app/server/container.ts` and is only
-// ever imported from Worker entries. `getContainer()` here reads from
-// a `globalThis`-installed handle that the server file populates.
+// The `AsyncLocalStorage`-backed half lives in `app/server.ts` (the
+// Worker entry); it `installContainerStore`s a handle that
+// `getContainer()` here reads through. The split keeps node-only
+// imports out of any chunk reachable from the client graph.
+//
+// The module is named for its *role* (server-side container wiring),
+// not for the adapter it currently wires (D1). Swapping the adapter
+// changes the implementations below; the module identity stays put.
 import type { D1Database } from "@cloudflare/workers-types";
 import { content } from "@/config";
 import { getDatabase } from "@/core/adapters/d1/client";
@@ -24,17 +29,17 @@ import type { AppConfig, Container } from "./types";
 
 export type { AppConfig, Container } from "./types";
 
-export type D1ServerConfig = AppConfig &
+export type ServerConfig = AppConfig &
   Readonly<{
     binding: D1Database;
   }>;
 
-export type D1Env = Readonly<{
+export type ServerEnv = Readonly<{
   DB: D1Database;
   APP_URL: string;
 }>;
 
-export function readD1ServerConfig(env: D1Env): D1ServerConfig {
+export function readServerConfig(env: ServerEnv): ServerConfig {
   return {
     ...content,
     appUrl: env.APP_URL,
@@ -42,7 +47,7 @@ export function readD1ServerConfig(env: D1Env): D1ServerConfig {
   };
 }
 
-export function createD1Container(config: D1ServerConfig): Container {
+export function createContainer(config: ServerConfig): Container {
   const db = getDatabase(config.binding);
   const { binding: _binding, ...appConfig } = config;
   return {
@@ -65,7 +70,7 @@ export function createD1Container(config: D1ServerConfig): Container {
 }
 
 /**
- * Server-side container handle exposed to this module via
+ * Request-scoped container handle exposed to this module via
  * `globalThis`. The Worker entry installs the handle (an
  * `AsyncLocalStorage`-backed reader) when it loads, before any
  * request runs. Tests do not use this path — they call
@@ -73,8 +78,8 @@ export function createD1Container(config: D1ServerConfig): Container {
  *
  * The handle is the *only* coupling between the request boundary and
  * the presentation layer: keeping it shaped as a minimal `getStore()`
- * function lets `app/server/container.ts` own the `node:async_hooks`
- * import without leaking it into the client graph.
+ * function lets `app/server.ts` own the `node:async_hooks` import
+ * without leaking it into the client graph.
  */
 export type ContainerStore = Readonly<{
   getStore(): Container | undefined;
@@ -102,16 +107,15 @@ export function getContainer(): Promise<Container> {
   if (!store) {
     throw new Error(
       "getContainer() called before the container store was installed. " +
-        "Worker entries must import from @/server/container so the store " +
-        "is registered on globalThis before the handler runs.",
+        "The Worker entry (app/server.ts) installs the store at module load.",
     );
   }
   const container = store.getStore();
   if (!container) {
     throw new Error(
-      "getContainer() called outside a runWithContainer scope. " +
-        "Wrap the Worker fetch handler with runWithContainer(env, () => …) " +
-        "before invoking framework code that resolves the container.",
+      "getContainer() called outside a request scope. " +
+        "The fetch handler in app/server.ts must wrap each request in " +
+        "the AsyncLocalStorage scope before invoking framework code.",
     );
   }
   return Promise.resolve(container);

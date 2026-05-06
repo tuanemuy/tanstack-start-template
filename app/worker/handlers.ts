@@ -14,10 +14,10 @@ import type {
   Queue,
 } from "@cloudflare/workers-types";
 import {
-  createD1Container,
-  type D1Env,
-  readD1ServerConfig,
-} from "@/core/application/di/d1";
+  createContainer,
+  readServerConfig,
+  type ServerEnv,
+} from "@/core/application/di/server";
 import {
   type EventDispatcher,
   processOutboxEvents,
@@ -33,7 +33,7 @@ import type { DomainEvent } from "@/core/domain/common/event";
  * Bindings shared by the relay producer Worker — it reads from D1 and
  * publishes to the events queue.
  */
-export type RelayEnv = D1Env &
+export type RelayEnv = ServerEnv &
   Readonly<{
     EVENTS_QUEUE: Queue<DomainEvent>;
   }>;
@@ -43,14 +43,14 @@ export type RelayEnv = D1Env &
  * else is wired so the principle of least privilege is enforced at
  * the deployment manifest.
  */
-export type PrunerEnv = D1Env;
+export type PrunerEnv = ServerEnv;
 
 /**
  * Bindings for the queue consumer Worker. D1 is included so subscribers
  * (read-model projections, idempotency stamps, etc.) can write through
  * the application container; remove if your consumers are stateless.
  */
-export type ConsumerEnv = D1Env;
+export type ConsumerEnv = ServerEnv;
 
 const PRUNE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
@@ -63,7 +63,7 @@ export async function runRelayTick(
   env: RelayEnv,
   options?: ProcessOutboxEventsOptions,
 ): Promise<{ processed: number }> {
-  const container = createD1Container(readD1ServerConfig(env));
+  const container = createContainer(readServerConfig(env));
   const dispatch: EventDispatcher = async (event: DomainEvent) => {
     await env.EVENTS_QUEUE.send(event);
   };
@@ -79,7 +79,7 @@ export async function runPruneTick(
   env: PrunerEnv,
   options: PruneOutboxOptions = { retentionMs: PRUNE_RETENTION_MS },
 ): Promise<{ deleted: number }> {
-  const container = createD1Container(readD1ServerConfig(env));
+  const container = createContainer(readServerConfig(env));
   return pruneOutbox(container, options);
 }
 
@@ -97,7 +97,7 @@ export async function handleQueue(
   env: ConsumerEnv,
   _ctx: ExecutionContext,
 ): Promise<void> {
-  const container = createD1Container(readD1ServerConfig(env));
+  const container = createContainer(readServerConfig(env));
   for (const message of batch.messages) {
     try {
       container.logger.info(

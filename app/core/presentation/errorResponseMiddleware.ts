@@ -57,7 +57,7 @@ async function logServerError(
   serialized: SerializedError,
 ): Promise<void> {
   try {
-    const { getContainer } = await import("@/core/application/di/d1");
+    const { getContainer } = await import("@/core/application/di/server");
     const { logger } = await getContainer();
     logger.error("Server function failed", {
       kind: serialized.kind,

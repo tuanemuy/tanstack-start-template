@@ -9,7 +9,7 @@ async function loadServerDeps<TModule>(
   loadModule: () => Promise<TModule>,
 ): Promise<{ container: Container; module: TModule }> {
   const [{ getContainer }, module] = await Promise.all([
-    import("@/core/application/di/d1"),
+    import("@/core/application/di/server"),
     loadModule(),
   ]);
   return { container: await getContainer(), module };
