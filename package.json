@@ -22,6 +22,8 @@
     "deploy:consumer:dry": "wrangler deploy -c wrangler.consumer.toml --dry-run --outdir=dist/consumer",
     "deploy:pruner": "wrangler deploy -c wrangler.pruner.toml",
     "deploy:pruner:dry": "wrangler deploy -c wrangler.pruner.toml --dry-run --outdir=dist/pruner",
+    "deploy:all": "pnpm deploy && pnpm deploy:relay && pnpm deploy:consumer && pnpm deploy:pruner",
+    "deploy:all:dry": "pnpm deploy:dry && pnpm deploy:relay:dry && pnpm deploy:consumer:dry && pnpm deploy:pruner:dry",
     "db:generate": "drizzle-kit generate --config=./drizzle.config.ts",
     "db:apply:local": "wrangler d1 migrations apply tanstack-start-template-d1 --local",
     "db:apply:remote": "wrangler d1 migrations apply tanstack-start-template-d1 --remote",
