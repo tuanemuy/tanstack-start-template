@@ -9,10 +9,11 @@
 // prevents the AsyncLocalStorage import from leaking into the client
 // bundle when server-fn dynamic imports are traced.
 //
-// `pnpm build` outputs this file (with all `tanstack-start-*:v`
-// virtual modules resolved) to `dist/server/server.js`, which
-// `wrangler.toml`'s `main` then ships to Cloudflare without
-// re-bundling.
+// The `AsyncLocalStorage` instance itself is pinned on `globalThis`
+// so that dev HMR re-evaluations of this module reuse the same ALS.
+// Otherwise `storage.run()` (new ALS) and the handle captured by
+// `getContainer()` (old ALS) would diverge after HMR and every
+// request would throw "called outside a request scope".
 import { AsyncLocalStorage } from "node:async_hooks";
 import { default as defaultEntry } from "@tanstack/react-start/server-entry";
 import {
@@ -23,7 +24,12 @@ import {
 } from "@/core/application/di/server";
 import type { Container } from "@/core/application/di/types";
 
-const storage = new AsyncLocalStorage<Container>();
+declare global {
+  var __APP_ALS__: AsyncLocalStorage<Container> | undefined;
+}
+
+const storage = globalThis.__APP_ALS__ ?? new AsyncLocalStorage<Container>();
+globalThis.__APP_ALS__ = storage;
 installContainerStore({ getStore: () => storage.getStore() });
 
 export type AppEnv = ServerEnv;

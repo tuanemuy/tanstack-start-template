@@ -11,9 +11,9 @@ import {
 } from "@/core/domain/common/event";
 import type { Database } from "./client";
 import { PendingBatch } from "./pendingBatch";
+import { isOccGuardViolation, mapDbError } from "./repositories/helpers";
 import { D1OutboxRepository } from "./repositories/outboxRepository";
 import { D1TodoRepository } from "./repositories/todoRepository";
-import { isOccGuardViolation, mapDbError } from "./repositories/helpers";
 
 /**
  * D1 implementation of `UnitOfWorkProvider`.
