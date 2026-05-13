@@ -61,6 +61,19 @@ Each of these is enforced in code and documented in library-level JSDoc at the r
 - **application → presentation**: the server-function boundary catches and serializes any thrown error structurally via its `kind`-tagged form. Usecases themselves do not serialize.
 - **worker → root**: workers wrap per-row processing in `try / catch` for partial-failure tolerance. This is the only place a broad `catch` is expected in application-layer code.
 
+## Reference runtimes
+
+The template ships two reference runtime wirings — Node.js + libSQL (single process) and Cloudflare Workers + D1 + Queues — as worked examples of swapping the adapter and entry-point layers while keeping `domain` / `application` / `presentation` intact. **Pick one and delete the other**, or keep both if you genuinely need both targets; the template does not assume you maintain a dual deployment.
+
+Entry points by runtime:
+
+- **Cloudflare**: `app/server.cloudflare.ts` (fetch), `app/worker/relay.ts` / `consumer.ts` / `pruner.ts` / `dlq.ts`, wired by `app/core/application/di/serverCloudflare.ts`.
+- **Node**: `app/server.node.ts` (fetch handler + boot), `app/worker/runner.node.ts` (single-process orchestrator of all four roles), `scripts/listen.node.ts` (production launcher), `scripts/migrate.node.ts` (libSQL migrator). Wired by `app/core/application/di/serverNode.ts`.
+
+Per-runtime operational guidance lives in `docs/runtime_node.md` and `docs/runtime_cloudflare.md`. The Node runtime is the default for `pnpm dev` / `pnpm build` / `pnpm start`; the CF runtime is reached through the `:cf` script suffix.
+
+To target a different runtime (AWS Lambda, Cloud Run, etc.), add a new adapter group under `app/core/adapters/{provider}/` and a paired entry point — the inward layers stay put. Existing adapters can usually be reused across runtimes (libSQL works on Lambda / Cloud Run unchanged); the swap is the entry + DI wiring, not the whole stack.
+
 ## Examples
 
 具体的な実装パターンは `docs/backend_implementation_example.md` / `docs/frontend_implementation_example.md` を参照。

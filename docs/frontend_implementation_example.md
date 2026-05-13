@@ -219,23 +219,52 @@ import { CompositeComponent } from "@tanstack/react-start/rsc";
 
 ## Server-only エントリポイントの canonical 形
 
-サーバー側で usecase を呼ぶ箇所は **常に `app/core/presentation/serverAction.ts`
-の wrapper 経由** でアクセスするのがテンプレ標準。`getContainer()` を直接呼ぶ
-書き方も技術的には動くが、本テンプレでは wrapper に一本化する。
+サーバー側で usecase を呼ぶ箇所は **`app/core/presentation/serverAction.ts`
+の helper 経由** でアクセスするのがテンプレ標準。`getContainer()` を直接呼ぶ
+書き方も技術的には動くが、本テンプレでは helper に一本化する。
 
-### 提供される 2 つの wrapper
+### 提供される 2 つの helper
 
-| wrapper | 用途 |
+| helper | 用途 |
 |---|---|
 | `serverData(loadModule, run)` | サーバーコンポーネント / loader からの **読み取り** |
-| `serverAction(schema, loadModule, handler, opts?)` | server function 経由の **mutation** |
+| `loadServerDeps(loadModule)` | server function の handler 内で DI + usecase モジュールを並列ロード |
 
-両方とも以下を吸収する:
+両方とも `getContainer()` と usecase モジュールの **dynamic import**（理由は
+`serverAction.ts` の JSDoc 参照）を parallel に走らせる。
 
-- `getContainer()` と usecase モジュールの **dynamic import**（理由は
-  `serverAction.ts` の JSDoc 参照）と parallel load。
-- `serverAction` は `defineServerFn` + `inputValidator(schema)` も束ねる。
-  handler は `({ data, container }, module) => ...` の 1 行で書ける。
+### server function 自体は call site で **inline 宣言**
+
+server function（mutation / GET loader bridge）は **必ず call site で
+`createServerFn(...)` から `.handler(...)` までの chain を直接書く**。共通
+middleware を別モジュールで pre-apply して export するのは **NG**。
+
+```ts
+// ✅ 正しい — call site で chain を完結させる
+export const createTodoFn = createServerFn({ method: "POST" })
+  .middleware([errorResponseMiddleware])
+  .inputValidator(validateInput(createTodoSchema))
+  .handler(async ({ data }) => {
+    const { container, module } = await loadServerDeps(
+      () => import("@/core/application/todo/createTodo"),
+    );
+    return module.createTodo({ container, input: data });
+  });
+
+// ❌ NG — 別モジュールから pre-built builder を import すると
+// TanStack Start の RSC plugin が chain root を追えずビルドが壊れる。
+import { defineServerFn } from "@/core/presentation/serverFn";
+export const createTodoFn = defineServerFn
+  .inputValidator(validateInput(createTodoSchema))
+  .handler(/* ... */);
+```
+
+TanStack Start の RSC plugin は **同一モジュール内に literal な
+`createServerFn(...)` 呼び出しが存在すること** を前提に handler body を
+RSC 環境へ分離する。re-export 越しに chain を始めると static analysis が
+失敗し、`Errored while resolving ... Got Plugin driver is already dropped`
+で build が落ちる（実機検証済）。多少の重複（`errorResponseMiddleware` を
+毎回 `.middleware([...])` で書く）は受け入れる。
 
 ### transport 検証の責務分担（serverData vs serverAction）
 
@@ -288,16 +317,6 @@ import { isNotFoundError } from "@/core/application/errors";
 import { serverData } from "@/core/presentation/serverAction";
 import { RelatedPosts } from "./RelatedPosts";
 
-// 同一リクエスト内で同じ postId を呼んでも 1 回だけフェッチする。
-// `cache()` は引数でキャッシュキーを作るので、`loadPost("a")` と
-// `loadPost("b")` は別キャッシュとして独立して評価される。異なる引数で
-// 呼ぶほど dedupe は効かず、引数を全く取らない関数でも `cache(() => ...)`
-// してから関数参照経由で呼ばないと dedupe されない点に注意。
-//
-// `serverData` が container 取得と usecase モジュールの dynamic import を
-// parallel に走らせ、`{ container }` と展開済みモジュールをコールバックに
-// 渡してくれる。直に `getContainer()` を呼ばないことで server adapter graph
-// の client 静的 import 流出を構造的に防ぐ。
 const loadPost = cache(
   serverData(
     () => import("@/core/application/post/getPost"),
@@ -325,7 +344,6 @@ export async function PostDetail({ postId }: { postId: string }) {
       <p className="text-muted">by {post.authorName}</p>
       <div>{post.content}</div>
 
-      {/* ネストしたサーバーコンポーネント — 内部で別のユースケースを await する */}
       <RelatedPosts postId={postId} />
     </article>
   );
@@ -360,9 +378,12 @@ import { createFileRoute } from "@tanstack/react-router";
 import { renderServerComponent } from "@tanstack/react-start/rsc";
 import { z } from "zod";
 
-import { defineQueryFn } from "@/core/presentation/serverFn";
+import { createServerFn } from "@tanstack/react-start";
 
-const renderPostDetail = defineQueryFn()
+import { errorResponseMiddleware } from "@/core/presentation/errorResponseMiddleware";
+
+const renderPostDetail = createServerFn({ method: "GET" })
+  .middleware([errorResponseMiddleware])
   .inputValidator(z.object({ postId: z.string() }))
   .handler(async ({ data }) => {
     const { PostDetail, getPostTitle } = await import(
@@ -416,7 +437,7 @@ import { cache } from "react";
 import { redirect } from "@tanstack/react-router";
 import { getRequestHeaders } from "@tanstack/react-start/server";
 
-import { getContainer } from "@/core/application/di/server";
+import { getContainer } from "@/core/application/di/containerStore";
 import type { User } from "@/core/domain/user/entity";
 
 export const getCurrentUser = cache(async (): Promise<User | null> => {
@@ -443,12 +464,12 @@ RSC との相性が良い。
 
 ## Server Function (mutation)
 
-state を変える操作は `defineServerFn()`(default `POST`) に集約する。読み取りは
-`defineQueryFn()`(GET) を使い、副作用ありかどうかを呼び出し名で表現する。
-`defineServerFn` は `createServerFn` に `errorResponseMiddleware` を予め
-適用したエントリポイントで、`inputValidator` と handler の **両方** の
-throw を同じ middleware で拾って `AppServerError` envelope と HTTP ステータスに
-変換する。 クライアントは `useServerFn(fn)` でラップしたうえで、React 19 の
+state を変える操作は `createServerFn({ method: "POST" })` に集約する。読み取りは
+`createServerFn({ method: "GET" })` を使い、副作用ありかどうかを method で表現する。
+どちらも先頭に `.middleware([errorResponseMiddleware])` を必ず付け、
+`inputValidator` と handler の **両方** の throw を同じ middleware で拾って
+`AppServerError` envelope と HTTP ステータスに変換する。 クライアントは
+`useServerFn(fn)` でラップしたうえで、React 19 の
 **`useActionState` / `useTransition` / `useOptimistic`** に直接渡す。汎用フック
 （`useServerAction` 風ラッパー）は意図的に用意しない — 第二の具体パターンが
 出てきた時にだけ抽象化する。
@@ -492,11 +513,6 @@ export const createTodoSchema = z.object({
 
 ```typescript
 // app/core/presentation/validator.ts
-// transport boundary 専用の `InputValidationError` をこのファイルに閉じて持つ。
-// `@/lib/error` の `CodedError` を継承して `toSerialized()` で wire 化するので、
-// 他のエラー（NotFound / Conflict / Business / System）と「class → toSerialized」
-// プロトコルが揃う。application/domain の runtime は引かないので inputValidator が
-// 走る client バンドルにも安全に乗る。
 import { type z, type ZodType } from "zod";
 import { CodedError, type FieldErrors } from "@/lib/error";
 import {
@@ -536,18 +552,22 @@ export function validateInput<T extends ZodType>(schema: T) {
 
 ```typescript
 // app/components/todo/CreateTodoForm/action.ts
-import { serverAction } from "@/core/presentation/serverAction";
+import { createServerFn } from "@tanstack/react-start";
+
+import { errorResponseMiddleware } from "@/core/presentation/errorResponseMiddleware";
+import { loadServerDeps } from "@/core/presentation/serverAction";
+import { validateInput } from "@/core/presentation/validator";
 import { createTodoSchema } from "../schema";
 
-// `serverAction` が `defineServerFn` + `inputValidator(schema)` +
-// `getContainer()` の dynamic import + usecase モジュールの dynamic import を
-// すべて束ねる。handler は `({ data, container }, module) => ...` の 1 行。
-export const createTodoFn = serverAction(
-  createTodoSchema,
-  () => import("@/core/application/todo/createTodo"),
-  ({ data, container }, { createTodo }) =>
-    createTodo({ container, input: data }),
-);
+export const createTodoFn = createServerFn({ method: "POST" })
+  .middleware([errorResponseMiddleware])
+  .inputValidator(validateInput(createTodoSchema))
+  .handler(async ({ data }) => {
+    const { container, module } = await loadServerDeps(
+      () => import("@/core/application/todo/createTodo"),
+    );
+    return module.createTodo({ container, input: data });
+  });
 ```
 
 ### フォーム送信は `useActionState`
@@ -845,8 +865,6 @@ function NewPostPage() {
 export const Route = createFileRoute("/")({
   loader: async () => { /* ... */ },
   component: HomePage,
-  // 子ルートで catch されなかった例外は __root.tsx の errorComponent に
-  // バブルアップする。子側で定義された errorComponent があればそこで止まる。
   errorComponent: ({ error }) => (
     <div role="alert">
       <h1>エラーが発生しました</h1>
@@ -877,12 +895,10 @@ __root.tsx .errorComponent          ←  最終フォールバック（sanitizeR
 `kind` による分岐ができない。そこで presentation 層で
 
 - `AppServerError` — 伝搬専用の例外クラス（`serialized` を enumerable own property に持ち、JSON 往復後も生き残る）
-- `appServerErrorAdapter`（`app/start.ts` で `createStart` に登録） — Seroval roundtrip で `AppServerError` のクラスアイデンティティを保つシリアライゼーションアダプタ。**`defineServerFn` / `defineQueryFn` 経由の boundary でのみ走る**。直 `fetch` / RSC error frame / 自前 transport 経由ではアダプタが走らず、client は `serialized` を own property に持つ plain Error/object（remnant）を受け取る
+- `appServerErrorAdapter`（`app/start.ts` で `createStart` に登録） — Seroval roundtrip で `AppServerError` のクラスアイデンティティを保つシリアライゼーションアダプタ。**`createServerFn(...).middleware([errorResponseMiddleware])` 経由の boundary でのみ走る**。直 `fetch` / RSC error frame / 自前 transport 経由ではアダプタが走らず、client は `serialized` を own property に持つ plain Error/object（remnant）を受け取る
 - `serializeError(error)` — Business / NotFound / Validation 等を `SerializedError`（`{ kind, code, message, retryable?, fieldErrors? }`）に畳み込む
 - `extractSerializedError(error)` — クライアント側で `SerializedError` を取り出す。三段検出：① `instanceof AppServerError`（アダプタ通過経路）→ ② structural な `serialized` remnant 検出（アダプタ未通過経路）→ ③ `serializeError` フォールバック。**UI コードは必ずこの関数を経由すること。`instanceof AppServerError` を分岐に使うとアダプタ未通過経路で false になり静かに壊れる**
-- `errorResponseMiddleware`（`app/core/presentation/errorResponseMiddleware.ts`） — server function 全体（`inputValidator` と handler の両方）をラップして上記を適用し、`SerializedErrorKind` から HTTP ステータスを設定する。TanStack Router の `redirect()` / `notFound()` センチネルはそのまま rethrow
-- `defineServerFn(opts?)`（`app/core/presentation/serverFn.ts`） — `createServerFn(opts).middleware([errorResponseMiddleware])` を返す canonical エントリポイント。default は `POST`(mutation 中心テンプレのため)。`createServerFn` を直接呼ばずこちらを使う
-- `defineQueryFn()`（`app/core/presentation/serverFn.ts`） — `defineServerFn({ method: "GET" })` の薄いエイリアス。loader bridge / RSC レンダプロキシ等の冪等な読み取り用
+- `errorResponseMiddleware`（`app/core/presentation/errorResponseMiddleware.ts`） — server function 全体（`inputValidator` と handler の両方）をラップして上記を適用し、`SerializedErrorKind` から HTTP ステータスを設定する。TanStack Router の `redirect()` / `notFound()` センチネルはそのまま rethrow。**call site で `createServerFn(...).middleware([errorResponseMiddleware])` を直接書く**（別モジュール経由の pre-apply は RSC plugin の static rewrite が壊れるので不可）
 
 を用意している（`app/core/presentation/errorResponse.ts`）。
 

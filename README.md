@@ -1,49 +1,113 @@
 # tanstack-start-template
 
-A reference template combining TanStack Start + React 19 (RSC) + DDD / Hexagonal architecture + Cloudflare (Workers / D1 / Queues).
+A reference template combining TanStack Start + React 19 (RSC) + DDD / Hexagonal architecture, shipping with **two interchangeable runtimes**:
+
+- **Standalone (Node.js + libSQL)** — single-process, no Docker, no Cloudflare account required. The data file lives at `./data/app.db`.
+- **Cloudflare Workers (D1 + Queues)** — multi-worker, edge-distributed, full outbox / queue fan-out.
+
+Domain, application, and presentation code is shared verbatim across both modes. Only the adapter and entry-point layers are swapped.
 
 ## Features
 
 - **TanStack Start + React 19 / RSC** — File-based routing (TanStack Router), server components as the default for data fetching, mutations driven through server functions.
 - **Hexagonal architecture + DDD** — Enforces a one-way dependency flow `domain → application → adapters → presentation`. Side effects are confined to the boundary via port / adapter separation.
-- **Full Cloudflare stack** — Workers (fetch / cron / queue), D1 (SQLite), Queues. Deployment via Wrangler.
-- **Outbox pattern** — Domain events are persisted in the same transaction as aggregate writes, then a cron-driven Relay Worker publishes them to a Queue, and a Consumer Worker drives subscribers. At-least-once delivery, no ordering guarantees, idempotency is the subscriber's responsibility.
-- **Drizzle ORM** — The D1 adapter translates driver-specific errors into the shared error contracts.
-- **TypeScript / Biome / Vitest / fast-check** — Type checking with `tsgo`, lint and format via Biome, two-tier Vitest setup (unit / integration).
+- **Dual runtime** — Node.js + libSQL (`@libsql/client`, `@hono/node-server`) and Cloudflare Workers + D1 + Queues. The same Drizzle SQLite schema feeds both.
+- **Outbox pattern** — Domain events are persisted in the same transaction as aggregate writes, then a relay publishes them to consumers. At-least-once delivery, no ordering guarantees, idempotency is the subscriber's responsibility. On CF the relay is a Worker + Queue; on Node it is an in-process scheduler driving an in-memory queue.
+- **Drizzle ORM** — Per-runtime adapters translate driver-specific errors into the shared error contracts.
+- **TypeScript / Biome / Vitest / fast-check** — Type checking with `tsgo`, lint and format via Biome, two-tier Vitest setup (unit / integration). Integration tests run on both runtimes.
 - **Structured error serialization** — Each layer carries its own `kind`-tagged serialized form; presentation composes the union structurally. HTTP status mapping lives only in presentation.
+
+## Architecture overview
+
+```
+                  presentation (TanStack Start server functions / routes)
+                            │
+                  application (use cases, UoW, ports, outbox / workers)
+                            │
+        ┌───────────────────┴───────────────────┐
+        │                                       │
+   adapters/d1 + cloudflare                adapters/libsql + node
+   (Workers fetch, Service-Binding         (Node HTTP, in-process
+    relay, Queues, cron triggers)          relay, in-memory queue,
+                                            interval scheduler)
+        │                                       │
+   app/server.cloudflare.ts               app/server.node.ts
+   app/worker/{relay,consumer,            app/worker/runner.node.ts
+   pruner,dlq}.ts                         scripts/listen.node.ts
+```
+
+Pick the runtime that matches your operational posture; the application code on top is identical.
+
+## Which runtime should I pick?
+
+| Use case                                          | Runtime           |
+| ------------------------------------------------- | ----------------- |
+| Local hacking, demos, OSS contribution            | Standalone (Node) |
+| Self-hosted on a single VPS / container / laptop  | Standalone (Node) |
+| Small workloads with a single writer              | Standalone (Node) |
+| Multi-region edge presence                        | Cloudflare        |
+| Horizontal scale / multi-process workers          | Cloudflare        |
+| Production-grade managed Queues + Cron            | Cloudflare        |
+
+When unsure, start with Standalone — the codebase is portable, so promoting to Cloudflare later only changes the entry-point and deployment story.
 
 ## Requirements
 
 - Node.js (the `flake.nix` / `.envrc` direnv environment is recommended)
 - pnpm
-- A Cloudflare account (for deployment) and an authenticated `wrangler`
+- A Cloudflare account + authenticated `wrangler` (only for the Cloudflare runtime)
 
-## Setup
+## Quick Start
+
+### Option A: Standalone (Node + libSQL) — no Docker, no Cloudflare account
 
 ```bash
 pnpm install
-cp .dev.vars.example .dev.vars   # wrangler-loaded secrets for local dev (gitignored)
-pnpm db:apply:local              # apply migrations to the local D1
+cp .env.example .env       # edit DATABASE_URL / APP_URL / PORT if needed
+pnpm db:migrate            # creates ./data/app.db and applies SQL migrations
+pnpm dev                   # vite dev server on http://localhost:3000
 ```
 
-`.dev.vars` is auto-loaded by `wrangler dev` (and the workerd-backed `pnpm dev`) and mirrors `wrangler secret put` for production. Non-secret config such as `APP_URL` belongs in the matching `wrangler*.toml` `[vars]`, not in `.dev.vars`.
+For a production build:
 
-### Wrangler config layout
+```bash
+pnpm build                 # vite build (Node target)
+pnpm start                 # @hono/node-server, reads .env
+```
 
-| File                       | Purpose                                                        |
-| -------------------------- | -------------------------------------------------------------- |
-| `wrangler.toml`            | **Local dev only** — `pnpm dev` / `pnpm build` auto-discover it. Do not deploy from this file. |
-| `wrangler.staging.toml`    | Staging deploys (`pnpm deploy:staging*`).                      |
-| `wrangler.production.toml` | Production deploys (`pnpm deploy:production*`).                |
+Full reference: [`docs/runtime_node.md`](docs/runtime_node.md).
 
-Each stage file is a self-contained mirror of `wrangler.toml` with `-staging` / `-production` suffixed on every Cloudflare resource name (Worker name, D1 `database_name`, queue names) so the two stages never collide inside one Cloudflare account.
+### Option B: Cloudflare Workers — edge / managed Queues
+
+```bash
+pnpm install
+cp .dev.vars.example .dev.vars   # wrangler-loaded secrets for local dev
+pnpm db:migrate:cf               # apply migrations to the local D1
+pnpm dev:cf                      # vite dev server backed by workerd
+```
+
+To deploy:
+
+```bash
+pnpm deploy:staging:all          # app + relay + consumer + pruner + dlq
+```
+
+Full reference: [`docs/runtime_cloudflare.md`](docs/runtime_cloudflare.md), including the Worker matrix, per-stage wrangler configs, D1 / Queues setup, and the retry-budget model.
 
 ## Development commands
 
 ```bash
-pnpm dev                         # Vite dev server (workerd-backed via @cloudflare/vite-plugin)
-pnpm build                       # production build
-pnpm preview                     # run the built artifact in a local workerd preview
+pnpm dev                         # alias of pnpm dev:node (Node runtime)
+pnpm dev:node                    # vite dev (Node)
+pnpm dev:cf                      # vite dev (Cloudflare / workerd)
+
+pnpm build                       # alias of pnpm build:node
+pnpm build:node
+pnpm build:cf
+
+pnpm start                       # alias of pnpm start:node
+pnpm start:node                  # @hono/node-server
+pnpm start:cf                    # wrangler dev (top-level Worker)
 
 pnpm typecheck                   # tsgo (@typescript/native-preview)
 pnpm lint                        # Biome lint
@@ -51,9 +115,11 @@ pnpm lint:fix                    # Biome check --write
 pnpm format                      # Biome format --write
 pnpm format:check
 
-pnpm test                        # unit + integration
+pnpm test                        # unit + integration (both runtimes)
 pnpm test:unit                   # Vitest (unit)
-pnpm test:integration            # Vitest (integration, Workers Pool)
+pnpm test:integration            # node + cf integration suites
+pnpm test:integration:node       # Vitest with libSQL temp DB
+pnpm test:integration:cf         # Vitest Workers Pool
 ```
 
 Recommended routine after changes:
@@ -62,85 +128,23 @@ Recommended routine after changes:
 pnpm typecheck && pnpm lint:fix && pnpm format
 ```
 
-## Database migrations (Drizzle + D1)
+## Database migrations
+
+Migration SQL is the canonical artefact; both runtimes consume the same SQLite-compatible files.
 
 ```bash
-pnpm db:generate                       # generate SQL migrations from the schema
-pnpm db:apply:local                    # apply to the local D1
-pnpm db:apply:staging                  # apply to the staging D1
-pnpm db:apply:production               # apply to the production D1
-pnpm db:execute:local --file=...       # run an arbitrary SQL file locally
-pnpm db:execute:staging --file=...     # run an arbitrary SQL file against staging
-pnpm db:execute:production --file=...  # run an arbitrary SQL file against production
+pnpm db:generate                       # alias of db:generate:cf — generate SQL from app/core/adapters/d1/schema.ts
+pnpm db:generate:cf                    # output: app/core/adapters/d1/migrations/
+pnpm db:generate:node                  # mirror output to app/core/adapters/libsql/migrations/
+
+pnpm db:migrate                        # alias of db:migrate:node — apply to local libSQL via Drizzle's programmatic migrator
+pnpm db:migrate:node
+pnpm db:migrate:cf                     # wrangler d1 migrations apply (local D1)
 ```
 
-Migration SQL lives under `app/core/adapters/d1/migrations/`.
+The libSQL schema module re-exports the D1 schema, so generation runs once against `drizzle.config.ts` and the libSQL mirror is regenerated only when the SQL needs to be replayed against a libSQL instance. Both adapters share the same SQLite dialect, including OCC `CHECK` constraints and `RETURNING` semantics.
 
-## Cloudflare resources (one-time setup)
-
-Cloudflare Queues and D1 databases are not auto-created by `wrangler deploy` — create them once per stage before the first remote deployment, otherwise the Workers will fail to deploy.
-
-```bash
-# staging
-wrangler d1 create tanstack-start-template-d1-staging
-wrangler queues create tanstack-start-template-events-staging
-wrangler queues create tanstack-start-template-events-dlq-staging
-
-# production
-wrangler d1 create tanstack-start-template-d1-production
-wrangler queues create tanstack-start-template-events-production
-wrangler queues create tanstack-start-template-events-dlq-production
-```
-
-Paste the `database_id` printed by each `wrangler d1 create` into every `[[d1_databases]]` block of the matching `wrangler.<stage>.toml`. Replace the `[vars] APP_URL` placeholders in each stage file before the first deploy — leaving `https://example.com` breaks `buildHead()`'s canonical / OG image URLs.
-
-## Deployment
-
-The main app and four sibling Workers ship from a **per-stage `wrangler.<stage>.toml`** as named environments. Each is deployed independently with `wrangler deploy --config wrangler.<stage>.toml --env <role>`, exposed as `pnpm deploy:<stage>:<role>` scripts.
-
-| Worker      | Responsibility                                                | Wrangler env     |
-| ----------- | ------------------------------------------------------------- | ---------------- |
-| App (fetch) | TanStack Start HTTP request handling                          | _(top level)_    |
-| Relay       | Publish outbox rows — Service Binding kick + safety-net cron  | `--env relay`    |
-| Consumer    | Consume the Queue (projections / notifications)               | `--env consumer` |
-| Pruner      | Daily cron that prunes processed outbox rows                  | `--env pruner`   |
-| DLQ         | Surface events that exhausted the consumer's retry budget     | `--env dlq`      |
-
-```bash
-# staging
-pnpm deploy:staging                  # app only
-pnpm deploy:staging:relay
-pnpm deploy:staging:consumer
-pnpm deploy:staging:pruner
-pnpm deploy:staging:dlq
-pnpm deploy:staging:all              # all of the above
-pnpm deploy:staging:all:dry          # dry run
-
-# production
-pnpm deploy:production               # app only
-pnpm deploy:production:relay
-pnpm deploy:production:consumer
-pnpm deploy:production:pruner
-pnpm deploy:production:dlq
-pnpm deploy:production:all           # all of the above
-pnpm deploy:production:all:dry       # dry run
-```
-
-Secrets are scoped per `--config` (and per `--env` for sibling Workers), so set them per stage:
-
-```bash
-wrangler secret put MY_SECRET --config wrangler.staging.toml
-wrangler secret put MY_SECRET --config wrangler.staging.toml --env relay
-wrangler secret put MY_SECRET --config wrangler.production.toml
-```
-
-> **Trigger model**: the request path kicks the relay through the `RELAY` Service Binding right after a UoW commit, so newly-persisted events publish without waiting on cron. The relay also runs on a 5-minute safety-net cron in case the Service Binding path fails. Inside a tick, `processOutboxEvents` drains up to `maxIterations` consecutive batches so a backlog is flushed in one trigger rather than 1 batch per minute.
-
-> **Retry budget**: a message reaches the DLQ only after the relay's `DEFAULT_MAX_ATTEMPTS` (publish-side, default 2) and the consumer's `1 + max_retries` (subscriber-side, default 4) are both exhausted. The user-visible attempt count is the **product** of those numbers, so adjust them together when tuning.
-
-> **Wrangler env caveat**: top-level `d1_databases` / `vars` are **not** inherited into named environments. Each `[env.*]` block re-declares them — keep `database_id`, queue names, and `APP_URL` in sync across every block of every stage config. `pnpm cf:types` (re)generates `worker-configuration.d.ts` from `wrangler.toml` only; this also runs automatically on `postinstall` and `predev`.
-
-> **Note**: `wrangler.toml` is dev-only — `pnpm dev` / `pnpm build` auto-discover it via `@cloudflare/vite-plugin`. Do not run `wrangler deploy` against it directly; use the per-stage configs above. For local secrets, drop them into `.dev.vars` (copied from `.dev.vars.example`).
+For per-stage D1 migration management (`db:apply:local` / `db:apply:staging` / `db:apply:production`), see [`docs/runtime_cloudflare.md`](docs/runtime_cloudflare.md).
 
 ## Directory layout
 
@@ -149,18 +153,33 @@ app/
 ├─ core/
 │  ├─ domain/         # entities, value objects, port interfaces, domain events
 │  ├─ application/    # use cases, UoW, cross-cutting ports (clock / id / logger), DTO projection
-│  ├─ adapters/       # D1 repositories, Workers driver implementations, port implementations
+│  ├─ adapters/
+│  │  ├─ d1/          # Cloudflare D1 repositories + UoW (batched)
+│  │  ├─ cloudflare/  # ServiceBindingRelayTrigger, Workers driver implementations
+│  │  ├─ libsql/      # libSQL repositories + UoW (interactive transaction)
+│  │  └─ node/        # in-process relay trigger, in-memory queue dispatcher
 │  └─ presentation/   # server-function entry, error responses, input validation
 ├─ routes/            # TanStack Router (file-based)
 ├─ components/
 ├─ styles/
 ├─ lib/               # structural primitives shared by every layer (e.g. CodedError)
-└─ worker/            # entry points for each Worker (handlers / relay / consumer / pruner)
-docs/                 # implementation pattern examples (backend / frontend / test)
+├─ worker/
+│  ├─ handlers.ts     # shared worker handler implementations
+│  ├─ relay.ts        # CF relay worker entry (fetch + scheduled)
+│  ├─ consumer.ts     # CF queue consumer entry
+│  ├─ pruner.ts       # CF daily cron entry
+│  ├─ dlq.ts          # CF DLQ surfacer
+│  └─ runner.node.ts  # Node in-process orchestrator for the four roles above
+├─ server.cloudflare.ts # Cloudflare Workers fetch entry
+└─ server.node.ts     # Node HTTP fetch entry (used by vite dev + scripts/listen.node.ts)
+scripts/
+├─ listen.node.ts     # production launcher (loads built bundle, @hono/node-server)
+└─ migrate.node.ts    # programmatic libSQL migration runner
+docs/                 # implementation pattern examples + per-runtime guides
 spec/                 # entry point for the /spec workflow
 ```
 
-For the deeper rationale, see `CLAUDE.md` and `docs/backend_implementation_example.md` / `docs/frontend_implementation_example.md`.
+For the deeper rationale, see [`CLAUDE.md`](CLAUDE.md), [`docs/backend_implementation_example.md`](docs/backend_implementation_example.md), and [`docs/frontend_implementation_example.md`](docs/frontend_implementation_example.md).
 
 ## License
 
