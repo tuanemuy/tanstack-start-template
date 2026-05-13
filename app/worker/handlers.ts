@@ -8,7 +8,7 @@ import {
   readPruneTuning,
   readRelayTuning,
   type ServerEnv,
-} from "@/core/application/di/server";
+} from "@/core/application/di/serverCloudflare";
 import {
   type EventDispatcher,
   type ProcessOutboxEventsOptions,

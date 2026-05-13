@@ -1,24 +1,7 @@
-// Server-side DI module. Imported from both:
-//
-//   - server-side code (the TanStack Start server entry, presentation
-//     server functions, RSC components) for `getContainer()` and the
-//     container factories;
-//   - the client static graph indirectly, when a server-fn module
-//     declares `await import("@/core/application/di/server")` inside
-//     a handler body. Vite traces those chunks during the client
-//     build, so this module MUST stay free of Node-only imports
-//     (`node:async_hooks`, `node:fs`, …).
-//
-// The `AsyncLocalStorage`-backed half lives in `app/server.ts` (the
-// Worker entry); it `installContainerStore`s a handle that
-// `getContainer()` here reads through. The split keeps node-only
-// imports out of any chunk reachable from the client graph.
-//
-// The module is named for its *role* (server-side container wiring),
-// not for the adapter it currently wires (D1). Swapping the adapter
-// changes the implementations below; the module identity stays put.
+// Deliberately separate from `./serverNode.ts` so the Node entry never
+// pulls Workers-only imports and vice versa. Both factories return the
+// same `RequestContainer` / `WorkerContainer` shapes.
 import type { D1Database, Fetcher } from "@cloudflare/workers-types";
-import { z } from "zod";
 import { content } from "@/config";
 import { ServiceBindingRelayTrigger } from "@/core/adapters/cloudflare/serviceBindingRelayTrigger";
 import { getDatabase } from "@/core/adapters/d1/client";
@@ -29,13 +12,13 @@ import { SystemClock } from "../ports/clock";
 import { UuidV7Generator } from "../ports/idGenerator";
 import { ConsoleLogger } from "../ports/logger";
 import { NoopRelayTrigger, type RelayTrigger } from "../ports/relayTrigger";
+import type { TuningEnv } from "./env";
 import {
-  DEFAULT_BATCH_SIZE,
-  DEFAULT_LEASE_MS,
-  DEFAULT_MAX_ATTEMPTS,
-} from "../workers/eventRelayWorker";
-import { DEFAULT_OUTBOX_RETENTION_MS } from "../workers/outboxPrune";
-import { getInstalledStore } from "./containerStore";
+  type PruneTuning,
+  type RelayTuning,
+  readPruneTuning as readPruneTuningShared,
+  readRelayTuning as readRelayTuningShared,
+} from "./env";
 import type {
   AppConfig,
   RequestContainer,
@@ -71,6 +54,11 @@ export type RequestServerConfig = AppConfig &
     waitUntil?: (promise: Promise<unknown>) => void;
   }>;
 
+/**
+ * Cloudflare bindings shape. The `OUTBOX_*` vars are runtime-agnostic
+ * (see {@link TuningEnv}); the D1/Fetcher bindings are CF-only. The
+ * Node entry has its own env shape in `./serverNode`.
+ */
 export type ServerEnv = Readonly<{
   DB: D1Database;
   APP_URL: string;
@@ -85,39 +73,18 @@ export type ServerEnv = Readonly<{
   OUTBOX_RETENTION_MS?: string;
 }>;
 
-// Tuning shapes are deliberately split per-worker: the relay reads
-// nothing about retention, and the pruner reads nothing about batch /
-// lease. Splitting the readers prevents "this var is unused on this
-// worker" confusion when wrangler.toml carries the same env block
-// per named environment.
-const relayTuningSchema = z.object({
-  batchSize: z.coerce.number().int().positive().default(DEFAULT_BATCH_SIZE),
-  leaseMs: z.coerce.number().int().positive().default(DEFAULT_LEASE_MS),
-  maxAttempts: z.coerce.number().int().min(1).default(DEFAULT_MAX_ATTEMPTS),
-});
-const pruneTuningSchema = z.object({
-  retentionMs: z.coerce
-    .number()
-    .int()
-    .positive()
-    .default(DEFAULT_OUTBOX_RETENTION_MS),
-});
+export type { PruneTuning, RelayTuning } from "./env";
 
-export type RelayTuning = z.infer<typeof relayTuningSchema>;
-export type PruneTuning = z.infer<typeof pruneTuningSchema>;
-
+// Re-export the shared readers under the original names so wrangler
+// worker entries that import from this module keep working unchanged.
+// `ServerEnv` is structurally compatible with `TuningEnv`, so passing
+// it directly satisfies the shared reader's input contract.
 export function readRelayTuning(env: ServerEnv): RelayTuning {
-  return relayTuningSchema.parse({
-    batchSize: env.OUTBOX_BATCH_SIZE,
-    leaseMs: env.OUTBOX_LEASE_MS,
-    maxAttempts: env.OUTBOX_MAX_ATTEMPTS,
-  });
+  return readRelayTuningShared(env as TuningEnv);
 }
 
 export function readPruneTuning(env: ServerEnv): PruneTuning {
-  return pruneTuningSchema.parse({
-    retentionMs: env.OUTBOX_RETENTION_MS,
-  });
+  return readPruneTuningShared(env as TuningEnv);
 }
 
 export function readRequestServerConfig(
@@ -186,38 +153,4 @@ export function createWorkerContainer(env: ServerEnv): WorkerContainer {
     outboxRepository: new D1OutboxRepository(db, UuidV7Generator, SystemClock),
     idempotencyStore: new D1IdempotencyStore(db, SystemClock),
   };
-}
-
-/**
- * Resolve the request-scoped container.
- *
- * The handle (an `AsyncLocalStorage`-backed reader) is installed by
- * the Worker entry at module load via `installContainerStore`; this
- * function reads through the module-scoped store registered there.
- * Tests do not use this path — they call `createTestContainer()`
- * directly.
- *
- * Returns `Promise<RequestContainer>` so presentation-layer call
- * sites that use `await getContainer()` keep working unchanged.
- * Throws if called outside a request scope or before the Worker
- * entry installed the store — both indicate a wiring bug rather
- * than a recoverable runtime error.
- */
-export function getContainer(): Promise<RequestContainer> {
-  const store = getInstalledStore();
-  if (!store) {
-    throw new Error(
-      "getContainer() called before the container store was installed. " +
-        "The Worker entry (app/server.ts) installs the store at module load.",
-    );
-  }
-  const container = store.getStore();
-  if (!container) {
-    throw new Error(
-      "getContainer() called outside a request scope. " +
-        "The fetch handler in app/server.ts must wrap each request in " +
-        "the AsyncLocalStorage scope before invoking framework code.",
-    );
-  }
-  return Promise.resolve(container);
 }

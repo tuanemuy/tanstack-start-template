@@ -1,43 +1,57 @@
-// Module-scoped registry for the request-scoped container handle.
-//
-// Replaces the previous `globalThis.__APP_CONTAINER_STORE__` pin. A
-// module-level `let` is private to this module, so shared-isolate
-// deployments (Workers for Platforms, preview branches) cannot reach
-// the handle from another tenant's code via `globalThis`.
-//
-// `app/server.ts` calls `installContainerStore` at Worker boot,
-// passing an `AsyncLocalStorage`-backed reader. Server-side code
-// (presentation, RSC) reads the handle through `getInstalledStore`.
-//
-// `import.meta.hot.data` survival keeps the install across dev HMR
-// re-evaluation so in-flight requests don't lose their reader
-// mid-flight. In production builds Vite tree-shakes the `import.meta
-// .hot` branch entirely.
-//
-// Crucially this module imports nothing Node-only — `node:async_hooks`
-// stays in `app/server.ts`. Server-fn dynamic imports of
-// `app/core/application/di/server.ts` traverse here transitively, and
-// Vite's client build must be able to resolve every node in that
-// graph.
+// SSR and RSC are separate module graphs but share the same realm, so
+// the store handle lives on a `Symbol.for(...)`-keyed slot of
+// `globalThis` to keep both envs in sync. No node-only imports here —
+// server-fn dynamic imports traverse this module into the client graph.
 import type { RequestContainer } from "./types";
 
 export type ContainerStore = Readonly<{
   getStore(): RequestContainer | undefined;
 }>;
 
-type HotData = { store?: ContainerStore };
+const STORE_SYMBOL: unique symbol = Symbol.for(
+  "@tanstack-start-template/container-store",
+) as never;
 
-const hotData: HotData = (import.meta.hot?.data ?? {}) as HotData;
+type GlobalSlot = { [STORE_SYMBOL]?: ContainerStore };
 
-let store: ContainerStore | undefined = hotData.store;
+function slot(): GlobalSlot {
+  return globalThis as unknown as GlobalSlot;
+}
 
 export function installContainerStore(next: ContainerStore): void {
-  store = next;
-  if (import.meta.hot) {
-    (import.meta.hot.data as HotData).store = next;
-  }
+  slot()[STORE_SYMBOL] = next;
 }
 
 export function getInstalledStore(): ContainerStore | undefined {
-  return store;
+  return slot()[STORE_SYMBOL];
+}
+
+/**
+ * Resolve the request-scoped container. The store is installed by the
+ * runtime entry (`app/server.cloudflare.ts` / `app/server.node.ts`) at
+ * module load; this reader is shared by both runtimes.
+ *
+ * Returns `Promise<RequestContainer>` so call sites can `await` it
+ * symmetrically with other async setup. Throws if the store is not
+ * installed or the call is outside a request scope — both indicate a
+ * wiring bug, not a recoverable runtime error.
+ */
+export function getContainer(): Promise<RequestContainer> {
+  const store = getInstalledStore();
+  if (!store) {
+    throw new Error(
+      "getContainer() called before the container store was installed. " +
+        "The runtime entry (app/server.cloudflare.ts or app/server.node.ts) " +
+        "installs the store at module load.",
+    );
+  }
+  const container = store.getStore();
+  if (!container) {
+    throw new Error(
+      "getContainer() called outside a request scope. " +
+        "The fetch handler must wrap each request in the AsyncLocalStorage " +
+        "scope before invoking framework code.",
+    );
+  }
+  return Promise.resolve(container);
 }

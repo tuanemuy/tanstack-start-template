@@ -10,7 +10,7 @@
 # named environments — the duplication across `[env.*]` blocks is by
 # design. Keep `database_id` / `APP_URL` in sync across every block.
 name = "tanstack-start-template"
-main = "app/server.ts"
+main = "app/server.cloudflare.ts"
 compatibility_date = "2026-05-01"
 # `nodejs_compat` is required because @tanstack/react-start imports
 # `node:async_hooks` / `node:stream` / `node:crypto` / `node:util`.

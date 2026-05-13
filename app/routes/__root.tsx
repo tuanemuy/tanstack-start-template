@@ -5,17 +5,28 @@ import {
   Scripts,
 } from "@tanstack/react-router";
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
+import { createServerFn } from "@tanstack/react-start";
 import type { ReactNode } from "react";
 import { sanitizeRouteError } from "@/core/presentation/errorDisplay";
+import { errorResponseMiddleware } from "@/core/presentation/errorResponseMiddleware";
 import { buildHead } from "@/core/presentation/head";
-import { defineQueryFn } from "@/core/presentation/serverFn";
 import appCss from "../styles/index.css?url";
 
-export const loadAppContext = defineQueryFn().handler(async () => {
-  const { getContainer } = await import("@/core/application/di/server");
-  const container = await getContainer();
-  return { config: container.config };
-});
+// Server fns only reachable from `"use client"` components miss the
+// rsc manifest (frozen before the client build phase). Pull their
+// provider modules into a server-rendered route to register them.
+import "@/components/todo/CreateTodoForm/action";
+import "@/components/todo/TodoItem/action";
+
+export const loadAppContext = createServerFn({ method: "GET" })
+  .middleware([errorResponseMiddleware])
+  .handler(async () => {
+    const { getContainer } = await import(
+      "@/core/application/di/containerStore"
+    );
+    const container = await getContainer();
+    return { config: container.config };
+  });
 
 const SITE_ASSET_LINKS = [
   { rel: "icon", href: "/favicon.ico", sizes: "any" },

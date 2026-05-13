@@ -24,7 +24,7 @@
 # named environments — every `[env.*]` block re-declares them. Keep
 # `database_id`, queue names, and `APP_URL` in sync across every block.
 name = "tanstack-start-template-staging"
-main = "app/server.ts"
+main = "app/server.cloudflare.ts"
 compatibility_date = "2026-05-01"
 compatibility_flags = ["nodejs_compat"]
 

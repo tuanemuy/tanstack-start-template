@@ -11,9 +11,16 @@ export default defineConfig({
   },
   plugins: [
     tailwindcss(),
-    cloudflare({ viteEnvironment: { name: "ssr" } }),
+    cloudflare({
+      // Declare `rsc` as a child of the workerd-backed `ssr` env so the
+      // RSC plugin's module runner is initialised inside the worker.
+      viteEnvironment: { name: "ssr", childEnvironments: ["rsc"] },
+    }),
     tanstackStart({
       srcDirectory: "app",
+      // Path is resolved relative to `srcDirectory`; an `app/` prefix
+      // makes the plugin silently fall back to the default CF entry.
+      server: { entry: "server.cloudflare.ts" },
       rsc: { enabled: true },
     }),
     rsc(),

@@ -1,7 +1,7 @@
 import { isNotFound, isRedirect } from "@tanstack/react-router";
 import { createMiddleware } from "@tanstack/react-start";
 import { setResponseStatus } from "@tanstack/react-start/server";
-import { getContainer } from "@/core/application/di/server";
+import { getContainer } from "@/core/application/di/containerStore";
 import {
   AppServerError,
   httpStatusFor,
@@ -47,13 +47,10 @@ export const errorResponseMiddleware = createMiddleware({
   }
 });
 
-// `getContainer` is statically imported at module top: `di/server.ts` is
-// designed to be client-graph safe (node-only imports live in
-// `app/server.ts` behind `containerStore`), so traversal during the
-// client build does not pull `node:async_hooks` into client chunks.
-// The fallback `console.error` only fires if container resolution or
-// logger dispatch itself throws — without it a wiring bug would
-// silently swallow the original error.
+// `containerStore` is client-graph safe (no node-only imports), so
+// statically importing `getContainer` here doesn't pull `node:async_hooks`
+// into client chunks. The fallback `console.error` only fires if
+// container resolution or logger dispatch itself throws.
 async function logServerError(
   error: unknown,
   serialized: SerializedError,

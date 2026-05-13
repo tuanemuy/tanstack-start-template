@@ -52,7 +52,7 @@ export class D1UnitOfWorkProvider implements UnitOfWorkProvider {
     // Default to a no-op kicker so worker contexts (relay / consumer /
     // pruner / dlq) can construct the provider without service-binding
     // wiring. The request path overrides this with a real Service
-    // Binding kicker in `app/core/application/di/server.ts`.
+    // Binding kicker in `app/core/application/di/serverCloudflare.ts`.
     private readonly relayTrigger: RelayTrigger = NoopRelayTrigger,
   ) {}
 

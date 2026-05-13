@@ -5,7 +5,11 @@ import {
   DEFAULT_MAX_ATTEMPTS,
 } from "@/core/application/workers/eventRelayWorker";
 import { DEFAULT_OUTBOX_RETENTION_MS } from "@/core/application/workers/outboxPrune";
-import { readPruneTuning, readRelayTuning, type ServerEnv } from "../server";
+import {
+  readPruneTuning,
+  readRelayTuning,
+  type ServerEnv,
+} from "../serverCloudflare";
 
 // Tuning readers sit at the wrangler-vars transport boundary. The
 // production path supplies validated values from `[env.relay.vars]` /
