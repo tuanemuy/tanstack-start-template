@@ -10,6 +10,14 @@ export type SerializedConflictError = SerializedErrorBase & {
   kind: "conflict";
 };
 
+export type SerializedUnauthorizedError = SerializedErrorBase & {
+  kind: "unauthorized";
+};
+
+export type SerializedForbiddenError = SerializedErrorBase & {
+  kind: "forbidden";
+};
+
 export type SerializedSystemError = SerializedErrorBase & {
   kind: "system";
 };
@@ -56,6 +64,54 @@ export class ConflictError extends ApplicationError {
 
 export function isConflictError(error: unknown): error is ConflictError {
   return error instanceof ConflictError;
+}
+
+/**
+ * Authorization failures raised by usecases. Distinguished into two kinds:
+ * - `UnauthorizedError` — the actor is not authenticated (no / invalid
+ *   credentials). Maps to HTTP 401 at the transport boundary.
+ * - `ForbiddenError` — the actor is authenticated but lacks permission for
+ *   the requested resource / operation. Maps to HTTP 403.
+ *
+ * These live in the application layer (not presentation) because the
+ * decision is a business-rule judgment ("this actor cannot touch this
+ * aggregate") that usecases need to throw directly. The HTTP status mapping
+ * is a pure transport concern owned by the presentation layer.
+ */
+export class UnauthorizedError extends ApplicationError {
+  override readonly name = "UnauthorizedError";
+
+  override toSerialized(): SerializedUnauthorizedError {
+    return {
+      kind: "unauthorized",
+      code: this.code,
+      message: this.message,
+      retryable: this.retryable,
+    };
+  }
+}
+
+export function isUnauthorizedError(
+  error: unknown,
+): error is UnauthorizedError {
+  return error instanceof UnauthorizedError;
+}
+
+export class ForbiddenError extends ApplicationError {
+  override readonly name = "ForbiddenError";
+
+  override toSerialized(): SerializedForbiddenError {
+    return {
+      kind: "forbidden",
+      code: this.code,
+      message: this.message,
+      retryable: this.retryable,
+    };
+  }
+}
+
+export function isForbiddenError(error: unknown): error is ForbiddenError {
+  return error instanceof ForbiddenError;
 }
 
 /**

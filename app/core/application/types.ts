@@ -1,6 +1,6 @@
-import type { Container } from "./di/types";
+import type { RequestContainer } from "./di/types";
 
 export type ServiceArgs<T> = {
-  container: Container;
+  container: RequestContainer;
   input: T;
 };

@@ -38,27 +38,32 @@ export type ClaimPendingArgs = Readonly<{
   leaseMs: number;
 }>;
 
+export type FinalizeOutboxArgs = Readonly<{
+  processed: readonly EventId[];
+  failures: readonly OutboxFailure[];
+  now: Date;
+}>;
+
 export interface OutboxRepository {
   // Must run in the same transaction as the entity changes that produced
-  // them — usecases reach this only via `collectEvents`. `now` comes from
-  // the application `Clock` so a fake clock freezes outbox `createdAt` too.
-  save(events: readonly DomainEvent[], now: Date): Promise<void>;
+  // them — usecases reach this only via `collectEvents`. The adapter
+  // sources `createdAt` from its own `Clock` so a fake clock freezes
+  // outbox timestamps without leaking the parameter through the port.
+  save(events: readonly DomainEvent[]): Promise<void>;
 
   // Atomically claims and returns rows that are unprocessed, not
   // quarantined, due for next attempt, and either unclaimed or whose
   // outstanding claim has expired (`claimed_at <= now - leaseMs`). The
   // claim makes the same row invisible to concurrent workers until it
-  // is finalized (`markProcessed` / `markFailed`) or its lease lapses,
-  // so this is safe for multi-worker deployments.
+  // is `finalize`d or its lease lapses, so this is safe for multi-worker
+  // deployments. Returned order is approximately FIFO (`created_at, id`);
+  // strict enqueue order is not guaranteed — consumers must be idempotent.
   claimPending(args: ClaimPendingArgs): Promise<readonly OutboxEntry[]>;
 
-  markProcessed(ids: readonly EventId[], now: Date): Promise<void>;
-
-  // Increments `attempts`, records the latest error, and either schedules
-  // the next retry (`nextAttemptAt`) or quarantines the row by stamping
-  // `failedAt = now` (when `nextAttemptAt === null`). Releases the claim
-  // either way so the row is re-claimable on the next tick.
-  markFailed(failures: readonly OutboxFailure[], now: Date): Promise<void>;
+  // Atomically closes a relay tick: a crash mid-call cannot leave
+  // failures recorded without the matching successes (or vice versa),
+  // so a row whose dispatch already succeeded is never re-claimed.
+  finalize(args: FinalizeOutboxArgs): Promise<void>;
 
   pruneProcessed(olderThan: Date): Promise<{ deleted: number }>;
 }

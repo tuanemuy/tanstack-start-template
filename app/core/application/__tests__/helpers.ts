@@ -11,16 +11,24 @@ import { env } from "cloudflare:test";
 import { beforeEach } from "vitest";
 import { content } from "@/config";
 import { type Database, getDatabase } from "@/core/adapters/d1/client";
+import { D1IdempotencyStore } from "@/core/adapters/d1/repositories/idempotencyStore";
 import { D1OutboxRepository } from "@/core/adapters/d1/repositories/outboxRepository";
 import { D1UnitOfWorkProvider } from "@/core/adapters/d1/unitOfWork";
-import type { Container } from "@/core/application/di/types";
+import type {
+  RequestContainer,
+  WorkerContainer,
+} from "@/core/application/di/types";
 import { SystemClock } from "@/core/application/ports/clock";
 import { UuidV7Generator } from "@/core/application/ports/idGenerator";
 import { ConsoleLogger } from "@/core/application/ports/logger";
 
-export type TestContainer = Container & {
-  db: Database;
-};
+// Tests need both scopes — they exercise usecases (request) and worker
+// pipelines in the same suite. Production code uses one container or
+// the other, never this fat shape.
+export type TestContainer = RequestContainer &
+  WorkerContainer & {
+    db: Database;
+  };
 
 export function createTestContainer(): TestContainer {
   const db = getDatabase(env.DB);
@@ -34,13 +42,11 @@ export function createTestContainer(): TestContainer {
       SystemClock,
       UuidV7Generator,
     ),
-    outboxRepository: new D1OutboxRepository(db, UuidV7Generator),
+    outboxRepository: new D1OutboxRepository(db, UuidV7Generator, SystemClock),
+    idempotencyStore: new D1IdempotencyStore(db, SystemClock),
     clock: SystemClock,
     idGenerator: UuidV7Generator,
     logger: ConsoleLogger,
-    shutdown: async () => {
-      // D1 binding lifecycle is owned by Miniflare — no-op.
-    },
     db,
   };
 }
