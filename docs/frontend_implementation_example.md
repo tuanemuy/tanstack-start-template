@@ -237,6 +237,32 @@ import { CompositeComponent } from "@tanstack/react-start/rsc";
 - `serverAction` は `defineServerFn` + `inputValidator(schema)` も束ねる。
   handler は `({ data, container }, module) => ...` の 1 行で書ける。
 
+### transport 検証の責務分担（serverData vs serverAction）
+
+`serverData` が **schema を受け取らない** のは設計上の意図で、「呼び出し元が
+既に transport boundary を通過している前提」を型シグネチャで表明している。
+言い換えると以下の使い分けが本テンプレの規約:
+
+| 入力源 | 検証ポイント | wrapper |
+|---|---|---|
+| URL search params | route の `validateSearch: schema.parse` | `serverData`（型を信頼して受け取る） |
+| 親 server fn からの転送 | 親 fn の `inputValidator(schema)` | `serverData`（型を信頼して受け取る） |
+| クライアントからの直 POST | `serverAction` の `inputValidator(schema)` | `serverAction` |
+
+> **規約**: `serverData` は **内部呼び出し専用**。外部入力（URL / form / fetch）
+> を扱う箇所は **必ず `validateSearch` か `serverAction` のどちらかで
+> transport 検証を済ませてから** `serverData` 経由のローダに引数を渡す。
+> usecase 直前で再度 Zod を走らせない（VO factory が同じ制約を再検証するので
+> 二重になり、CLAUDE.md「validate at the boundaries」と乖離する）。
+
+範例: `app/routes/todo/index.tsx` は `validateSearch:
+paginationSearchSchema.parse` で URL を Pagination 型に正規化し、
+`renderTodoList`（server fn）が `inputValidator(paginationSchema)` で
+再度 transport 検証 → サーバーコンポーネント `TodoList` に typed 値で渡し、
+`loadTodos(pagination)`（`serverData` ラップ）はその型を **信頼するだけ**。
+3 段階のうち検証は **最初の 2 つの transport boundary** に閉じ、
+内部の `serverData` は noop。
+
 ### `getContainer()` を直接呼んでよい例外
 
 `container.authProvider` のような **特定の port を 1 行で叩くだけ** で
@@ -509,9 +535,9 @@ export function validateInput<T extends ZodType>(schema: T) {
 ```
 
 ```typescript
-// app/components/todo/actions.ts
+// app/components/todo/CreateTodoForm/action.ts
 import { serverAction } from "@/core/presentation/serverAction";
-import { createTodoSchema } from "./schema";
+import { createTodoSchema } from "../schema";
 
 // `serverAction` が `defineServerFn` + `inputValidator(schema)` +
 // `getContainer()` の dynamic import + usecase モジュールの dynamic import を
@@ -531,7 +557,7 @@ state には `SerializedError | null` を畳み、`validation` エラーなら
 `fieldErrors` をそのまま field 単位で出す。
 
 ```tsx
-// app/components/todo/CreateTodoForm.tsx
+// app/components/todo/CreateTodoForm/index.tsx
 "use client";
 
 import { useRouter } from "@tanstack/react-router";
@@ -542,8 +568,8 @@ import {
   extractSerializedError,
   type SerializedError,
 } from "@/core/presentation/errorResponse";
-import { createTodoFn } from "./actions";
-import { TODO_TITLE_MAX_LENGTH } from "./schema";
+import { createTodoFn } from "./action";
+import { TODO_TITLE_MAX_LENGTH } from "../schema";
 
 type FormState = { error: SerializedError | null };
 const initialState: FormState = { error: null };
@@ -851,8 +877,9 @@ __root.tsx .errorComponent          ←  最終フォールバック（sanitizeR
 `kind` による分岐ができない。そこで presentation 層で
 
 - `AppServerError` — 伝搬専用の例外クラス（`serialized` を enumerable own property に持ち、JSON 往復後も生き残る）
+- `appServerErrorAdapter`（`app/start.ts` で `createStart` に登録） — Seroval roundtrip で `AppServerError` のクラスアイデンティティを保つシリアライゼーションアダプタ。**`defineServerFn` / `defineQueryFn` 経由の boundary でのみ走る**。直 `fetch` / RSC error frame / 自前 transport 経由ではアダプタが走らず、client は `serialized` を own property に持つ plain Error/object（remnant）を受け取る
 - `serializeError(error)` — Business / NotFound / Validation 等を `SerializedError`（`{ kind, code, message, retryable?, fieldErrors? }`）に畳み込む
-- `extractSerializedError(error)` — クライアント側で `SerializedError` を取り出す（`AppServerError` でも、plain object 化された残骸でも動く）
+- `extractSerializedError(error)` — クライアント側で `SerializedError` を取り出す。三段検出：① `instanceof AppServerError`（アダプタ通過経路）→ ② structural な `serialized` remnant 検出（アダプタ未通過経路）→ ③ `serializeError` フォールバック。**UI コードは必ずこの関数を経由すること。`instanceof AppServerError` を分岐に使うとアダプタ未通過経路で false になり静かに壊れる**
 - `errorResponseMiddleware`（`app/core/presentation/errorResponseMiddleware.ts`） — server function 全体（`inputValidator` と handler の両方）をラップして上記を適用し、`SerializedErrorKind` から HTTP ステータスを設定する。TanStack Router の `redirect()` / `notFound()` センチネルはそのまま rethrow
 - `defineServerFn(opts?)`（`app/core/presentation/serverFn.ts`） — `createServerFn(opts).middleware([errorResponseMiddleware])` を返す canonical エントリポイント。default は `POST`(mutation 中心テンプレのため)。`createServerFn` を直接呼ばずこちらを使う
 - `defineQueryFn()`（`app/core/presentation/serverFn.ts`） — `defineServerFn({ method: "GET" })` の薄いエイリアス。loader bridge / RSC レンダプロキシ等の冪等な読み取り用

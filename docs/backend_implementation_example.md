@@ -21,7 +21,9 @@ app/core/
 │       ├── errorCode.ts
 │       └── ports/${domain}Repository.ts
 ├── application/
-│   ├── di/server.ts               Container, createContainer, getContainer, readServerConfig, installContainerStore
+│   ├── di/types.ts                SharedDeps, RequestContainer, WorkerContainer, AppConfig
+│   ├── di/containerStore.ts       ContainerStore, installContainerStore, getInstalledStore (request-side ALS handle)
+│   ├── di/server.ts               createRequestContainer, createWorkerContainer, getContainer, readRequestServerConfig
 │   ├── ports/
 │   │   ├── clock.ts
 │   │   ├── idGenerator.ts
@@ -201,17 +203,43 @@ export const fooEventDecoders: FooEventDecoders = {
 
 ### Repository Port
 
+OCC を含む基本契約は `TransactionalRepository<TEntity, TId>` （`app/core/domain/common/transactionalRepository.ts`）
+に集約済み。aggregate ごとの port はこれを継承し、読み取り専用クエリだけを足す:
+
 ```ts
-export interface FooRepository {
-  findById(id: string): Promise<Foo | null>;
+export interface FooRepository extends TransactionalRepository<Foo> {
   findPage(pagination: Pagination): Promise<PaginationResult<Foo>>;
-  save(foo: Foo): Promise<void>;                        // OCC: WHERE version = old
-  delete(id: string, expectedVersion: number): Promise<void>;
 }
+```
+
+`TransactionalRepository<TEntity>` が提供するもの:
+
+```ts
+interface TransactionalRepository<TEntity, TId = string> {
+  insert(entity: TEntity): Promise<void>;
+  findById(id: TId): Promise<Versioned<TEntity> | null>;
+  save(entity: TEntity, expectedVersion: ExpectedVersion<TEntity>): Promise<void>;
+  delete(id: TId, expectedVersion: ExpectedVersion<TEntity>): Promise<void>;
+}
+
+type Versioned<T> = { readonly entity: T; readonly expectedVersion: ExpectedVersion<T> };
+type ExpectedVersion<T> = number & { readonly [brand]: T };  // phantom T
 ```
 
 lookup key は plain `string`。ブランドは adapter の `toFoo`（再水和）と event decoder
 だけが付ける。application 層は VO を一度も構築しない。
+
+OCC は `ExpectedVersion<Foo>` トークンで型強制する:
+
+- `findById` だけが正規のトークン発行口（adapter 内部の `as` キャスト 1 か所）
+- `save` / `delete` はトークンを必須引数で受ける → "読まずに書く" は型エラー
+- `insert` は初回永続化専用。版が存在しないので OCC トークンは要らない
+- `findPage` のような読み取り専用クエリは concrete port 側で別途定義
+
+phantom `T` のおかげで `ExpectedVersion<Foo>` と `ExpectedVersion<Bar>` は型不一致 →
+**aggregate 間でトークンを取り違えても型エラー**。「ドメイン関数が version を bump →
+adapter で `entity.version - 1` を再計算」という implicit な接続を切り、読みの瞬間に
+観測した版が write までそのまま運ばれる契約になる。
 
 新しいドメインを足すときは:
 
@@ -246,7 +274,7 @@ export async function createFoo({
 
   await container.unitOfWorkProvider.run(
     async ({ fooRepository, collectEvents }) => {
-      await fooRepository.save(foo);
+      await fooRepository.insert(foo);
       collectEvents(eventDrafts);
     },
   );
@@ -265,10 +293,10 @@ export async function deleteFoo({
 
   await container.unitOfWorkProvider.run(
     async ({ fooRepository, collectEvents }) => {
-      const current = await fooRepository.findById(input.id);
-      if (!current) throw new NotFoundError("FOO_NOT_FOUND", `...`);
-      await fooRepository.delete(current.id, current.version);
-      collectEvents([FooEvents.deleted(current.id, now)]);
+      const found = await fooRepository.findById(input.id);
+      if (!found) throw new NotFoundError("FOO_NOT_FOUND", `...`);
+      await fooRepository.delete(found.entity.id, found.expectedVersion);
+      collectEvents([FooEvents.deleted(found.entity.id, now)]);
     },
   );
 }
@@ -286,21 +314,40 @@ OCC retry 用の汎用ユーティリティはあえて持たない。`ConflictE
 
 ### Container 配線
 
+Container は **scope ごとに独立した型** として 2 系統用意する。`SharedDeps`
+（`clock` / `idGenerator` / `logger` / `shutdown`）を intersection で混ぜ込み、
+それ以外のフィールドはその scope でしか必要にならないものだけを持つ。
+
 ```ts
-export async function createContainer(config: ServerConfig): Promise<Container> {
-  const db = await getDatabase(config.databaseUrl);
-  return {
-    config: { appUrl: config.appUrl },
-    unitOfWorkProvider: new DrizzleSqliteUnitOfWorkProvider(
-      db,
-      SystemClock,
-      UuidV7Generator,
-    ),
-    outboxRepository: new DrizzleSqliteOutboxRepository(db, UuidV7Generator),
-    clock: SystemClock,
-    idGenerator: UuidV7Generator,
-    logger: ConsoleLogger,
-  };
+export type SharedDeps = Readonly<{
+  clock: Clock;
+  idGenerator: IdGenerator;
+  logger: Logger;
+  shutdown: () => Promise<void>;
+}>;
+
+// 集約変更を行う usecase / SSR head 用。`outboxRepository` は持たない
+// (`collectEvents` 経由で UoW 内部から書く) し、`idempotencyStore` も持たない
+// (queue consumer 専用)。
+export type RequestContainer = SharedDeps &
+  Readonly<{ config: AppConfig; unitOfWorkProvider: UnitOfWorkProvider }>;
+
+// 直接 outbox を読み書きする relay / pruner / queue consumer / DLQ 用。
+// `config` と `unitOfWorkProvider` は持たない。
+export type WorkerContainer = SharedDeps &
+  Readonly<{
+    outboxRepository: OutboxRepository;
+    idempotencyStore: IdempotencyStore;
+  }>;
+```
+
+```ts
+export function createRequestContainer(
+  config: RequestServerConfig,
+): RequestContainer { /* ...UoW + AppConfig... */ }
+
+export function createWorkerContainer(env: ServerEnv): WorkerContainer {
+  /* ...outboxRepository + idempotencyStore... */
 }
 ```
 
@@ -309,9 +356,16 @@ draft を outbox に flush する際に `EventId` をミントするのに使う
 本体の `idGenerator` と同じ instance を渡せば、テストで Fake に差し替えるとき
 にも 1 箇所で済む。
 
-env を読むパスは `readServerConfig()` に集約する。production 起動時は同じ
-ファイル内で eager validate されるが、out-of-band な entry point（`seed.ts` など）
-からも `readServerConfig()` を直接呼ぶ。
+request 側 env を読むパスは `readRequestServerConfig()` に集約する。worker は
+`env: ServerEnv` をそのまま `createWorkerContainer` に渡せばよく、`AppConfig`
+や `relay` Service Binding を経由しない（worker は HTML を返さず、relay を
+キックする側でもないため）。
+
+テスト用の `TestContainer = RequestContainer & WorkerContainer & { db }` は
+両 scope のフィールドを 1 つの fat shape にしたもので、test 内で usecase 起動と
+worker pipeline の検証を同居させるための便宜上の型。production code はこの
+intersection を直接持たず、必ず `RequestContainer` / `WorkerContainer` の
+どちらかを受け取る。
 
 `SQLITE_BUSY` 等の transient lock contention は `DrizzleSqliteUnitOfWorkProvider` が
 内部で retry する（driver-level concern なので application 層は触らない）。
@@ -386,18 +440,29 @@ CLAUDE.md key concepts の通り、Outbox は **at-least-once delivery / orderin
   upsert で **同じ event を N 回処理しても結果が変わらない** ように書く。「副作用を
   1 回だけ起こす」前提のコード（外部送信・課金・通知の "送りっぱなし"）はそのまま
   だと at-most-once が崩れた瞬間に重複する。
+  - テンプレに同梱の `IdempotencyStore` ポート（`processed_events` テーブル + D1
+    `INSERT OR IGNORE` で claim 化）が「処理済み id テーブル」の最小実装。`handleQueue`
+    が `markProcessed(event.id)` を handler 実行前に呼び、`alreadyProcessed: true`
+    なら handler を skip して ack。新しい consumer を書くときも同じパターンを踏襲する。
+  - **Stamp first vs stamp inside handler** — テンプレ既定は stamp first（claim →
+    handler → ack）。handler 側を「再実行しても結果が変わらない」上書き形（projection
+    の UPSERT 等）に書けばこの順序で安全。逆に **副作用と stamp を一緒にロールバック
+    したい**（外部送信・課金・通知の単発系）場合は handler を `UnitOfWorkProvider.run`
+    で包み、その UoW 内で `markProcessed` と side-effect 書き込みを同一 batch にする。
 - **Ordering なし（順序保証ゼロ）** — 各行は `next_attempt_at`（backoff + jitter で
   ばらける）と `attempts` の状態で個別に再スケジュールされるため、`foo.created` の
   前に `foo.updated` / `foo.deleted` が届く並びは普通に起こる。consumer 側で
   「`deleted` を見たら `created` も見ているはず」のような状態遷移を仮定したロジックは
   書かない。順序が必要なら **aggregate の現在状態を read してから判断する** か、
   event payload に必要な状態を全部載せて self-contained にする。
-- **Quarantine（poison row 隔離）** — `attempts` が `maxAttempts`（デフォルト 5）に
+- **Quarantine（poison row 隔離）** — `attempts` が `maxAttempts`（デフォルト 2）に
   達した行は `failed_at` をセットしてクワランティン化される。partial index で
   `claimPending` から外れるので poison row が hot path をブロックしない。再キックは
   `failed_at` / `next_attempt_at` を NULL に戻して `attempts` を 0 リセット。
   decode 失敗（payload schema 不一致）も同じ retry path に乗る — schema 修正後に
-  再キックして再 dispatch される。
+  再キックして再 dispatch される。relay の `maxAttempts` × consumer の
+  `1 + max_retries`（`wrangler.consumer.toml`）= ユーザーから見える総試行回数。
+  小さい値同士の積で済ませるのが鉄則で、片方を 5 にすると相手が 5 でも 25 試行に膨らむ。
 - **Multi-worker 安全性（claim/lease）** — 行は claim+select の 1 トランザクションで
   ロックされ、リース期間内は他 worker から不可視になる。worker クラッシュ時はリース
   満了で再 claim 可能。複数 worker を起動しても同一行が二重 dispatch されない。
