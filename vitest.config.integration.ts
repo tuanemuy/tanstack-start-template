@@ -3,7 +3,6 @@ import {
   cloudflareTest,
   readD1Migrations,
 } from "@cloudflare/vitest-pool-workers";
-import tsconfigPaths from "vite-tsconfig-paths";
 import { defineConfig } from "vitest/config";
 
 // Integration tests run inside a Workers isolate (Miniflare) with a
@@ -18,8 +17,10 @@ const migrationsPath = path.join(
 const migrations = await readD1Migrations(migrationsPath);
 
 export default defineConfig({
+  resolve: {
+    tsconfigPaths: true,
+  },
   plugins: [
-    tsconfigPaths(),
     cloudflareTest({
       miniflare: {
         compatibilityDate: "2026-05-01",
@@ -62,6 +63,7 @@ export default defineConfig({
   ],
   test: {
     include: ["app/**/*.integration.test.ts"],
+    exclude: ["**/node_modules/**", "**/dist/**", "**/.direnv/**"],
     setupFiles: ["app/core/adapters/d1/__tests__/setup.ts"],
   },
 });

@@ -4,9 +4,11 @@ import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import viteReact from "@vitejs/plugin-react";
 import rsc from "@vitejs/plugin-rsc";
 import { defineConfig } from "vite";
-import tsconfigPaths from "vite-tsconfig-paths";
 
 export default defineConfig({
+  resolve: {
+    tsconfigPaths: true,
+  },
   plugins: [
     tailwindcss(),
     cloudflare({ viteEnvironment: { name: "ssr" } }),
@@ -16,7 +18,6 @@ export default defineConfig({
     }),
     rsc(),
     viteReact(),
-    tsconfigPaths(),
   ],
   server: {
     port: 3000,
