@@ -13,6 +13,12 @@
 /worker-configuration.d.ts
 /.dev.vars
 
+# Node runtime
+/data/
+.env
+.env.local
+.env.*.local
+
 .envrc
 .direnv
 
