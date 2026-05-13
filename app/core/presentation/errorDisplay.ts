@@ -36,6 +36,10 @@ export function renderErrorMessage(error: SerializedError): string {
       return "対象が見つかりません";
     case "conflict":
       return renderConflictMessage(error.code);
+    case "unauthorized":
+      return "認証が必要です";
+    case "forbidden":
+      return "権限がありません";
     case "validation": {
       if (error.fieldErrors !== undefined) {
         const formatted = formatFieldErrors(error.fieldErrors);

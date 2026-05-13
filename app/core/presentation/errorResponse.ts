@@ -1,7 +1,9 @@
 import type {
   SerializedConflictError,
+  SerializedForbiddenError,
   SerializedNotFoundError,
   SerializedSystemError,
+  SerializedUnauthorizedError,
 } from "@/core/application/errors";
 import type { SerializedBusinessError } from "@/core/domain/error";
 import {
@@ -29,6 +31,8 @@ export type SerializedError =
   | SerializedBusinessError
   | SerializedNotFoundError
   | SerializedConflictError
+  | SerializedUnauthorizedError
+  | SerializedForbiddenError
   | SerializedValidationError
   | SerializedSystemError
   | SerializedUnknownError;
@@ -39,6 +43,8 @@ const SERIALIZED_ERROR_KINDS = {
   business: true,
   notFound: true,
   conflict: true,
+  unauthorized: true,
+  forbidden: true,
   validation: true,
   system: true,
   unknown: true,
@@ -90,17 +96,21 @@ export function redactForClient(serialized: SerializedError): SerializedError {
   return serialized;
 }
 
-// `null` is the intentional fall-through to the framework's default 500.
-const HTTP_STATUS_BY_KIND: Record<SerializedErrorKind, number | null> = {
+// `system` / `unknown` are mapped to an explicit 500 rather than relying on
+// the framework default. This keeps the response status independent of
+// runtime-specific defaults and makes the contract auditable in one place.
+const HTTP_STATUS_BY_KIND: Record<SerializedErrorKind, number> = {
   business: 422,
   notFound: 404,
   conflict: 409,
+  unauthorized: 401,
+  forbidden: 403,
   validation: 422,
-  system: null,
-  unknown: null,
+  system: 500,
+  unknown: 500,
 };
 
-export function httpStatusFor(serialized: SerializedError): number | null {
+export function httpStatusFor(serialized: SerializedError): number {
   return HTTP_STATUS_BY_KIND[serialized.kind];
 }
 
@@ -109,16 +119,47 @@ export class AppServerError extends Error {
 
   constructor(public readonly serialized: SerializedError) {
     super(serialized.message);
+    // Adapter-bypassed transports fall back to seroval's default Error
+    // serialization, leaking `.stack` to clients. `delete` (not `= undefined`)
+    // because `exactOptionalPropertyTypes` rejects explicit undefined on
+    // `Error.stack?: string`.
+    delete this.stack;
   }
 }
 
-export function isAppServerError(error: unknown): error is AppServerError {
-  return error instanceof AppServerError;
+// Structural detection for the "adapter bypassed" path: when the Seroval
+// serialization adapter isn't on the boundary the client receives a plain
+// object (or plain Error) whose `serialized` own property survived the
+// roundtrip, but `instanceof AppServerError` is false. UI consumers must go
+// through `extractSerializedError` so this path stays transparent to them.
+function hasSerializedRemnant(
+  value: unknown,
+): value is { serialized: unknown } {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "serialized" in value &&
+    typeof (value as { serialized: unknown }).serialized === "object" &&
+    (value as { serialized: unknown }).serialized !== null
+  );
+}
+
+function asSerializedError(value: unknown): SerializedError | null {
+  if (typeof value !== "object" || value === null) return null;
+  const v = value as { kind?: unknown; message?: unknown };
+  if (typeof v.kind !== "string" || typeof v.message !== "string") return null;
+  return isSerializedError(v as SerializedErrorBase & { kind: string })
+    ? (v as SerializedError)
+    : null;
 }
 
 export function extractSerializedError(error: unknown): SerializedError {
-  if (isAppServerError(error)) {
+  if (error instanceof AppServerError) {
     return error.serialized;
+  }
+  if (hasSerializedRemnant(error)) {
+    const structural = asSerializedError(error.serialized);
+    if (structural !== null) return structural;
   }
   return serializeError(error);
 }

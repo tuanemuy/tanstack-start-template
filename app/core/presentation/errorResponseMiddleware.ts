@@ -1,10 +1,10 @@
 import { isNotFound, isRedirect } from "@tanstack/react-router";
 import { createMiddleware } from "@tanstack/react-start";
 import { setResponseStatus } from "@tanstack/react-start/server";
+import { getContainer } from "@/core/application/di/server";
 import {
   AppServerError,
   httpStatusFor,
-  isAppServerError,
   redactForClient,
   type SerializedError,
   serializeError,
@@ -31,9 +31,10 @@ export const errorResponseMiddleware = createMiddleware({
   } catch (error) {
     if (isRedirect(error) || isNotFound(error)) throw error;
 
-    const rawSerialized = isAppServerError(error)
-      ? error.serialized
-      : serializeError(error);
+    const rawSerialized =
+      error instanceof AppServerError
+        ? error.serialized
+        : serializeError(error);
 
     if (rawSerialized.kind === "system" || rawSerialized.kind === "unknown") {
       await logServerError(error, rawSerialized);
@@ -41,23 +42,23 @@ export const errorResponseMiddleware = createMiddleware({
 
     const clientSerialized = redactForClient(rawSerialized);
     const appError = new AppServerError(clientSerialized);
-    const status = httpStatusFor(clientSerialized);
-    if (status !== null) setResponseStatus(status);
+    setResponseStatus(httpStatusFor(clientSerialized));
     throw appError;
   }
 });
 
-// Resolves the container lazily so the server-only DI graph stays out of
-// the client static graph (matches the dynamic-import contract documented
-// on `getContainer`). The fallback `console.error` only fires if container
-// resolution itself fails — without it a logger-loading bug would silently
-// swallow the original error.
+// `getContainer` is statically imported at module top: `di/server.ts` is
+// designed to be client-graph safe (node-only imports live in
+// `app/server.ts` behind `containerStore`), so traversal during the
+// client build does not pull `node:async_hooks` into client chunks.
+// The fallback `console.error` only fires if container resolution or
+// logger dispatch itself throws — without it a wiring bug would
+// silently swallow the original error.
 async function logServerError(
   error: unknown,
   serialized: SerializedError,
 ): Promise<void> {
   try {
-    const { getContainer } = await import("@/core/application/di/server");
     const { logger } = await getContainer();
     logger.error("Server function failed", {
       kind: serialized.kind,
