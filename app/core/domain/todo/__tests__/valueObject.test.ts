@@ -92,4 +92,11 @@ describe("TodoId", () => {
     const opaque = TodoId.create("not-a-uuid");
     expect(opaque as unknown as string).toBe("not-a-uuid");
   });
+
+  it("trims surrounding whitespace from the returned value", () => {
+    const created = TodoId.create("  01950000-0000-7000-8000-000000000001  ");
+    expect(created as unknown as string).toBe(
+      "01950000-0000-7000-8000-000000000001",
+    );
+  });
 });

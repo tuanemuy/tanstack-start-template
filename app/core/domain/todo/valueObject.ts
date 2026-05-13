@@ -15,10 +15,11 @@ export type TodoId = string & { readonly [todoIdBrand]: true };
 // touching value-object code.
 export const TodoId = {
   create: (id: string): TodoId => {
-    if (id.trim().length === 0) {
+    const trimmed = id.trim();
+    if (trimmed.length === 0) {
       throw new BusinessRuleError(TodoErrorCode.InvalidId, "Invalid todo id");
     }
-    return id as TodoId;
+    return trimmed as TodoId;
   },
 };
 

@@ -1,5 +1,6 @@
 import type { WithEventDrafts } from "@/core/domain/common/event";
 import { Version } from "@/core/domain/common/version";
+import { RehydrationError } from "@/core/domain/error";
 import { type TodoEvent, TodoEvents } from "./events";
 import { TodoId, TodoStatus, TodoTitle } from "./valueObject";
 
@@ -103,18 +104,31 @@ export const Todo = {
     };
   },
 
+  // Value objects throw `BusinessRuleError` from their `create` paths to
+  // signal "fresh input is invalid" at the usecase boundary. The same
+  // failure during rehydration is operationally a different beast — it
+  // means stored data has drifted from the schema — so wrap any error
+  // here into `RehydrationError`. Adapters translate it to
+  // `SystemError(DataIntegrityError)`; usecases never see either.
   reconstruct: (input: ReconstructInput): Todo => {
-    const base = {
-      id: TodoId.create(input.id),
-      title: TodoTitle.create(input.title),
-      version: Version.create(input.version),
-      createdAt: input.createdAt,
-      updatedAt: input.updatedAt,
-    };
-    const status = TodoStatus.create(input.status);
-    return status === "completed"
-      ? ({ ...base, status } satisfies CompletedTodo)
-      : ({ ...base, status } satisfies ActiveTodo);
+    try {
+      const base = {
+        id: TodoId.create(input.id),
+        title: TodoTitle.create(input.title),
+        version: Version.create(input.version),
+        createdAt: input.createdAt,
+        updatedAt: input.updatedAt,
+      };
+      const status = TodoStatus.create(input.status);
+      return status === "completed"
+        ? ({ ...base, status } satisfies CompletedTodo)
+        : ({ ...base, status } satisfies ActiveTodo);
+    } catch (error) {
+      throw new RehydrationError(
+        `Failed to rehydrate Todo (id=${input.id})`,
+        error,
+      );
+    }
   },
 
   rename,

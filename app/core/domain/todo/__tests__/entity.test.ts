@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isBusinessRuleError } from "@/core/domain/error";
+import { isBusinessRuleError, isRehydrationError } from "@/core/domain/error";
 import { Todo } from "../entity";
 import { TodoErrorCode } from "../errorCode";
 import { TodoId } from "../valueObject";
@@ -201,6 +201,61 @@ describe("Todo.rename", () => {
       if (isBusinessRuleError(error)) {
         expect(error.code).toBe(TodoErrorCode.TitleEmpty);
       }
+    }
+  });
+});
+
+describe("Todo.reconstruct", () => {
+  const validRow = () => ({
+    id: `${ID_BASE}${(100).toString(16).padStart(12, "0")}`,
+    title: "rehydrated",
+    status: "active",
+    version: 3,
+    createdAt: T0,
+    updatedAt: at(1),
+  });
+
+  it("rebuilds an entity from a well-formed persistence row", () => {
+    const row = validRow();
+    const todo = Todo.reconstruct(row);
+    expect(todo.id as unknown as string).toBe(row.id);
+    expect(todo.title as unknown as string).toBe("rehydrated");
+    expect(todo.status).toBe("active");
+    expect(todo.version).toBe(3);
+  });
+
+  // Rehydration must not surface as `BusinessRuleError`: a stored row that
+  // violates an invariant is a data-integrity issue, not a user-input
+  // failure. Adapters depend on this distinction to translate cleanly into
+  // `SystemError(DataIntegrityError)`.
+  it("throws RehydrationError (not BusinessRuleError) when stored title is empty", () => {
+    try {
+      Todo.reconstruct({ ...validRow(), title: "   " });
+      expect.fail("should have thrown");
+    } catch (error) {
+      expect(isRehydrationError(error)).toBe(true);
+      expect(isBusinessRuleError(error)).toBe(false);
+      if (isRehydrationError(error)) {
+        expect(isBusinessRuleError(error.cause)).toBe(true);
+      }
+    }
+  });
+
+  it("throws RehydrationError when stored status is unknown", () => {
+    try {
+      Todo.reconstruct({ ...validRow(), status: "archived" });
+      expect.fail("should have thrown");
+    } catch (error) {
+      expect(isRehydrationError(error)).toBe(true);
+    }
+  });
+
+  it("throws RehydrationError when stored version is negative", () => {
+    try {
+      Todo.reconstruct({ ...validRow(), version: -1 });
+      expect.fail("should have thrown");
+    } catch (error) {
+      expect(isRehydrationError(error)).toBe(true);
     }
   });
 });

@@ -122,7 +122,7 @@ describe("TodoId.create (property)", () => {
   // by storage adapters on rehydration — see the adapter integration
   // tests for that boundary.
 
-  it("accepts any non-empty, non-whitespace-only string", () => {
+  it("accepts any non-empty, non-whitespace-only string and trims surrounding whitespace", () => {
     fc.assert(
       fc.property(
         fc
@@ -130,7 +130,7 @@ describe("TodoId.create (property)", () => {
           .filter((s) => s.trim().length > 0),
         (raw) => {
           const id = TodoId.create(raw);
-          expect(id as unknown as string).toBe(raw);
+          expect(id as unknown as string).toBe(raw.trim());
         },
       ),
     );
