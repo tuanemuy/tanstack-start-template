@@ -34,7 +34,7 @@ describe("createTodo integration", () => {
 describe("concurrent deleteTodo", () => {
   const getContainer = setupTestContainer();
 
-  it("only one concurrent delete succeeds; the other rejects with NotFoundError", async () => {
+  it("only one concurrent delete succeeds; the other rejects with a NotFound or Conflict error", async () => {
     const container = getContainer();
     const { todo } = await createTodo({
       container,
@@ -57,12 +57,15 @@ describe("concurrent deleteTodo", () => {
       // The deferred-batch UoW lets both UoWs see the row at find time,
       // then surfaces the racing loser one of two ways depending on
       // batch interleaving:
-      //   - the loser's UoW commits no rows  → NotFoundError surfaced
-      //     when its delete UPDATE matches nothing (interleaving A);
-      //   - the loser hits the OCC guard     → ConflictError on the
-      //     `_occ_guard` CHECK violation       (interleaving B).
-      // Both indicate "the row was already deleted by the racing peer",
-      // which is the contract this test pins.
+      //   - the loser's UoW finds nothing  → NotFoundError surfaced
+      //     by the usecase                   (interleaving A);
+      //   - the loser hits the OCC guard   → ConflictError on the
+      //     `_occ_guard` CHECK violation     (interleaving B).
+      // Both indicate "the row was already deleted by the racing peer".
+      // The non-determinism is inherent to D1's deferred-batch model
+      // (no interactive transactions); the OCC token contract still
+      // holds — both UoWs go through `findById` and the loser
+      // is caught either before or at flush time.
       const reason = rejection.reason;
       expect(isNotFoundError(reason) || isConflictError(reason)).toBe(true);
     }
@@ -104,7 +107,7 @@ describe("concurrent changeTodoStatus", () => {
     expect(rows[0]?.version).toBe(1);
   });
 
-  it("repository rejects with ConflictError when saving a stale aggregate", async () => {
+  it("repository rejects with ConflictError when saving with a stale captured token", async () => {
     const container = getContainer();
     const { todo: created } = await createTodo({
       container,
@@ -114,24 +117,25 @@ describe("concurrent changeTodoStatus", () => {
     const staleId = TodoId.create(created.id);
     const stale = await container.unitOfWorkProvider.run(
       async ({ todoRepository }) => {
-        const current = await todoRepository.findById(staleId);
-        if (!current) throw new Error("expected todo to exist");
-        return current;
+        const found = await todoRepository.findById(staleId);
+        if (!found) throw new Error("expected todo to exist");
+        return found;
       },
     );
-    expect(stale.version).toBe(0);
+    expect(stale.entity.version).toBe(0);
+    expect(stale.expectedVersion).toBe(0);
 
     await changeTodoStatus({
       container,
       input: { id: created.id, status: "completed" },
     });
 
-    if (!Todo.isActive(stale)) {
+    if (!Todo.isActive(stale.entity)) {
       expect.fail("expected stale read to still be active");
       return;
     }
     const { entity: staleMutation } = Todo.complete(
-      stale,
+      stale.entity,
       new Date("2026-01-01T00:00:00.000Z"),
     );
 
@@ -139,7 +143,7 @@ describe("concurrent changeTodoStatus", () => {
     let resolved = false;
     try {
       await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
-        await todoRepository.save(staleMutation);
+        await todoRepository.save(staleMutation, stale.expectedVersion);
       });
       resolved = true;
     } catch (error) {

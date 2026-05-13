@@ -23,7 +23,7 @@ export async function createTodo({
 
   await container.unitOfWorkProvider.run(
     async ({ todoRepository, collectEvents }) => {
-      await todoRepository.save(todo);
+      await todoRepository.insert(todo);
       collectEvents(eventDrafts);
     },
   );

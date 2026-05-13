@@ -20,19 +20,23 @@ export async function renameTodo({
 
   const next = await container.unitOfWorkProvider.run(
     async ({ todoRepository, collectEvents }) => {
-      const current = await todoRepository.findById(input.id);
-      if (!current) {
+      const found = await todoRepository.findById(input.id);
+      if (!found) {
         throw new NotFoundError(
           "TODO_NOT_FOUND",
           `Todo not found: ${input.id}`,
         );
       }
 
-      const { entity, eventDrafts } = Todo.rename(current, input.title, now);
-      if (eventDrafts.length === 0) return current;
-      await todoRepository.save(entity);
+      const { entity: renamed, eventDrafts } = Todo.rename(
+        found.entity,
+        input.title,
+        now,
+      );
+      if (eventDrafts.length === 0) return found.entity;
+      await todoRepository.save(renamed, found.expectedVersion);
       collectEvents(eventDrafts);
-      return entity;
+      return renamed;
     },
   );
 

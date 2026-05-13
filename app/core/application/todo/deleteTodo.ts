@@ -14,15 +14,15 @@ export async function deleteTodo({
 
   await container.unitOfWorkProvider.run(
     async ({ todoRepository, collectEvents }) => {
-      const current = await todoRepository.findById(input.id);
-      if (!current) {
+      const found = await todoRepository.findById(input.id);
+      if (!found) {
         throw new NotFoundError(
           "TODO_NOT_FOUND",
           `Todo not found: ${input.id}`,
         );
       }
-      await todoRepository.delete(current.id, current.version);
-      collectEvents([TodoEvents.deleted(current.id, now)]);
+      await todoRepository.delete(found.entity.id, found.expectedVersion);
+      collectEvents([TodoEvents.deleted(found.entity.id, now)]);
     },
   );
 }

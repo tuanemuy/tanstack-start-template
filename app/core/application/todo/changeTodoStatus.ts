@@ -24,17 +24,17 @@ export async function changeTodoStatus({
 
   const next = await container.unitOfWorkProvider.run(
     async ({ todoRepository, collectEvents }) => {
-      const current = await todoRepository.findById(input.id);
-      if (!current) {
+      const found = await todoRepository.findById(input.id);
+      if (!found) {
         throw new NotFoundError(
           "TODO_NOT_FOUND",
           `Todo not found: ${input.id}`,
         );
       }
 
-      const transition = setStatusIfNeeded(current, input.status, now);
-      if (transition === null) return current;
-      await todoRepository.save(transition.entity);
+      const transition = setStatusIfNeeded(found.entity, input.status, now);
+      if (transition === null) return found.entity;
+      await todoRepository.save(transition.entity, found.expectedVersion);
       collectEvents(transition.eventDrafts);
       return transition.entity;
     },
