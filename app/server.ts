@@ -9,34 +9,41 @@
 // prevents the AsyncLocalStorage import from leaking into the client
 // bundle when server-fn dynamic imports are traced.
 //
-// The `AsyncLocalStorage` instance itself is pinned on `globalThis`
-// so that dev HMR re-evaluations of this module reuse the same ALS.
+// The `AsyncLocalStorage` instance is pinned via `import.meta.hot
+// .data` so dev HMR re-evaluations of this module reuse the same ALS.
 // Otherwise `storage.run()` (new ALS) and the handle captured by
 // `getContainer()` (old ALS) would diverge after HMR and every
-// request would throw "called outside a request scope".
+// request would throw "called outside a request scope". Module-scoped
+// HMR data — unlike `globalThis` — is not reachable from other
+// tenants in shared-isolate deployments.
 import { AsyncLocalStorage } from "node:async_hooks";
+import type { ExecutionContext } from "@cloudflare/workers-types";
 import { default as defaultEntry } from "@tanstack/react-start/server-entry";
+import { installContainerStore } from "@/core/application/di/containerStore";
 import {
-  createContainer,
-  installContainerStore,
-  readServerConfig,
+  createRequestContainer,
+  readRequestServerConfig,
   type ServerEnv,
 } from "@/core/application/di/server";
-import type { Container } from "@/core/application/di/types";
+import type { RequestContainer } from "@/core/application/di/types";
 
-declare global {
-  var __APP_ALS__: AsyncLocalStorage<Container> | undefined;
+type AlsHotData = { als?: AsyncLocalStorage<RequestContainer> };
+const alsHotData: AlsHotData = (import.meta.hot?.data ?? {}) as AlsHotData;
+const storage = alsHotData.als ?? new AsyncLocalStorage<RequestContainer>();
+if (import.meta.hot) {
+  (import.meta.hot.data as AlsHotData).als = storage;
 }
-
-const storage = globalThis.__APP_ALS__ ?? new AsyncLocalStorage<Container>();
-globalThis.__APP_ALS__ = storage;
 installContainerStore({ getStore: () => storage.getStore() });
 
 export type AppEnv = ServerEnv;
 
 export default {
-  async fetch(request: Request, env: AppEnv): Promise<Response> {
-    const container = createContainer(readServerConfig(env));
+  async fetch(
+    request: Request,
+    env: AppEnv,
+    ctx: ExecutionContext,
+  ): Promise<Response> {
+    const container = createRequestContainer(readRequestServerConfig(env, ctx));
     return storage.run(container, async () => defaultEntry.fetch(request));
   },
 };
