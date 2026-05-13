@@ -4,7 +4,7 @@ import { buildHead } from "@/core/presentation/head";
 import { paginationSearchSchema } from "@/core/presentation/pagination";
 import { renderTodoList } from "./-action";
 
-export const Route = createFileRoute("/_home/")({
+export const Route = createFileRoute("/todo/")({
   staleTime: 0,
   validateSearch: (search) => paginationSearchSchema.parse(search),
   loaderDeps: ({ search }) => search,
@@ -15,10 +15,10 @@ export const Route = createFileRoute("/_home/")({
   head: ({ match }) => {
     const config = match.context?.config;
     if (!config) return {};
-    const { meta, links } = buildHead(config, { path: "/" });
+    const { meta, links } = buildHead(config, { path: "/todo" });
     return { meta, links };
   },
-  component: HomePage,
+  component: TodoPage,
   errorComponent: ({ error }) => (
     <div role="alert">
       <h1>エラーが発生しました</h1>
@@ -27,7 +27,7 @@ export const Route = createFileRoute("/_home/")({
   ),
 });
 
-function HomePage() {
+function TodoPage() {
   const { TodoList } = Route.useLoaderData();
   return <>{TodoList}</>;
 }

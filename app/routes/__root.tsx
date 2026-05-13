@@ -25,7 +25,7 @@ const SITE_ASSET_LINKS = [
 ];
 
 export const Route = createRootRoute({
-  staleTime: Number.POSITIVE_INFINITY,
+  staleTime: import.meta.env.DEV ? 0 : Number.POSITIVE_INFINITY,
   beforeLoad: () => loadAppContext(),
   head: ({ match }) => {
     const stylesheet = { rel: "stylesheet", href: appCss };

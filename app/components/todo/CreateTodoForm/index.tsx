@@ -25,8 +25,7 @@ export function CreateTodoForm() {
 
   const [state, formAction, isPending] = useActionState<FormState, FormData>(
     async (_prev, formData) => {
-      const value = String(formData.get("title") ?? "").trim();
-      if (value.length === 0) return { error: null };
+      const value = String(formData.get("title") ?? "");
       try {
         await createTodo({ data: { title: value } });
         setTitle("");

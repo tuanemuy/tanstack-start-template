@@ -1,0 +1,73 @@
+@theme {
+  /* Colors */
+  --color-primary-lighter: var(--color-primary-lighter);
+  --color-primary-light: var(--color-primary-light);
+  --color-primary: var(--color-primary);
+  --color-primary-dark: var(--color-primary-dark);
+  --color-primary-darker: var(--color-primary-darker);
+  --color-accent: var(--color-accent);
+
+  --color-neutral-50: var(--color-neutral-50);
+  --color-neutral-100: var(--color-neutral-100);
+  --color-neutral-150: var(--color-neutral-150);
+  --color-neutral-200: var(--color-neutral-200);
+  --color-neutral-250: var(--color-neutral-250);
+  --color-neutral-300: var(--color-neutral-300);
+  --color-neutral-350: var(--color-neutral-350);
+  --color-neutral-400: var(--color-neutral-400);
+  --color-neutral-450: var(--color-neutral-450);
+  --color-neutral-500: var(--color-neutral-500);
+  --color-neutral-550: var(--color-neutral-550);
+  --color-neutral-600: var(--color-neutral-600);
+  --color-neutral-650: var(--color-neutral-650);
+  --color-neutral-700: var(--color-neutral-700);
+  --color-neutral-750: var(--color-neutral-750);
+  --color-neutral-800: var(--color-neutral-800);
+  --color-neutral-850: var(--color-neutral-850);
+  --color-neutral-900: var(--color-neutral-900);
+
+  --color-success: var(--color-success);
+  --color-warning: var(--color-warning);
+  --color-error: var(--color-error);
+  --color-info: var(--color-info);
+
+  --color-bg-page: var(--color-bg-page);
+  --color-bg-card: var(--color-bg-card);
+  --color-bg-section: var(--color-bg-section);
+
+  /* Typography */
+  --font-heading: var(--font-heading);
+  --font-body: var(--font-body);
+
+  --text-xs: var(--text-xs);
+  --text-sm: var(--text-sm);
+  --text-base: var(--text-base);
+  --text-lg: var(--text-lg);
+  --text-xl: var(--text-xl);
+  --text-2xl: var(--text-2xl);
+  --text-3xl: var(--text-3xl);
+
+  --leading-tight: var(--leading-tight);
+  --leading-normal: var(--leading-normal);
+
+  /* Spacing */
+  --spacing-xs: var(--space-xs);
+  --spacing-sm: var(--space-sm);
+  --spacing-md: var(--space-md);
+  --spacing-lg: var(--space-lg);
+  --spacing-xl: var(--space-xl);
+  --spacing-2xl: var(--space-2xl);
+  --spacing-section: var(--space-section);
+
+  /* Misc */
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-full: var(--radius-full);
+
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+
+  --transition-default: var(--transition-default);
+}
