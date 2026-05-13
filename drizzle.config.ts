@@ -6,6 +6,7 @@ import { defineConfig } from "drizzle-kit";
 // because D1's actual database lives in Cloudflare's managed
 // infrastructure and is reached through the `wrangler d1` CLI rather
 // than a connection URL.
+// `driver: 'd1-http'` is intentionally omitted to keep wrangler as the single migration-application route (drizzle-kit push would bypass the wrangler ledger).
 export default defineConfig({
   out: "./app/core/adapters/d1/migrations",
   schema: "./app/core/adapters/d1/schema.ts",

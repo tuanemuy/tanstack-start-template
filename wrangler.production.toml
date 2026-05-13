@@ -1,0 +1,143 @@
+# Production deploy config — mirrors wrangler.toml but with -production
+# suffix on every Cloudflare-resource name so staging and production never
+# collide inside a single Cloudflare account.
+#
+# Deploy via `pnpm deploy:production` / `pnpm deploy:production:<role>` —
+# the scripts pass `--config wrangler.production.toml` so wrangler does
+# not pick up the dev-only `wrangler.toml` next to it.
+#
+# === Before first deploy =================================================
+#   1. Replace `APP_URL` in every `[vars]` block below with the public URL
+#      of the production deployment (https://...). Leaving the placeholder
+#      breaks OG image / canonical URL generation in `buildHead()`.
+#   2. Replace `database_id` (`00000000-...`) in every `[[d1_databases]]`
+#      block with the real D1 id printed by
+#      `wrangler d1 create tanstack-start-template-d1-production`.
+#   3. Pre-create the queues (wrangler deploy does not auto-create them):
+#        wrangler queues create tanstack-start-template-events-production
+#        wrangler queues create tanstack-start-template-events-dlq-production
+#   4. Inject secrets per worker via
+#        wrangler secret put <NAME> --config wrangler.production.toml [--env <role>]
+# =========================================================================
+#
+# Wrangler does NOT inherit `d1_databases` / `vars` from top level into
+# named environments — every `[env.*]` block re-declares them. Keep
+# `database_id`, queue names, and `APP_URL` in sync across every block.
+name = "tanstack-start-template-production"
+main = "app/server.ts"
+compatibility_date = "2026-05-01"
+compatibility_flags = ["nodejs_compat"]
+
+[assets]
+directory = "./dist/client"
+binding = "ASSETS"
+
+[vars]
+# TODO(production): replace with the production public URL before first deploy.
+APP_URL = "https://example.com"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "tanstack-start-template-d1-production"
+# TODO(production): replace with the real D1 id from `wrangler d1 create ...`.
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "app/core/adapters/d1/migrations"
+
+[[services]]
+binding = "RELAY"
+service = "tanstack-start-template-production-relay"
+
+
+# === Relay (Service Binding fetch + safety-net cron) ====================
+[env.relay]
+name = "tanstack-start-template-production-relay"
+main = "app/worker/relay.ts"
+compatibility_date = "2026-05-01"
+compatibility_flags = ["nodejs_compat"]
+
+[env.relay.vars]
+APP_URL = "https://example.com"
+OUTBOX_BATCH_SIZE = "100"
+OUTBOX_LEASE_MS = "300000"   # 5 min — covers worst-case single-batch dispatch
+OUTBOX_MAX_ATTEMPTS = "2"    # multiplied by [env.consumer] max_retries — keep low
+
+[[env.relay.d1_databases]]
+binding = "DB"
+database_name = "tanstack-start-template-d1-production"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "app/core/adapters/d1/migrations"
+
+[[env.relay.queues.producers]]
+binding = "EVENTS_QUEUE"
+queue = "tanstack-start-template-events-production"
+
+[env.relay.triggers]
+crons = ["*/5 * * * *"]
+
+
+# === Consumer ===========================================================
+[env.consumer]
+name = "tanstack-start-template-production-consumer"
+main = "app/worker/consumer.ts"
+compatibility_date = "2026-05-01"
+compatibility_flags = ["nodejs_compat"]
+
+[env.consumer.vars]
+APP_URL = "https://example.com"
+
+[[env.consumer.d1_databases]]
+binding = "DB"
+database_name = "tanstack-start-template-d1-production"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "app/core/adapters/d1/migrations"
+
+[[env.consumer.queues.consumers]]
+queue = "tanstack-start-template-events-production"
+max_batch_size = 25
+max_batch_timeout = 30 # seconds
+max_retries = 3
+dead_letter_queue = "tanstack-start-template-events-dlq-production"
+
+
+# === Pruner =============================================================
+[env.pruner]
+name = "tanstack-start-template-production-pruner"
+main = "app/worker/pruner.ts"
+compatibility_date = "2026-05-01"
+compatibility_flags = ["nodejs_compat"]
+
+[env.pruner.vars]
+APP_URL = "https://example.com"
+OUTBOX_RETENTION_MS = "604800000"   # 7 days
+
+[[env.pruner.d1_databases]]
+binding = "DB"
+database_name = "tanstack-start-template-d1-production"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "app/core/adapters/d1/migrations"
+
+[env.pruner.triggers]
+crons = ["0 3 * * *"] # 03:00 UTC daily
+
+
+# === DLQ ================================================================
+[env.dlq]
+name = "tanstack-start-template-production-dlq"
+main = "app/worker/dlq.ts"
+compatibility_date = "2026-05-01"
+compatibility_flags = ["nodejs_compat"]
+
+[env.dlq.vars]
+APP_URL = "https://example.com"
+
+[[env.dlq.d1_databases]]
+binding = "DB"
+database_name = "tanstack-start-template-d1-production"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "app/core/adapters/d1/migrations"
+
+[[env.dlq.queues.consumers]]
+queue = "tanstack-start-template-events-dlq-production"
+max_batch_size = 25
+max_batch_timeout = 30 # seconds
+max_retries = 1
