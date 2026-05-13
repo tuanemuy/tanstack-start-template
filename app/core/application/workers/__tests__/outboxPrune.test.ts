@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { content } from "@/config";
-import type { Container } from "@/core/application/di/types";
+import type { WorkerContainer } from "@/core/application/di/types";
 import type { Clock } from "@/core/application/ports/clock";
 import type { OutboxRepository } from "@/core/application/ports/outboxRepository";
 import { FakeLogger } from "../../__tests__/fakes";
@@ -37,8 +36,7 @@ function makeStubOutboxRepository({
   return {
     save: vi.fn(async () => {}),
     claimPending: vi.fn(async () => []),
-    markProcessed: vi.fn(async () => {}),
-    markFailed: vi.fn(async () => {}),
+    finalize: vi.fn(async () => {}),
     pruneProcessed: vi.fn(async (olderThan: Date) => {
       pruneSpy?.(olderThan);
       return { deleted };
@@ -46,26 +44,22 @@ function makeStubOutboxRepository({
   };
 }
 
-function makeContainer(overrides: Partial<Container>): Container {
-  // The worker only reaches for `clock`, `logger`, `outboxRepository`. The
-  // rest of `Container` is irrelevant — cast through an unknown to keep the
-  // stub small without poking holes in the real type elsewhere.
+function makeContainer(overrides: Partial<WorkerContainer>): WorkerContainer {
+  // The worker reaches for `clock`, `logger`, `outboxRepository`. The
+  // remaining shared deps are stubbed at minimal viable shape since
+  // they aren't observed by `pruneOutbox`.
   return {
-    config: { ...content, appUrl: "http://test" },
-    unitOfWorkProvider: {
-      run: vi.fn(async () => {
-        throw new Error("not used");
-      }),
-    } as unknown as Container["unitOfWorkProvider"],
     outboxRepository:
       overrides.outboxRepository ?? makeStubOutboxRepository({ deleted: 0 }),
+    idempotencyStore: {
+      markProcessed: vi.fn(async () => ({ alreadyProcessed: false })),
+    },
     clock: overrides.clock ?? { now: () => new Date(0) },
     idGenerator: {
       next: () => "00000000-0000-7000-8000-000000000000",
       validate: () => true,
     },
     logger: overrides.logger ?? new FakeLogger(),
-    shutdown: async () => {},
     ...overrides,
   };
 }

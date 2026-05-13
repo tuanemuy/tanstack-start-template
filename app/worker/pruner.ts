@@ -1,8 +1,3 @@
-// Outbox pruner Worker. Sole responsibility: delete long-since-
-// processed outbox rows on a daily cron.
-//
-// Deploys via `wrangler.pruner.toml`. Has only the D1 binding — no
-// Queue producer or consumer is needed for pruning.
 import type {
   ExecutionContext,
   ScheduledController,

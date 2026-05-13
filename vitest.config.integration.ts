@@ -22,10 +22,37 @@ export default defineConfig({
     tsconfigPaths(),
     cloudflareTest({
       miniflare: {
-        compatibilityDate: "2026-01-01",
+        compatibilityDate: "2026-05-01",
         compatibilityFlags: ["nodejs_compat"],
         d1Databases: ["DB"],
-        queueProducers: { EVENTS_QUEUE: "tanstack-start-template-events" },
+        queueProducers: {
+          EVENTS_QUEUE: "tanstack-start-template-events",
+          // Registered so `createMessageBatch("…-events-dlq", …)` is
+          // recognised by the test harness when exercising the DLQ
+          // consumer; the production DLQ Worker does not bind it as a
+          // producer.
+          EVENTS_DLQ: "tanstack-start-template-events-dlq",
+        },
+        // Mirror wrangler.toml so the DLQ routing wiring is the same
+        // shape miniflare sees in production. Tests that go through
+        // `createMessageBatch(...)` bypass dispatch and don't depend on
+        // these values, but registering them keeps the per-batch
+        // disposition (`retryBatch.retry`) consistent with how real
+        // queues would surface the same handler decision, and prevents
+        // silent drift when wrangler.toml is tuned.
+        queueConsumers: {
+          "tanstack-start-template-events": {
+            maxBatchSize: 25,
+            maxBatchTimeout: 30,
+            maxRetries: 3,
+            deadLetterQueue: "tanstack-start-template-events-dlq",
+          },
+          "tanstack-start-template-events-dlq": {
+            maxBatchSize: 25,
+            maxBatchTimeout: 30,
+            maxRetries: 1,
+          },
+        },
         bindings: {
           MIGRATIONS: migrations,
           APP_URL: "http://localhost:8787",

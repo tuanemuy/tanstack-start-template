@@ -114,8 +114,12 @@ describe("processOutboxEvents", () => {
     });
 
     const dispatch = makeAllSucceed();
+    // `maxIterations: 1` pins single-batch semantics — without it the
+    // tick-internal drain loop would pick up the third row in a follow-up
+    // batch, hiding the `batchSize` cap this test is exercising.
     const { processed } = await processOutboxEvents(container, dispatch, {
       batchSize: 2,
+      maxIterations: 1,
     });
 
     expect(processed).toBe(2);
@@ -274,7 +278,7 @@ describe("processOutboxEvents", () => {
     expect(pendingRows).toHaveLength(1);
   });
 
-  it("does not call markProcessed when every dispatch fails", async () => {
+  it("leaves rows unprocessed when every dispatch fails", async () => {
     const container = getContainer();
 
     const id = nextTodoId();

@@ -1,11 +1,16 @@
-import type { Container } from "../di/types";
+import type { WorkerContainer } from "../di/types";
+
+// Retain processed outbox rows for one week before the daily pruner
+// sweeps them. Quarantined rows (`failed_at IS NOT NULL`) are out of
+// scope — they stay until an operator clears them.
+export const DEFAULT_OUTBOX_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
 export type PruneOutboxOptions = {
   retentionMs: number;
 };
 
 export async function pruneOutbox(
-  container: Container,
+  container: WorkerContainer,
   options: PruneOutboxOptions,
 ): Promise<{ deleted: number }> {
   const { clock, logger, outboxRepository } = container;
