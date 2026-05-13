@@ -5,6 +5,10 @@ import type {
 import type { Clock } from "@/core/application/ports/clock";
 import type { IdGenerator } from "@/core/application/ports/idGenerator";
 import {
+  NoopRelayTrigger,
+  type RelayTrigger,
+} from "@/core/application/ports/relayTrigger";
+import {
   attachEventIds,
   type DomainEvent,
   EventId,
@@ -45,6 +49,11 @@ export class D1UnitOfWorkProvider implements UnitOfWorkProvider {
     private readonly db: Database,
     private readonly clock: Clock,
     private readonly idGenerator: IdGenerator,
+    // Default to a no-op kicker so worker contexts (relay / consumer /
+    // pruner / dlq) can construct the provider without service-binding
+    // wiring. The request path overrides this with a real Service
+    // Binding kicker in `app/core/application/di/server.ts`.
+    private readonly relayTrigger: RelayTrigger = NoopRelayTrigger,
   ) {}
 
   async run<T>(fn: (ctx: UnitOfWorkContext) => Promise<T>): Promise<T> {
@@ -56,7 +65,12 @@ export class D1UnitOfWorkProvider implements UnitOfWorkProvider {
       pending,
       this.idGenerator,
     );
-    const outbox = new D1OutboxRepository(this.db, this.idGenerator, pending);
+    const outbox = new D1OutboxRepository(
+      this.db,
+      this.idGenerator,
+      this.clock,
+      pending,
+    );
 
     const ctx: UnitOfWorkContext = {
       todoRepository,
@@ -76,7 +90,7 @@ export class D1UnitOfWorkProvider implements UnitOfWorkProvider {
     const result = await fn(ctx);
 
     if (collected.length > 0) {
-      await outbox.save(collected, this.clock.now());
+      await outbox.save(collected);
     }
 
     if (pending.isEmpty()) {
@@ -101,6 +115,13 @@ export class D1UnitOfWorkProvider implements UnitOfWorkProvider {
         throw error;
       }
     });
+
+    // Post-commit only — kicking before the batch resolves would race
+    // the relay against rows that may roll back. The kicker is
+    // fire-and-forget; failures here do not affect usecase semantics.
+    if (collected.length > 0) {
+      this.relayTrigger.kick();
+    }
 
     return result;
   }

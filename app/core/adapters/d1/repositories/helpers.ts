@@ -48,6 +48,10 @@ function findSqliteCode(error: unknown): string | null {
 // is shared with `d1/schema.ts` via `OCC_GUARD_CHECK_NAME`; an unrelated
 // CHECK on another table will not match here and will surface as a
 // `CONSTRAINT_VIOLATION` like any other adapter.
+//
+// If D1 drops the CHECK name from the message, the OCC handler is
+// skipped and the error degrades to ConflictError("CONSTRAINT_VIOLATION")
+// via mapDbError — `helpers.integration.test.ts` is the canary.
 export function isOccGuardViolation(error: unknown): boolean {
   let current: unknown = error;
   const seen = new Set<unknown>();

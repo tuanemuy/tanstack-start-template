@@ -15,9 +15,9 @@ import { createTestContainer } from "./helpers";
 /**
  * Integration tests for the D1 outbox repository.
  *
- * The relay-side methods (`claimPending`, `markProcessed`, `markFailed`,
- * `pruneProcessed`) execute as their own atomic statements, so they
- * are tested directly against `container.outboxRepository`.
+ * The relay-side methods (`claimPending`, `finalize`, `pruneProcessed`)
+ * execute as their own atomic statements (or batches), so they are
+ * tested directly against `container.outboxRepository`.
  *
  * `save` is buffered and only legal inside a UoW. To keep these tests
  * focused on outbox semantics rather than UoW plumbing, the helper
@@ -52,9 +52,10 @@ async function manualSave(
   const repo = new D1OutboxRepository(
     container.db,
     container.idGenerator,
+    { now: () => now },
     pending,
   );
-  await repo.save(events, now);
+  await repo.save(events);
   if (!pending.isEmpty()) {
     await container.db.batch(pending.build());
   }
@@ -85,6 +86,9 @@ describe("D1OutboxRepository.save (integration)", () => {
 });
 
 describe("D1OutboxRepository.claimPending (integration)", () => {
+  // Miniflare serializes writes; "concurrent" cases below verify SQL
+  // correctness, not race resolution (prod relies on SQLite's
+  // single-statement write-lock).
   const claimArgs = (now: Date, limit = 10) => ({
     limit,
     now,
@@ -92,7 +96,7 @@ describe("D1OutboxRepository.claimPending (integration)", () => {
     leaseMs: 60_000,
   });
 
-  it("returns only unprocessed entries in FIFO order", async () => {
+  it("returns only unprocessed entries in approximate created_at order", async () => {
     const container = createTestContainer();
     const todoId = nextTodoId();
     const title = TodoTitle.create("claim");
@@ -161,8 +165,8 @@ describe("D1OutboxRepository.claimPending (integration)", () => {
   });
 });
 
-describe("D1OutboxRepository.markProcessed (integration)", () => {
-  it("stamps processed_at and clears the claim", async () => {
+describe("D1OutboxRepository.finalize (integration)", () => {
+  it("stamps processed_at and clears the claim for processed ids", async () => {
     const container = createTestContainer();
     const todoId = nextTodoId();
     const title = TodoTitle.create("processed");
@@ -178,16 +182,18 @@ describe("D1OutboxRepository.markProcessed (integration)", () => {
     });
 
     const processedAt = new Date(20_000);
-    await container.outboxRepository.markProcessed([a.id], processedAt);
+    await container.outboxRepository.finalize({
+      processed: [a.id],
+      failures: [],
+      now: processedAt,
+    });
 
     const rows = await container.db.select().from(schema.outboxEvents);
     expect(rows[0]?.processedAt?.getTime()).toBe(processedAt.getTime());
     expect(rows[0]?.claimedAt).toBeNull();
     expect(rows[0]?.claimedBy).toBeNull();
   });
-});
 
-describe("D1OutboxRepository.markFailed (integration)", () => {
   it("schedules retry and releases claim when nextAttemptAt is set", async () => {
     const container = createTestContainer();
     const todoId = nextTodoId();
@@ -203,10 +209,11 @@ describe("D1OutboxRepository.markFailed (integration)", () => {
     });
 
     const retryAt = new Date(60_000);
-    await container.outboxRepository.markFailed(
-      [{ id: a.id, error: "transient", nextAttemptAt: retryAt }],
-      new Date(20_000),
-    );
+    await container.outboxRepository.finalize({
+      processed: [],
+      failures: [{ id: a.id, error: "transient", nextAttemptAt: retryAt }],
+      now: new Date(20_000),
+    });
 
     const row = (await container.db.select().from(schema.outboxEvents))[0];
     expect(row?.attempts).toBe(1);
@@ -224,10 +231,11 @@ describe("D1OutboxRepository.markFailed (integration)", () => {
     await manualSave(container, [a], new Date());
 
     const failedAt = new Date(30_000);
-    await container.outboxRepository.markFailed(
-      [{ id: a.id, error: "poison", nextAttemptAt: null }],
-      failedAt,
-    );
+    await container.outboxRepository.finalize({
+      processed: [],
+      failures: [{ id: a.id, error: "poison", nextAttemptAt: null }],
+      now: failedAt,
+    });
 
     const row = (await container.db.select().from(schema.outboxEvents))[0];
     expect(row?.failedAt?.getTime()).toBe(failedAt.getTime());
@@ -242,10 +250,11 @@ describe("D1OutboxRepository.markFailed (integration)", () => {
     const a = withId(TodoEvents.created(todoId, title, new Date()));
     await manualSave(container, [a], new Date());
 
-    await container.outboxRepository.markFailed(
-      [{ id: a.id, error: "poison", nextAttemptAt: null }],
-      new Date(),
-    );
+    await container.outboxRepository.finalize({
+      processed: [],
+      failures: [{ id: a.id, error: "poison", nextAttemptAt: null }],
+      now: new Date(),
+    });
 
     const claimed = await container.outboxRepository.claimPending({
       limit: 10,
@@ -254,6 +263,59 @@ describe("D1OutboxRepository.markFailed (integration)", () => {
       leaseMs: 60_000,
     });
     expect(claimed).toHaveLength(0);
+  });
+
+  it("commits processed and failures together in one call", async () => {
+    const container = createTestContainer();
+    const todoId = nextTodoId();
+    const title = TodoTitle.create("mixed");
+    const a = withId(TodoEvents.created(todoId, title, new Date(0)));
+    const b = withId(TodoEvents.toggled(todoId, true, new Date(1000)));
+    await manualSave(container, [a, b], new Date(0));
+
+    await container.outboxRepository.claimPending({
+      limit: 10,
+      now: new Date(10_000),
+      workerId: "w1",
+      leaseMs: 60_000,
+    });
+
+    const retryAt = new Date(60_000);
+    const finalizeAt = new Date(20_000);
+    await container.outboxRepository.finalize({
+      processed: [a.id],
+      failures: [{ id: b.id, error: "transient", nextAttemptAt: retryAt }],
+      now: finalizeAt,
+    });
+
+    const rows = await container.db.select().from(schema.outboxEvents);
+    const rowA = rows.find((r) => r.id === a.id);
+    const rowB = rows.find((r) => r.id === b.id);
+    expect(rowA?.processedAt?.getTime()).toBe(finalizeAt.getTime());
+    expect(rowA?.claimedAt).toBeNull();
+    expect(rowB?.processedAt).toBeNull();
+    expect(rowB?.attempts).toBe(1);
+    expect(rowB?.nextAttemptAt?.getTime()).toBe(retryAt.getTime());
+    expect(rowB?.claimedAt).toBeNull();
+  });
+
+  it("is a no-op when both processed and failures are empty", async () => {
+    const container = createTestContainer();
+    const todoId = nextTodoId();
+    const title = TodoTitle.create("noop");
+    const a = withId(TodoEvents.created(todoId, title, new Date()));
+    await manualSave(container, [a], new Date());
+
+    await container.outboxRepository.finalize({
+      processed: [],
+      failures: [],
+      now: new Date(20_000),
+    });
+
+    const row = (await container.db.select().from(schema.outboxEvents))[0];
+    expect(row?.processedAt).toBeNull();
+    expect(row?.attempts).toBe(0);
+    expect(row?.failedAt).toBeNull();
   });
 });
 

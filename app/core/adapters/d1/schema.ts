@@ -65,6 +65,11 @@ export const outboxEvents = sqliteTable(
   ],
 );
 
+export const processedEvents = sqliteTable("processed_events", {
+  id: text("id").primaryKey(),
+  processedAt: integer("processed_at", { mode: "timestamp_ms" }).notNull(),
+});
+
 // Name of the CHECK constraint on `_occ_guard.n > 0`. Exported so the
 // adapter's OCC-violation detector can match against it without
 // re-declaring the literal — schema and detector must stay in lockstep.
@@ -78,14 +83,17 @@ export const OCC_GUARD_CHECK_NAME = "occ_guard_positive";
 // To turn an OCC mismatch into a batch-wide rollback, each OCC-guarded
 // write is followed by:
 //
-//     INSERT INTO _occ_guard (n) VALUES (changes());
-//     DELETE FROM _occ_guard;
+//     INSERT INTO _occ_guard (n)
+//       SELECT changes() WHERE changes() = 0;
 //
 // `changes()` returns the row count touched by the immediately
-// preceding statement. When that is 0, the CHECK constraint (`n > 0`)
-// fails, the batch aborts, and the OCC handler in `PendingBatch`
-// translates the driver error into a
-// `ConflictError("OPTIMISTIC_LOCK_FAILURE")`.
+// preceding statement. When that is > 0 the SELECT yields no rows
+// and the INSERT is a no-op; when it is 0 the SELECT yields a single
+// `n = 0` row, the CHECK constraint (`n > 0`) fails, the batch aborts,
+// and the OCC handler in `PendingBatch` translates the driver error
+// into a `ConflictError("OPTIMISTIC_LOCK_FAILURE")`. Because the
+// success path never inserts, the table stays empty between batches
+// without an explicit DELETE.
 export const occGuard = sqliteTable(
   "_occ_guard",
   {

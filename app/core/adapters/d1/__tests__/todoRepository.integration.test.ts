@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { isConflictError } from "@/core/application/errors";
+import type { ExpectedVersion } from "@/core/domain/common/transactionalRepository";
 import { Todo } from "@/core/domain/todo/entity";
 import { TodoId } from "@/core/domain/todo/valueObject";
 import * as schema from "../schema";
@@ -16,12 +17,12 @@ describe("D1TodoRepository (integration)", () => {
   };
   const make = (title: string) => Todo.create({ id: nextTodoId(), title }, NOW);
 
-  it("save → findById round-trips an ActiveTodo", async () => {
+  it("insert → findById round-trips an ActiveTodo with version=0", async () => {
     const container = createTestContainer();
     const { entity: created } = make("round-trip");
 
     await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
-      await todoRepository.save(created);
+      await todoRepository.insert(created);
     });
 
     const loaded = await container.unitOfWorkProvider.run(
@@ -29,41 +30,52 @@ describe("D1TodoRepository (integration)", () => {
     );
     expect(loaded).not.toBeNull();
     if (!loaded) return;
-    expect(loaded.id).toBe(created.id);
-    expect(loaded.title).toBe(created.title);
-    expect(loaded.status).toBe("active");
-    expect(loaded.version).toBe(0);
+    expect(loaded.entity.id).toBe(created.id);
+    expect(loaded.entity.title).toBe(created.title);
+    expect(loaded.entity.status).toBe("active");
+    expect(loaded.entity.version).toBe(0);
+    expect(loaded.expectedVersion).toBe(0);
   });
 
-  it("save → findById lifts the status into a CompletedTodo variant", async () => {
+  it("save lifts the status into a CompletedTodo variant", async () => {
     const container = createTestContainer();
     const { entity: active } = make("lift");
     await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
-      await todoRepository.save(active);
+      await todoRepository.insert(active);
     });
 
-    const { entity: completed } = Todo.complete(active, NOW);
+    const found = await container.unitOfWorkProvider.run(
+      async ({ todoRepository }) => todoRepository.findById(active.id),
+    );
+    expect(found).not.toBeNull();
+    if (!found || !Todo.isActive(found.entity)) return;
+    const { entity: completed } = Todo.complete(found.entity, NOW);
     await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
-      await todoRepository.save(completed);
+      await todoRepository.save(completed, found.expectedVersion);
     });
 
     const loaded = await container.unitOfWorkProvider.run(
       async ({ todoRepository }) => todoRepository.findById(active.id),
     );
-    expect(loaded?.status).toBe("completed");
-    expect(loaded?.version).toBe(1);
+    expect(loaded?.entity.status).toBe("completed");
+    expect(loaded?.entity.version).toBe(1);
+    expect(loaded?.expectedVersion).toBe(1);
   });
 
   it("increments the stored version column on each successful save", async () => {
     const container = createTestContainer();
     const { entity: active } = make("version");
     await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
-      await todoRepository.save(active);
+      await todoRepository.insert(active);
     });
 
-    const { entity: completed } = Todo.complete(active, NOW);
+    const found = await container.unitOfWorkProvider.run(
+      async ({ todoRepository }) => todoRepository.findById(active.id),
+    );
+    if (!found || !Todo.isActive(found.entity)) return;
+    const { entity: completed } = Todo.complete(found.entity, NOW);
     await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
-      await todoRepository.save(completed);
+      await todoRepository.save(completed, found.expectedVersion);
     });
 
     const rows = await container.db.select().from(schema.todos);
@@ -71,28 +83,28 @@ describe("D1TodoRepository (integration)", () => {
     expect(rows[0]?.version).toBe(1);
   });
 
-  it("raises ConflictError when save sees a stale version", async () => {
+  it("raises ConflictError when save reuses a stale token after the row advanced", async () => {
     const container = createTestContainer();
     const { entity: active } = make("stale-save");
     await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
-      await todoRepository.save(active);
+      await todoRepository.insert(active);
     });
 
-    // Hand-craft a stale `Todo` claiming to be at version 5 when the row
-    // is actually at 0 → the OCC guard inside the batch must fire.
-    const stale = Todo.reconstruct({
-      id: active.id,
-      title: active.title,
-      status: "active",
-      version: 5,
-      createdAt: active.createdAt,
-      updatedAt: active.updatedAt,
+    // Capture the v=0 token, then advance the row past it via a real save.
+    const found = await container.unitOfWorkProvider.run(
+      async ({ todoRepository }) => todoRepository.findById(active.id),
+    );
+    if (!found || !Todo.isActive(found.entity)) return;
+    const { entity: bumped } = Todo.complete(found.entity, NOW);
+    await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
+      await todoRepository.save(bumped, found.expectedVersion);
     });
+    // Row is now at v=1; `found.expectedVersion` is the stale v=0 token.
 
     let caught: unknown;
     try {
       await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
-        await todoRepository.save(stale);
+        await todoRepository.save(bumped, found.expectedVersion);
       });
     } catch (error) {
       caught = error;
@@ -102,38 +114,45 @@ describe("D1TodoRepository (integration)", () => {
       expect(caught.code).toBe("OPTIMISTIC_LOCK_FAILURE");
     }
 
-    // Row must be unchanged — the failed batch rolled back.
+    // Row stays at v=1 — the failed batch rolled back.
     const rows = await container.db.select().from(schema.todos);
     expect(rows).toHaveLength(1);
-    expect(rows[0]?.version).toBe(0);
+    expect(rows[0]?.version).toBe(1);
   });
 
-  it("delete removes the row when the expected version matches", async () => {
+  it("delete removes the row when the captured version still matches", async () => {
     const container = createTestContainer();
     const { entity: active } = make("delete-ok");
     await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
-      await todoRepository.save(active);
+      await todoRepository.insert(active);
     });
 
+    const found = await container.unitOfWorkProvider.run(
+      async ({ todoRepository }) => todoRepository.findById(active.id),
+    );
+    if (!found) return;
     await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
-      await todoRepository.delete(active.id, 0);
+      await todoRepository.delete(found.entity.id, found.expectedVersion);
     });
 
     const rows = await container.db.select().from(schema.todos);
     expect(rows).toHaveLength(0);
   });
 
-  it("delete raises ConflictError on a stale expectedVersion", async () => {
+  it("delete raises ConflictError on a forged stale expectedVersion", async () => {
     const container = createTestContainer();
     const { entity: active } = make("delete-stale");
     await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
-      await todoRepository.save(active);
+      await todoRepository.insert(active);
     });
 
     let caught: unknown;
     try {
       await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
-        await todoRepository.delete(active.id, 99);
+        // Forge a token that does not match the row (v=0). Production code
+        // cannot reach this state without going through `findById`;
+        // the cast is the explicit "I am bypassing the contract" marker.
+        await todoRepository.delete(active.id, 99 as ExpectedVersion<Todo>);
       });
     } catch (error) {
       caught = error;
@@ -156,8 +175,8 @@ describe("D1TodoRepository (integration)", () => {
     const { entity: b } = Todo.create({ id: nextTodoId(), title: "b" }, later);
 
     await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
-      await todoRepository.save(a);
-      await todoRepository.save(b);
+      await todoRepository.insert(a);
+      await todoRepository.insert(b);
     });
 
     const page = await container.unitOfWorkProvider.run(

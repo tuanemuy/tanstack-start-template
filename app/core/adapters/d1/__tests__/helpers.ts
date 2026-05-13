@@ -1,16 +1,24 @@
 import { env } from "cloudflare:test";
 import { content } from "@/config";
-import type { Container } from "@/core/application/di/types";
+import type {
+  RequestContainer,
+  WorkerContainer,
+} from "@/core/application/di/types";
 import { SystemClock } from "@/core/application/ports/clock";
 import { UuidV7Generator } from "@/core/application/ports/idGenerator";
 import { ConsoleLogger } from "@/core/application/ports/logger";
 import { type Database, getDatabase } from "../client";
+import { D1IdempotencyStore } from "../repositories/idempotencyStore";
 import { D1OutboxRepository } from "../repositories/outboxRepository";
 import { D1UnitOfWorkProvider } from "../unitOfWork";
 
-export type TestContainer = Container & {
-  db: Database;
-};
+// Tests need both scopes — they seed via UoW (request) and assert via
+// the outbox repo / idempotency store (worker). The fat shape is
+// test-only; production code uses one container or the other.
+export type TestContainer = RequestContainer &
+  WorkerContainer & {
+    db: Database;
+  };
 
 /**
  * Builds a fresh container around the test-isolate's `env.DB` D1 binding.
@@ -34,13 +42,11 @@ export function createTestContainer(): TestContainer {
     // The relay-worker variant of the outbox repo (no PendingBatch).
     // UoW-internal saves go through a per-UoW instance constructed
     // inside `D1UnitOfWorkProvider.run`.
-    outboxRepository: new D1OutboxRepository(db, UuidV7Generator),
+    outboxRepository: new D1OutboxRepository(db, UuidV7Generator, SystemClock),
+    idempotencyStore: new D1IdempotencyStore(db, SystemClock),
     clock: SystemClock,
     idGenerator: UuidV7Generator,
     logger: ConsoleLogger,
-    shutdown: async () => {
-      // D1 binding is process-managed by Miniflare — nothing to close.
-    },
     db,
   };
 }

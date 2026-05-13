@@ -31,6 +31,11 @@ CREATE TABLE `outbox_events` (
 CREATE INDEX `idx_outbox_pending` ON `outbox_events` (`next_attempt_at`,`created_at`,`id`)
 WHERE processed_at IS NULL AND failed_at IS NULL;
 
+CREATE TABLE `processed_events` (
+	`id` text PRIMARY KEY NOT NULL,
+	`processed_at` integer NOT NULL
+);
+
 -- Aborts a `db.batch()` when the immediately-preceding OCC-guarded write
 -- matched zero rows. See app/core/adapters/d1/schema.ts for the full rationale.
 CREATE TABLE `_occ_guard` (

@@ -29,7 +29,7 @@ describe("D1UnitOfWorkProvider (integration)", () => {
 
     let midRunRows: unknown[] = [];
     await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
-      await todoRepository.save(todo);
+      await todoRepository.insert(todo);
       // Side-channel read against the binding directly: the batch has
       // not been flushed yet, so the row must not be visible.
       midRunRows = await container.db.select().from(schema.todos);
@@ -50,7 +50,7 @@ describe("D1UnitOfWorkProvider (integration)", () => {
 
     await container.unitOfWorkProvider.run(
       async ({ todoRepository, collectEvents }) => {
-        await todoRepository.save(todo);
+        await todoRepository.insert(todo);
         collectEvents(eventDrafts);
       },
     );
@@ -70,26 +70,27 @@ describe("D1UnitOfWorkProvider (integration)", () => {
       NOW,
     );
     await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
-      await todoRepository.save(active);
+      await todoRepository.insert(active);
     });
 
-    // Stale save attempt: claims version 5 on a row that's at 0. The
-    // OCC guard must abort the batch, reverting both the would-be
-    // UPDATE and the `collectEvents` outbox INSERT.
-    const stale = Todo.reconstruct({
-      id: active.id,
-      title: active.title,
-      status: "active",
-      version: 5,
-      createdAt: active.createdAt,
-      updatedAt: active.updatedAt,
+    // Capture v=0 token, advance the row to v=1, then re-use the stale
+    // token together with `collectEvents`. The OCC guard must abort the
+    // batch, reverting both the would-be UPDATE and the outbox INSERT.
+    const found = await container.unitOfWorkProvider.run(
+      async ({ todoRepository }) => todoRepository.findById(active.id),
+    );
+    if (!found || !Todo.isActive(found.entity)) return;
+    const { entity: bumped } = Todo.complete(found.entity, NOW);
+    await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
+      await todoRepository.save(bumped, found.expectedVersion);
     });
+    // Row is now at v=1; `found.expectedVersion` is stale.
 
     let caught: unknown;
     try {
       await container.unitOfWorkProvider.run(
         async ({ todoRepository, collectEvents }) => {
-          await todoRepository.save(stale);
+          await todoRepository.save(bumped, found.expectedVersion);
           collectEvents([TodoEvents.toggled(active.id, true, NOW)]);
         },
       );
@@ -98,6 +99,9 @@ describe("D1UnitOfWorkProvider (integration)", () => {
     }
     expect(isConflictError(caught)).toBe(true);
 
+    // Neither prior UoW collected events (only the inserts ran), so the
+    // outbox must be empty — the failing UoW's `collectEvents` was rolled
+    // back along with its UPDATE.
     const outboxRows = await container.db.select().from(schema.outboxEvents);
     expect(outboxRows).toHaveLength(0);
   });
@@ -111,7 +115,7 @@ describe("D1UnitOfWorkProvider (integration)", () => {
 
     const id = await container.unitOfWorkProvider.run(
       async ({ todoRepository }) => {
-        await todoRepository.save(todo);
+        await todoRepository.insert(todo);
         return todo.id;
       },
     );

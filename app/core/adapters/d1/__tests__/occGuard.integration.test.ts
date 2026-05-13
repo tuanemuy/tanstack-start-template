@@ -40,8 +40,9 @@ describe("OCC guard via _occ_guard CHECK constraint", () => {
         .where(
           sql`${todos.id} = 'todo-1' AND ${todos.version} = ${stalePreviousVersion}`,
         ),
-      db.run(sql`INSERT INTO _occ_guard (n) VALUES (changes())`),
-      db.delete(occGuard),
+      db.run(
+        sql`INSERT INTO _occ_guard (n) SELECT changes() WHERE changes() = 0`,
+      ),
     ]);
 
     await expect(promise).rejects.toThrow();
@@ -76,15 +77,17 @@ describe("OCC guard via _occ_guard CHECK constraint", () => {
       updatedAt: now,
     });
 
-    // Matching version → UPDATE touches 1 row → guard INSERT inserts
-    // n=1, satisfies CHECK, then DELETE clears it. Batch commits cleanly.
+    // Matching version → UPDATE touches 1 row → guard SELECT yields no
+    // rows → INSERT is a no-op → batch commits cleanly with the guard
+    // table left empty.
     await db.batch([
       db
         .update(todos)
         .set({ title: "updated", version: 1, updatedAt: now })
         .where(sql`${todos.id} = 'todo-2' AND ${todos.version} = 0`),
-      db.run(sql`INSERT INTO _occ_guard (n) VALUES (changes())`),
-      db.delete(occGuard),
+      db.run(
+        sql`INSERT INTO _occ_guard (n) SELECT changes() WHERE changes() = 0`,
+      ),
     ]);
 
     const rows = await db.select().from(todos);
@@ -129,8 +132,9 @@ describe("OCC guard via _occ_guard CHECK constraint", () => {
         .update(todos)
         .set({ title: "should-not-stick", version: 100, updatedAt: now })
         .where(sql`${todos.id} = 'todo-3' AND ${todos.version} = 99`),
-      db.run(sql`INSERT INTO _occ_guard (n) VALUES (changes())`),
-      db.delete(occGuard),
+      db.run(
+        sql`INSERT INTO _occ_guard (n) SELECT changes() WHERE changes() = 0`,
+      ),
     ]);
 
     await expect(promise).rejects.toThrow();

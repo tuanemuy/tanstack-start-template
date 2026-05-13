@@ -1,13 +1,16 @@
 /// <reference types="@cloudflare/vitest-pool-workers/types" />
 
-import type { D1Database, Queue } from "@cloudflare/workers-types";
-import type { DomainEvent } from "@/core/domain/common/event";
+import type { D1Migration } from "cloudflare:test";
 
-declare module "cloudflare:test" {
-  interface ProvidedEnv {
-    DB: D1Database;
-    MIGRATIONS: D1Migration[];
-    EVENTS_QUEUE: Queue<DomainEvent>;
-    APP_URL: string;
+// `cloudflare:test` exposes `env` as `Cloudflare.Env`, so augmenting
+// that namespace is what extends the binding shape inside tests. The
+// `MIGRATIONS` binding is injected by `vitest.config.integration.ts`
+// via `miniflare.bindings`, not by `wrangler.toml`, so it never lands
+// in the `wrangler types` output and must be declared here.
+declare global {
+  namespace Cloudflare {
+    interface Env {
+      MIGRATIONS: D1Migration[];
+    }
   }
 }

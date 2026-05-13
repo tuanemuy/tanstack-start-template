@@ -1,7 +1,6 @@
 import { sql } from "drizzle-orm";
 import type { BatchItem } from "drizzle-orm/batch";
 import type { Database } from "./client";
-import { occGuard } from "./schema";
 
 type SqliteBatchItem = BatchItem<"sqlite">;
 
@@ -21,17 +20,25 @@ type SqliteBatchItem = BatchItem<"sqlite">;
  * 2. **OCC abort.** D1 batches treat an `UPDATE … WHERE version = ?`
  *    matching zero rows as a normal success and commit the rest. Each
  *    OCC-guarded write therefore registers a conflict handler and
- *    appends two extra statements to the batch:
+ *    appends one extra statement to the batch:
  *
- *        INSERT INTO _occ_guard (n) VALUES (changes());
- *        DELETE   FROM _occ_guard;
+ *        INSERT INTO _occ_guard (n)
+ *          SELECT changes() WHERE changes() = 0;
  *
  *    `changes()` reports the row count touched by the immediately
- *    preceding statement. When that is 0, the `_occ_guard` CHECK
- *    (`n > 0`) fails and the batch aborts. The UoW translates the
- *    resulting driver error into the registered handler — which is
- *    the only place a `ConflictError("OPTIMISTIC_LOCK_FAILURE")` can
- *    originate from inside D1's deferred-batch path.
+ *    preceding statement. When that is > 0 the SELECT yields no rows
+ *    and the INSERT is a no-op; when it is 0 the SELECT yields a
+ *    single row with `n = 0`, the `_occ_guard` CHECK (`n > 0`) fails,
+ *    and the batch aborts. The UoW translates the resulting driver
+ *    error into the registered handler — which is the only place a
+ *    `ConflictError("OPTIMISTIC_LOCK_FAILURE")` can originate from
+ *    inside D1's deferred-batch path. No follow-up DELETE is needed
+ *    because the success path never inserts.
+ *
+ *    The guard intentionally fires on *both* a version mismatch and a
+ *    missing row: in OCC semantics "the row I read is no longer
+ *    valid" covers both cases, and the deferred-batch model has no
+ *    cheaper way to distinguish them without a read-after-write.
  *
  * Why the guard handlers are FIFO-ordered: a batch can carry multiple
  * OCC writes (e.g. saving two aggregates in one usecase), but D1 stops
@@ -56,9 +63,10 @@ export class PendingBatch {
   addOcc(write: SqliteBatchItem, onConflict: () => never): void {
     this.items.push(write);
     this.items.push(
-      this.db.run(sql`INSERT INTO _occ_guard (n) VALUES (changes())`),
+      this.db.run(
+        sql`INSERT INTO _occ_guard (n) SELECT changes() WHERE changes() = 0`,
+      ),
     );
-    this.items.push(this.db.delete(occGuard));
     this.conflictHandlers.push(onConflict);
   }
 
