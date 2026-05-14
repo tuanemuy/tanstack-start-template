@@ -79,6 +79,8 @@ export async function boot(): Promise<NodeServerBoot> {
   const runner = createNodeWorkerRunner({
     container: workerContainer,
     logger,
+    // Replace with the application's domain-event subscriber.
+    consumerHandler: async () => {},
     cleanup: async () => {
       client.close();
     },

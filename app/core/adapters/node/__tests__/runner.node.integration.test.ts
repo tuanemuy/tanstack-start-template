@@ -123,6 +123,7 @@ describe("createNodeWorkerRunner (integration)", () => {
         idempotencyStore: container.idempotencyStore,
       },
       logger: container.logger,
+      consumerHandler: async () => {},
       tuning: { relayIntervalMs: 60_000, pruneIntervalMs: 60_000 },
     });
     runner.start();

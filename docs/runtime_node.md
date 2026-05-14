@@ -123,7 +123,7 @@ Concurrent kicks are collapsed: the periodic fallback and request-path kicks sha
 
 ### Consumer handler
 
-By default the runner ships a no-op consumer handler. Inject your application-specific subscriber by passing `consumerHandler` when constructing the runner (or wire it inside `app/server.node.ts`'s `createNodeWorkerRunner` call). Idempotency is enforced by the dispatcher before the handler runs, so handlers stay idempotent without per-handler bookkeeping.
+`consumerHandler` is a required dependency on `createNodeWorkerRunner` so wiring is explicit at the type level. `app/server.node.ts` passes an inline `async () => {}` as the template default — replace it with your application-specific subscriber. Idempotency is enforced by the dispatcher before the handler runs, so handlers stay idempotent without per-handler bookkeeping.
 
 ## Migrations
 

@@ -31,7 +31,7 @@ export type NodeWorkerRunnerTuning = Readonly<{
 export type NodeWorkerRunnerDeps = Readonly<{
   container: WorkerContainer;
   logger: Logger;
-  consumerHandler?: ConsumerHandler;
+  consumerHandler: ConsumerHandler;
   cleanup?: () => Promise<void>;
   tuning?: NodeWorkerRunnerTuning;
 }>;
@@ -44,8 +44,6 @@ export type NodeWorkerRunner = Readonly<{
 
 const DEFAULT_RELAY_INTERVAL_MS = 60_000;
 const DEFAULT_PRUNE_INTERVAL_MS = 24 * 60 * 60 * 1000;
-
-const NOOP_HANDLER: ConsumerHandler = async () => {};
 
 /**
  * Single-process orchestrator for the four CF workers (relay, consumer,
@@ -61,9 +59,8 @@ const NOOP_HANDLER: ConsumerHandler = async () => {};
 export function createNodeWorkerRunner(
   deps: NodeWorkerRunnerDeps,
 ): NodeWorkerRunner {
-  const { container, logger } = deps;
+  const { container, logger, consumerHandler: handler } = deps;
   const tuning = deps.tuning ?? {};
-  const handler = deps.consumerHandler ?? NOOP_HANDLER;
 
   const relayIntervalMs = tuning.relayIntervalMs ?? DEFAULT_RELAY_INTERVAL_MS;
   const pruneIntervalMs = tuning.pruneIntervalMs ?? DEFAULT_PRUNE_INTERVAL_MS;
