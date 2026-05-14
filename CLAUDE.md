@@ -67,8 +67,8 @@ The template ships two reference runtime wirings — Node.js + libSQL (single pr
 
 Entry points by runtime:
 
-- **Cloudflare**: `app/server.cloudflare.ts` (fetch), `app/worker/relay.ts` / `consumer.ts` / `pruner.ts` / `dlq.ts`, wired by `app/core/application/di/serverCloudflare.ts`.
-- **Node**: `app/server.node.ts` (fetch handler + boot), `app/worker/runner.node.ts` (single-process orchestrator of all four roles), `scripts/listen.node.ts` (production launcher), `scripts/migrate.node.ts` (libSQL migrator). Wired by `app/core/application/di/serverNode.ts`.
+- **Cloudflare**: `app/server.cloudflare.ts` (fetch), `app/worker/cloudflare/{relay,consumer,pruner,dlq}.ts`, wired by `app/core/application/di/serverCloudflare.ts`.
+- **Node**: `app/server.node.ts` (fetch handler + boot), `app/worker/node/runner.ts` (single-process orchestrator of all four roles), `scripts/listen.node.ts` (production launcher), `scripts/migrate.node.ts` (libSQL migrator). Wired by `app/core/application/di/serverNode.ts`.
 
 Per-runtime operational guidance lives in `docs/runtime_node.md` and `docs/runtime_cloudflare.md`. The Node runtime is the default for `pnpm dev` / `pnpm build` / `pnpm start`; the CF runtime is reached through the `:cf` script suffix.
 

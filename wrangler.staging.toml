@@ -51,7 +51,7 @@ service = "tanstack-start-template-staging-relay"
 # === Relay (Service Binding fetch + safety-net cron) ====================
 [env.relay]
 name = "tanstack-start-template-staging-relay"
-main = "app/worker/relay.ts"
+main = "app/worker/cloudflare/relay.ts"
 compatibility_date = "2026-05-01"
 compatibility_flags = ["nodejs_compat"]
 
@@ -78,7 +78,7 @@ crons = ["*/5 * * * *"]
 # === Consumer ===========================================================
 [env.consumer]
 name = "tanstack-start-template-staging-consumer"
-main = "app/worker/consumer.ts"
+main = "app/worker/cloudflare/consumer.ts"
 compatibility_date = "2026-05-01"
 compatibility_flags = ["nodejs_compat"]
 
@@ -102,7 +102,7 @@ dead_letter_queue = "tanstack-start-template-events-dlq-staging"
 # === Pruner =============================================================
 [env.pruner]
 name = "tanstack-start-template-staging-pruner"
-main = "app/worker/pruner.ts"
+main = "app/worker/cloudflare/pruner.ts"
 compatibility_date = "2026-05-01"
 compatibility_flags = ["nodejs_compat"]
 
@@ -123,7 +123,7 @@ crons = ["0 3 * * *"] # 03:00 UTC daily
 # === DLQ ================================================================
 [env.dlq]
 name = "tanstack-start-template-staging-dlq"
-main = "app/worker/dlq.ts"
+main = "app/worker/cloudflare/dlq.ts"
 compatibility_date = "2026-05-01"
 compatibility_flags = ["nodejs_compat"]
 

@@ -104,7 +104,7 @@ The `*-wal` / `*-shm` sidecar files do **not** need to be copied; SQLite reconst
 
 ## Worker runner (relay / consumer / pruner)
 
-`app/worker/runner.node.ts#createNodeWorkerRunner` is the same-process orchestrator for the four roles that ship as separate Workers on Cloudflare.
+`app/worker/node/runner.ts#createNodeWorkerRunner` is the same-process orchestrator for the four roles that ship as separate Workers on Cloudflare.
 
 | Role     | Cloudflare                              | Node                                                                                                              |
 | -------- | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |

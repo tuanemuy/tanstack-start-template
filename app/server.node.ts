@@ -16,7 +16,7 @@ import {
 } from "@/core/application/di/serverNode";
 import type { RequestContainer } from "@/core/application/di/types";
 import { ConsoleLogger } from "@/core/application/ports/logger";
-import { createNodeWorkerRunner } from "@/worker/runner.node";
+import { createNodeWorkerRunner } from "@/worker/node/runner";
 
 // SSR and RSC are separate module graphs in the same process; pin the
 // ALS on `globalThis` (and on `import.meta.hot.data` for HMR) so both

@@ -13,7 +13,7 @@ import {
 } from "@/core/domain/common/event";
 import { TodoEvents } from "@/core/domain/todo/events";
 import { TodoId, TodoTitle } from "@/core/domain/todo/valueObject";
-import { createNodeWorkerRunner } from "@/worker/runner.node";
+import { createNodeWorkerRunner } from "@/worker/node/runner";
 
 let counter = 0;
 const nextEventId = (): EventId => {

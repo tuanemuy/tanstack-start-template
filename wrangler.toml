@@ -44,7 +44,7 @@ service = "tanstack-start-template-relay"
 # === Relay (Service Binding fetch + safety-net cron) ====================
 [env.relay]
 name = "tanstack-start-template-relay"
-main = "app/worker/relay.ts"
+main = "app/worker/cloudflare/relay.ts"
 compatibility_date = "2026-05-01"
 compatibility_flags = ["nodejs_compat"]
 
@@ -80,7 +80,7 @@ crons = ["*/5 * * * *"]
 # === Consumer ===========================================================
 [env.consumer]
 name = "tanstack-start-template-consumer"
-main = "app/worker/consumer.ts"
+main = "app/worker/cloudflare/consumer.ts"
 compatibility_date = "2026-05-01"
 compatibility_flags = ["nodejs_compat"]
 
@@ -113,7 +113,7 @@ dead_letter_queue = "tanstack-start-template-events-dlq"
 # rows.
 [env.pruner]
 name = "tanstack-start-template-pruner"
-main = "app/worker/pruner.ts"
+main = "app/worker/cloudflare/pruner.ts"
 compatibility_date = "2026-05-01"
 compatibility_flags = ["nodejs_compat"]
 
@@ -140,7 +140,7 @@ crons = ["0 3 * * *"] # 03:00 UTC daily
 # logger/projection blip without masquerading as automated recovery.
 [env.dlq]
 name = "tanstack-start-template-dlq"
-main = "app/worker/dlq.ts"
+main = "app/worker/cloudflare/dlq.ts"
 compatibility_date = "2026-05-01"
 compatibility_flags = ["nodejs_compat"]
 

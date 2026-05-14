@@ -32,8 +32,8 @@ Domain, application, and presentation code is shared verbatim across both modes.
                                             interval scheduler)
         │                                       │
    app/server.cloudflare.ts               app/server.node.ts
-   app/worker/{relay,consumer,            app/worker/runner.node.ts
-   pruner,dlq}.ts                         scripts/listen.node.ts
+   app/worker/cloudflare/{relay,          app/worker/node/runner.ts
+   consumer,pruner,dlq}.ts                scripts/listen.node.ts
 ```
 
 Pick the runtime that matches your operational posture; the application code on top is identical.
@@ -164,12 +164,14 @@ app/
 ├─ styles/
 ├─ lib/               # structural primitives shared by every layer (e.g. CodedError)
 ├─ worker/
-│  ├─ handlers.ts     # shared worker handler implementations
-│  ├─ relay.ts        # CF relay worker entry (fetch + scheduled)
-│  ├─ consumer.ts     # CF queue consumer entry
-│  ├─ pruner.ts       # CF daily cron entry
-│  ├─ dlq.ts          # CF DLQ surfacer
-│  └─ runner.node.ts  # Node in-process orchestrator for the four roles above
+│  ├─ cloudflare/     # Cloudflare Workers entries
+│  │  ├─ handlers.ts  #   shared worker handler implementations
+│  │  ├─ relay.ts     #   relay worker entry (fetch + scheduled)
+│  │  ├─ consumer.ts  #   queue consumer entry
+│  │  ├─ pruner.ts    #   daily cron entry
+│  │  └─ dlq.ts       #   DLQ surfacer
+│  └─ node/
+│     └─ runner.ts    # Node in-process orchestrator for the four roles above
 ├─ server.cloudflare.ts # Cloudflare Workers fetch entry
 └─ server.node.ts     # Node HTTP fetch entry (used by vite dev + scripts/listen.node.ts)
 scripts/
