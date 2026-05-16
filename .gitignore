@@ -6,7 +6,6 @@
 /.output/
 /.nitro/
 /dist/
-/app/routeTree.gen.ts
 
 # Cloudflare Wrangler
 /.wrangler/
