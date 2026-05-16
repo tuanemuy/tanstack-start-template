@@ -1,0 +1,157 @@
+# Runtime: GCP (Cloud Run + Turso + Pub/Sub)
+
+Production runtime for Google Cloud. The HTTP request path, the outbox relay, the Pub/Sub consumer, and the dead-letter sink all run as separate Cloud Run services from the same container image; `WORKER_ROLE` picks the role at start time. Turso (libSQL remote) is the database, so `app/core/adapters/libsql/` is reused unchanged from the Node runtime.
+
+See [`runtime_node.md`](./runtime_node.md) for the local-development single-process variant, [`runtime_cloudflare.md`](./runtime_cloudflare.md) for the Workers runtime, and the [GCP plan](./plan_runtime_gcp.md) for the design rationale.
+
+## Table of contents
+
+- [Quick start](#quick-start)
+- [Environment variables](#environment-variables)
+- [Build and image](#build-and-image)
+- [Roles and dispatch](#roles-and-dispatch)
+- [Relay trigger model](#relay-trigger-model)
+- [Pub/Sub envelope](#pubsub-envelope)
+- [Migrations](#migrations)
+- [Secrets](#secrets)
+- [Local development](#local-development)
+- [Infrastructure (Terraform)](#infrastructure-terraform)
+- [Known limitations](#known-limitations)
+
+## Quick start
+
+```bash
+# 1. Bootstrap Turso outside of GCP.
+turso db create my-app
+turso db show my-app --url            # libsql://...
+turso db tokens create my-app         # paste into .env.gcp
+
+# 2. Apply migrations against the remote DB from a developer machine.
+cp .env.gcp.example .env.gcp
+# edit DATABASE_URL / DATABASE_AUTH_TOKEN / APP_URL
+pnpm db:migrate:gcp
+
+# 3. Build the container image.
+docker build -f Dockerfile.gcp -t gcr.io/$PROJECT/server:latest .
+docker push gcr.io/$PROJECT/server:latest
+
+# 4. Provision the rest with Terraform (see infra/gcp/example/).
+cd infra/gcp/example
+terraform apply -var "project_id=$PROJECT" -var "image=gcr.io/$PROJECT/server:latest" \
+  -var "turso_database_url=libsql://..." -var "app_url=https://app.example.com"
+```
+
+## Environment variables
+
+On Cloud Run the env vars come from `--set-env-vars` / Secret Manager bindings / the Terraform module. The schema is validated at boot in `app/core/application/di/serverGcp.ts`.
+
+For local container runs, pass `--env-file=.env.gcp` to `docker run` (or invoke the launcher directly with Node's built-in `node --env-file=.env.gcp scripts/listen.gcp.mjs`). The launcher itself is plain ESM JS and does not load `.env` files — keeping dev-only loaders out of the production image is intentional.
+
+| Variable                          | Required for                | Default | Purpose                                                                                       |
+| --------------------------------- | --------------------------- | ------- | --------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`                    | all roles                   | —       | libSQL URL (`libsql://...` for Turso).                                                        |
+| `DATABASE_AUTH_TOKEN`             | all roles                   | —       | Turso bearer token. Prefer Secret Manager via `DATABASE_AUTH_TOKEN_SECRET_NAME`.              |
+| `APP_URL`                         | all roles                   | —       | Public origin for absolute-URL building.                                                      |
+| `WORKER_ROLE`                     | all roles                   | `app`   | One of `app`, `relay`, `consumer`, `dlq`. Drives the role dispatch in `server.gcp.ts`.        |
+| `GCP_PROJECT_ID`                  | `relay`                     | (auto)  | Pub/Sub client project. Defaults to the Cloud Run metadata server.                            |
+| `EVENTS_TOPIC`                    | `relay`                     | —       | Pub/Sub topic the relay publishes to (no `projects/...` prefix).                              |
+| `RELAY_URL`                       | `app`, `relay`              | —       | Relay Cloud Run URL. Used by both the `app` service (after UoW commit) and the relay self-chain. |
+| `DATABASE_AUTH_TOKEN_SECRET_NAME` | optional                    | —       | Secret Manager version name. When set, the boot loader fetches it into `DATABASE_AUTH_TOKEN`. |
+| `OUTBOX_BATCH_SIZE`               | optional                    | `100`   | Max outbox rows claimed per relay tick.                                                       |
+| `OUTBOX_LEASE_MS`                 | optional                    | `300000`| Lease window before a stuck claim becomes reclaimable.                                        |
+| `OUTBOX_MAX_ATTEMPTS`             | optional                    | `2`     | Per-event publish attempts before quarantine.                                                 |
+| `OUTBOX_RETENTION_MS`             | optional                    | `604800000` | Retention before processed outbox rows are pruned.                                        |
+| `PORT` / `HOSTNAME`               | optional                    | `8080` / `0.0.0.0` | Cloud Run injects `PORT=8080`; override only for local testing.                  |
+
+## Build and image
+
+The same image runs all four Cloud Run services:
+
+```bash
+pnpm build:gcp                            # vite build → dist/server/server.gcp.js
+docker build -f Dockerfile.gcp -t ... .   # multi-stage; runtime layer keeps only prod deps
+```
+
+Cloud Run runs `node scripts/listen.gcp.mjs` as `CMD`. The launcher imports the bundled `dist/server/server.gcp.js` `boot()`, which inspects `WORKER_ROLE` and returns the appropriate fetch handler. The launcher is plain ESM JavaScript so the runtime image needs neither `tsx` nor `dotenv`.
+
+## Roles and dispatch
+
+| Role       | Triggered by                                                | Endpoint            |
+| ---------- | ----------------------------------------------------------- | ------------------- |
+| `app`      | Public HTTPS                                                | `*` (TanStack Start) + `POST /prune` |
+| `relay`    | Cloud Scheduler + authenticated POST from `app` / self      | `POST /`            |
+| `consumer` | Pub/Sub push subscription (events topic)                    | `POST /`            |
+| `dlq`      | Pub/Sub push subscription (events-dlq topic)                | `POST /` (always 204) |
+
+The `/prune` endpoint lives on the `app` service rather than a dedicated `pruner` Cloud Run service to keep the infrastructure footprint smaller. Cloud Scheduler invokes it daily with an OIDC token; Cloud Run IAM (`roles/run.invoker` on the scheduler SA) gates the call.
+
+## Relay trigger model
+
+`CloudRunRelayTrigger` (`app/core/adapters/gcp/cloudRunRelayTrigger.ts`) issues an authenticated `POST` to the relay service after a UoW commit. The OIDC ID token is minted via `google-auth-library` with the relay service URL as the audience; Cloud Run verifies the token and the `roles/run.invoker` binding.
+
+The fetch is fire-and-forget — the request handler returns the HTTP response without awaiting the kick. A 5-minute Cloud Scheduler cron acts as the safety net, and the relay self-kicks (`POST` to its own URL) when a tick saturates `maxIterations`.
+
+## Pub/Sub envelope
+
+Pub/Sub push subscriptions wrap each message in this envelope:
+
+```json
+{
+  "message": {
+    "data": "<base64-encoded JSON DomainEvent>",
+    "messageId": "...",
+    "publishTime": "...",
+    "attributes": {}
+  },
+  "subscription": "..."
+}
+```
+
+`app/worker/gcp/consumer.ts` decodes the envelope, runs the same `parseEvent` round-trip the AWS consumer uses (so `occurredAt` is rehydrated to a `Date` and value-object construction re-runs), then writes the idempotency marker. A 204 acks, a 5xx nacks and Pub/Sub redrives — once the dead-letter policy threshold is exceeded the message lands on `events-dlq` and the `dlq` service logs it.
+
+## Migrations
+
+Turso is SQLite-compatible, so the existing Drizzle migration set works as-is:
+
+```bash
+pnpm db:migrate:gcp     # tsx scripts/migrate.gcp.ts against DATABASE_URL/DATABASE_AUTH_TOKEN
+```
+
+`__drizzle_migrations` is created in the Turso DB so reruns are idempotent. Run this from your dev machine or as a Cloud Build step before each release.
+
+## Secrets
+
+`DATABASE_AUTH_TOKEN` is the only secret the runtime needs. Two options:
+
+1. **Cloud Run-native mount** (preferred) — declare a Secret Manager binding in Terraform with `value_source { secret_key_ref { ... } }` and let Cloud Run inject the value as a plain env var. The boot loader sees `DATABASE_AUTH_TOKEN` already populated and skips the SDK call.
+2. **Explicit loader** — set `DATABASE_AUTH_TOKEN_SECRET_NAME=projects/.../secrets/.../versions/latest` and the boot loader (`app/core/adapters/gcp/secretsLoader.ts`) fetches the value at cold start. Use this when the deployment surface (e.g. an ad-hoc `gcloud run deploy`) cannot declare the binding.
+
+The Turso URL (`DATABASE_URL`) is treated as low-sensitivity and lives as a plain env var; rotate the token, not the URL.
+
+## Local development
+
+The GCP runtime is not meant to be run end-to-end locally — Pub/Sub push delivery in particular needs an external HTTP target the emulator can reach. Two reasonable strategies:
+
+- **Default: keep using the Node runtime for local dev.** `pnpm dev` (Node, single-process) covers everything the GCP runtime does. The container shape and Pub/Sub plumbing only matter at staging time.
+- **Container parity loop:** `docker build -f Dockerfile.gcp -t local/server . && docker run -p 8080:8080 --env-file .env.gcp local/server` boots the app role against the remote Turso DB. The relay / consumer roles can be exercised by `curl`-ing them with a mock Pub/Sub envelope.
+
+For the Pub/Sub emulator, run `gcloud beta emulators pubsub start --host-port=0.0.0.0:8085` and set `PUBSUB_EMULATOR_HOST=localhost:8085` for the relay process; the consumer side still needs you to manually craft `POST /` calls.
+
+## Infrastructure (Terraform)
+
+`infra/gcp/example/` contains a **reference** Terraform module — read its README before applying. It creates the four Cloud Run services, both Pub/Sub topics with subscriptions, the Cloud Scheduler jobs, Secret Manager entry, and the service-to-service IAM bindings.
+
+It does **not** create:
+- The container image (build + push separately)
+- Turso (create with `turso db create` and pass the URL + token as inputs)
+- Custom domains / load balancers
+- Logging / monitoring policy
+
+For staging vs production, instantiate the module twice with different `name_prefix` values in different workspaces, or wrap it in a top-level module that does the multiplexing.
+
+## Known limitations
+
+- **Cold start cost.** Cloud Run with `min-instances=0` pays a Node startup + libSQL connect on the first request after idle. Set `min_instance_count = 1` on the `app` service in production (the Terraform example does this).
+- **No order guarantees.** Pub/Sub is at-least-once / unordered (we don't use ordering keys). Consumers must be idempotent.
+- **Pub/Sub default dead-letter SA.** Pub/Sub's project-level service agent needs `roles/pubsub.publisher` on `events-dlq` to forward failed deliveries. The Terraform example does not grant this (it's project-state-dependent); add the binding manually or via a separate module the first time.
+- **No bundled local emulator stack.** A full docker-compose with emulators is left as an opt-in (see [Local development](#local-development)).
