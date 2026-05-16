@@ -12,29 +12,11 @@ export type LoadSecretsDeps = Readonly<{
 }>;
 
 /**
- * Cold-start hook: pre-fetches Secrets Manager values and writes them
- * into `process.env` so downstream code (DI factories, libSQL client
- * construction) sees them via plain env-var reads.
- *
- * For each `{ secretId, envVar }` binding:
- *  1. If `process.env[envVar]` is already set to a non-empty value, the
- *     binding is skipped — local overrides (e.g. `.env.aws` for
- *     migrations) win over the production secret. To force a refresh
- *     from Secrets Manager (e.g. after rotation in a long-lived dev
- *     shell), unset the env var before invoking the loader.
- *  2. Otherwise `secretId` (ARN or name) is fetched via
- *     `GetSecretValueCommand`.
- *  3. The `SecretString` is interpreted as follows:
- *     - **JSON object whose `envVar` key has a string value** → that
- *       value is used. This is the canonical shape for rotation-enabled
- *       secrets where the secret stores `{ DATABASE_AUTH_TOKEN: "..." }`.
- *     - **Any other JSON shape (array, number, JSON with missing key)
- *       or plain non-JSON string** → the raw `SecretString` is used
- *       verbatim. This is the form `turso db tokens create` produces.
- *
- * Adapters that need different parsing (e.g. RDS-style
- * `{ username, password }`) should not extend this function — write a
- * dedicated loader instead.
+ * Cold-start hook: writes Secrets Manager values into `process.env` so
+ * downstream code can read them as plain env vars. A non-empty existing
+ * env value wins over the secret (local overrides for migrations etc).
+ * `SecretString` is read as JSON `{ [envVar]: string }` if it parses to
+ * that shape, otherwise used verbatim (e.g. `turso db tokens create`).
  */
 export async function loadSecretsIntoEnv(deps: LoadSecretsDeps): Promise<void> {
   const { client, bindings } = deps;

@@ -14,7 +14,6 @@ import type {
 import { loadSecretsIntoEnv } from "@/core/adapters/aws/secretsLoader";
 import { createSqsQueueDispatcher } from "@/core/adapters/aws/sqsQueueDispatcher";
 import {
-  applyPragmas,
   createLibsqlClient,
   type Database,
   getDatabase,
@@ -75,10 +74,6 @@ async function bootWorker(): Promise<WorkerBoot> {
       ? { authToken: env.DATABASE_AUTH_TOKEN }
       : {}),
   });
-  // Turso (libSQL remote) ignores PRAGMAs server-side, but applying
-  // them keeps parity with file-backed local fallback runs.
-  const isMemory = env.DATABASE_URL === ":memory:";
-  await applyPragmas(client, isMemory ? { wal: false } : {});
   const db = getDatabase(client);
   const container = createAwsWorkerContainer(db);
   return { env, client, db, container };
@@ -97,21 +92,8 @@ export function getWorkerBoot(): Promise<WorkerBoot> {
   return workerBootPromise;
 }
 
-let sqsClientSingleton: SQSClient | null = null;
-function getSqsClient(): SQSClient {
-  if (sqsClientSingleton === null) {
-    sqsClientSingleton = new SQSClient({});
-  }
-  return sqsClientSingleton;
-}
-
-let lambdaClientSingleton: LambdaClient | null = null;
-function getLambdaClient(): LambdaClient {
-  if (lambdaClientSingleton === null) {
-    lambdaClientSingleton = new LambdaClient({});
-  }
-  return lambdaClientSingleton;
-}
+const sqsClient = new SQSClient({});
+const lambdaClient = new LambdaClient({});
 
 export async function runRelayTick(
   override?: ProcessOutboxEventsOptions,
@@ -124,7 +106,7 @@ export async function runRelayTick(
     );
   }
   const dispatcher = createSqsQueueDispatcher({
-    client: getSqsClient(),
+    client: sqsClient,
     queueUrl,
   });
   // `readRelayTuning` only covers env-tunable knobs (batch size / lease /
@@ -151,7 +133,7 @@ export async function runRelayTick(
   const looksDrainable = result.processed >= batchSize * maxIterations;
   if (looksDrainable && env.RELAY_FUNCTION_NAME !== undefined) {
     try {
-      await getLambdaClient().send(
+      await lambdaClient.send(
         new InvokeCommand({
           FunctionName: env.RELAY_FUNCTION_NAME,
           InvocationType: InvocationType.Event,
@@ -269,17 +251,10 @@ export async function handleQueue(event: SQSEvent): Promise<SQSBatchResponse> {
 }
 
 /**
- * DLQ handler: log only, never retry. Returning an empty
- * `batchItemFailures` array acks every message so the DLQ does not loop
- * back on itself.
- *
- * IMPORTANT: any code change here MUST keep the swallow-everything posture.
- * The DLQ has no downstream dead-letter target, so a thrown exception (or a
- * non-empty `batchItemFailures` return) means SQS keeps redelivering the
- * same message until its retention expires, burning Lambda invocations for
- * messages no human will ever see. If you need to add side effects (alert
- * fan-out, ticket creation), wrap them in their own try/catch — never let
- * them escape `handleDlq`.
+ * DLQ handler: log only, never retry. The DLQ has no further dead-letter
+ * target, so anything that surfaces as a failure (thrown error or non-empty
+ * `batchItemFailures`) would loop on the same message until SQS retention
+ * expires. Side effects added here must keep their own try/catch.
  */
 export async function handleDlq(event: SQSEvent): Promise<SQSBatchResponse> {
   const { container } = await getWorkerBoot();
@@ -313,6 +288,4 @@ export async function handleDlq(event: SQSEvent): Promise<SQSBatchResponse> {
 
 export function __resetWorkerBootForTests(): void {
   workerBootPromise = null;
-  sqsClientSingleton = null;
-  lambdaClientSingleton = null;
 }

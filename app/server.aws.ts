@@ -1,9 +1,3 @@
-// Lambda entry for the request-path Worker. Translates API Gateway HTTP
-// API v2 / Lambda Function URL events into the standard `Request` /
-// `Response` pair the TanStack Start server-entry expects, then delegates
-// to it. Container construction follows the same lazy-boot pattern as
-// `server.node.ts` so cold start cost is only paid once per Lambda
-// instance.
 import { AsyncLocalStorage } from "node:async_hooks";
 import { Buffer } from "node:buffer";
 import process from "node:process";
@@ -16,11 +10,7 @@ import type {
 } from "aws-lambda";
 import { LambdaInvokeRelayTrigger } from "@/core/adapters/aws/lambdaInvokeRelayTrigger";
 import { loadSecretsIntoEnv } from "@/core/adapters/aws/secretsLoader";
-import {
-  applyPragmas,
-  createLibsqlClient,
-  getDatabase,
-} from "@/core/adapters/libsql/client";
+import { createLibsqlClient, getDatabase } from "@/core/adapters/libsql/client";
 import { installContainerStore } from "@/core/application/di/containerStore";
 import {
   type AwsServerEnv,
@@ -83,11 +73,6 @@ async function boot(): Promise<Booted> {
       ? { authToken: env.DATABASE_AUTH_TOKEN }
       : {}),
   });
-  // Turso (libSQL remote) ignores PRAGMAs server-side, but applying
-  // them is harmless and keeps parity with the Node runtime for any
-  // file-backed local fallback.
-  const isMemory = env.DATABASE_URL === ":memory:";
-  await applyPragmas(client, isMemory ? { wal: false } : {});
   const db = getDatabase(client);
 
   const relayFunctionName = env.RELAY_FUNCTION_NAME;

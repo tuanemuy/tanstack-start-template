@@ -1,43 +1,24 @@
-// Run the libSQL migration set against a remote Turso instance. Differs
-// from `migrate.node.ts` only in that it requires `DATABASE_URL` to be a
-// `libsql://` URL with a matching `DATABASE_AUTH_TOKEN`. Everything else
-// (schema, migration files, Drizzle dialect) is reused unchanged.
+// Run the libSQL migration set against a remote Turso instance. Schema,
+// migration files, and Drizzle dialect are shared with `migrate.node.ts`.
 import "dotenv/config";
 
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { migrate } from "drizzle-orm/libsql/migrator";
-import {
-  applyPragmas,
-  createLibsqlClient,
-  getDatabase,
-} from "@/core/adapters/libsql/client";
+import { createLibsqlClient, getDatabase } from "@/core/adapters/libsql/client";
 
 async function main(): Promise<void> {
   const url = process.env["DATABASE_URL"];
+  if (url === undefined || url === "") {
+    throw new Error("[migrate.aws] DATABASE_URL is required");
+  }
   const authToken = process.env["DATABASE_AUTH_TOKEN"];
 
-  if (url === undefined || url === "") {
-    throw new Error(
-      "[migrate.aws] DATABASE_URL is required (expected `libsql://...` Turso URL)",
-    );
-  }
-  if (!url.startsWith("libsql://") && !url.startsWith("https://")) {
-    throw new Error(
-      `[migrate.aws] expected libsql:// or https:// URL, got ${url}`,
-    );
-  }
-  if (authToken === undefined || authToken === "") {
-    throw new Error(
-      "[migrate.aws] DATABASE_AUTH_TOKEN is required for remote Turso",
-    );
-  }
-
-  const client = createLibsqlClient({ url, authToken });
-  // Remote libSQL ignores PRAGMAs, but the call is harmless.
-  await applyPragmas(client, {});
-
+  const client = createLibsqlClient({
+    url,
+    ...(authToken !== undefined && authToken !== "" ? { authToken } : {}),
+  });
   const db = getDatabase(client);
 
   const here = path.dirname(fileURLToPath(import.meta.url));

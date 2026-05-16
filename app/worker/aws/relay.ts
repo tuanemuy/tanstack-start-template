@@ -1,17 +1,10 @@
-import type { ScheduledEvent } from "aws-lambda";
 import { runRelayTick } from "./handlers";
 
-/**
- * Trigger surface for the relay Lambda:
- *   - EventBridge Scheduler (`ScheduledEvent`) — periodic safety net.
- *   - Async `lambda:Invoke` from the request path (event payload is
- *     ignored; the call is just a kick).
- *
- * Both paths funnel into the same `runRelayTick` so a single drain
- * policy applies regardless of trigger.
- */
+// Triggered by EventBridge Scheduler (periodic safety net) and async
+// `lambda:Invoke` from the request path. The event payload is unused —
+// both paths funnel into the same `runRelayTick`.
 export const handler = async (
-  _event: ScheduledEvent | unknown,
+  _event: unknown,
 ): Promise<{ processed: number }> => {
   return runRelayTick();
 };

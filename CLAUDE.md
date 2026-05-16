@@ -63,16 +63,17 @@ Each of these is enforced in code and documented in library-level JSDoc at the r
 
 ## Reference runtimes
 
-The template ships two reference runtime wirings — Node.js + libSQL (single process) and Cloudflare Workers + D1 + Queues — as worked examples of swapping the adapter and entry-point layers while keeping `domain` / `application` / `presentation` intact. **Pick one and delete the other**, or keep both if you genuinely need both targets; the template does not assume you maintain a dual deployment.
+The template ships three reference runtime wirings — Node.js + libSQL (single process), Cloudflare Workers + D1 + Queues, and AWS Lambda + Turso + SQS — as worked examples of swapping the adapter and entry-point layers while keeping `domain` / `application` / `presentation` intact. **Pick one and delete the others**, or keep multiple if you genuinely need multiple targets; the template does not assume you maintain a multi-runtime deployment.
 
 Entry points by runtime:
 
 - **Cloudflare**: `app/server.cloudflare.ts` (fetch), `app/worker/cloudflare/{relay,consumer,pruner,dlq}.ts`, wired by `app/core/application/di/serverCloudflare.ts`.
 - **Node**: `app/server.node.ts` (fetch handler + boot), `app/worker/node/runner.ts` (single-process orchestrator of all four roles), `scripts/listen.node.ts` (production launcher), `scripts/migrate.node.ts` (libSQL migrator). Wired by `app/core/application/di/serverNode.ts`.
+- **AWS**: `app/server.aws.ts` (API Gateway → fetch), `app/worker/aws/{relay,consumer,pruner,dlq}.ts` (thin role-typed wrappers over shared `handlers.ts`), `scripts/migrate.aws.ts` (Turso migrator), `infra/aws/` (CDK stack). Wired by `app/core/application/di/serverAws.ts`.
 
-Per-runtime operational guidance lives in `docs/runtime_node.md` and `docs/runtime_cloudflare.md`. The Node runtime is the default for `pnpm dev` / `pnpm build` / `pnpm start`; the CF runtime is reached through the `:cf` script suffix.
+Per-runtime operational guidance lives in `docs/runtime_node.md`, `docs/runtime_cloudflare.md`, and `docs/runtime_aws.md`. The Node runtime is the default for `pnpm dev` / `pnpm build` / `pnpm start`; the CF runtime is reached through the `:cf` script suffix and the AWS runtime through `:aws`.
 
-To target a different runtime (AWS Lambda, Cloud Run, etc.), add a new adapter group under `app/core/adapters/{provider}/` and a paired entry point — the inward layers stay put. Existing adapters can usually be reused across runtimes (libSQL works on Lambda / Cloud Run unchanged); the swap is the entry + DI wiring, not the whole stack.
+To target a different runtime (Cloud Run, Fly Machines, etc.), add a new adapter group under `app/core/adapters/{provider}/` and a paired entry point — the inward layers stay put. Existing adapters can usually be reused across runtimes (libSQL works on Lambda / Cloud Run unchanged); the swap is the entry + DI wiring, not the whole stack.
 
 ## Examples
 

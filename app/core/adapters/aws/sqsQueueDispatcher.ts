@@ -14,8 +14,7 @@ export type SqsQueueDispatcherDeps = Readonly<{
   queueUrl: string;
 }>;
 
-// SQS `SendMessageBatch` accepts at most 10 entries per call. Splitting the
-// relay batch here keeps `processOutboxEvents` free of transport limits.
+// SQS `SendMessageBatch` accepts at most 10 entries per call.
 const MAX_SQS_BATCH = 10;
 
 function chunk<T>(items: readonly T[], size: number): T[][] {
@@ -27,14 +26,13 @@ function chunk<T>(items: readonly T[], size: number): T[][] {
 }
 
 /**
- * SQS implementation of {@link EventDispatcher}. The relay batch is sliced
- * into chunks of 10 (the SQS hard limit), each chunk is sent via
- * `SendMessageBatchCommand`, and the response's `Successful` / `Failed`
- * arrays are mapped back to per-event outcomes keyed on `event.id`.
- *
- * A network-level rejection of an individual chunk reports failure for
- * every event in that chunk so `processOutboxEvents` can retry them in
- * the next tick.
+ * SQS implementation of {@link EventDispatcher}. Splits the relay batch
+ * into 10-entry chunks (SQS hard limit), sends each via
+ * `SendMessageBatchCommand`, and maps the response's `Successful` /
+ * `Failed` arrays into per-event outcomes. A chunk-level rejection is
+ * reported as failure for every event in that chunk; events with no
+ * matching outcome are left out and the worker treats the absence as
+ * failure.
  */
 export function createSqsQueueDispatcher(
   deps: SqsQueueDispatcherDeps,
@@ -44,11 +42,7 @@ export function createSqsQueueDispatcher(
   return async (events: readonly DomainEvent[]) => {
     if (events.length === 0) return [];
 
-    // The SQS response echoes `Entry.Id` as a plain string; build a set
-    // of in-batch ids so we can drop any echo that doesn't correspond to
-    // one of our events (defensive — shouldn't happen in practice).
-    const inBatch = new Set<string>(events.map((e) => e.id));
-    const outcomesById = new Map<EventId, EventDispatchOutcome>();
+    const outcomes: EventDispatchOutcome[] = [];
 
     for (const slice of chunk(events, MAX_SQS_BATCH)) {
       const entries: SendMessageBatchRequestEntry[] = slice.map((event) => ({
@@ -68,16 +62,12 @@ export function createSqsQueueDispatcher(
         );
 
         for (const success of response.Successful ?? []) {
-          if (success.Id === undefined || !inBatch.has(success.Id)) continue;
-          const id = success.Id as EventId;
-          outcomesById.set(id, { kind: "success", id });
+          outcomes.push({ kind: "success", id: success.Id as EventId });
         }
         for (const failure of response.Failed ?? []) {
-          if (failure.Id === undefined || !inBatch.has(failure.Id)) continue;
-          const id = failure.Id as EventId;
-          outcomesById.set(id, {
+          outcomes.push({
             kind: "failure",
-            id,
+            id: failure.Id as EventId,
             error: new Error(
               `SQS SendMessageBatch failed: code=${failure.Code ?? "unknown"} message=${failure.Message ?? "unknown"} senderFault=${failure.SenderFault ?? false}`,
             ),
@@ -85,24 +75,11 @@ export function createSqsQueueDispatcher(
         }
       } catch (error) {
         for (const event of slice) {
-          outcomesById.set(event.id, {
-            kind: "failure",
-            id: event.id,
-            error,
-          });
+          outcomes.push({ kind: "failure", id: event.id, error });
         }
       }
     }
 
-    return events.map(
-      (event) =>
-        outcomesById.get(event.id) ?? {
-          kind: "failure" as const,
-          id: event.id,
-          error: new Error(
-            `SQS SendMessageBatch returned no outcome for event ${event.id}`,
-          ),
-        },
-    );
+    return outcomes;
   };
 }
