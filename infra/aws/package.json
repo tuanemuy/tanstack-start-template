@@ -1,0 +1,22 @@
+{
+  "name": "tanstack-start-template-infra-aws",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "synth": "cdk synth",
+    "diff": "cdk diff",
+    "deploy:staging": "cdk deploy AppStack-staging",
+    "deploy:production": "cdk deploy AppStack-production"
+  },
+  "dependencies": {
+    "aws-cdk-lib": "^2.180.0",
+    "constructs": "^10.4.2"
+  },
+  "devDependencies": {
+    "aws-cdk": "^2.180.0",
+    "@types/node": "^25.7.0",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3"
+  }
+}

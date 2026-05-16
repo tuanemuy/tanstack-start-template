@@ -101,7 +101,7 @@ export const DEFAULT_BATCH_SIZE = 100;
 // counts.
 export const DEFAULT_MAX_ATTEMPTS = 2;
 export const DEFAULT_LEASE_MS = 5 * 60 * 1000; // 5 min
-const DEFAULT_MAX_ITERATIONS = 10;
+export const DEFAULT_MAX_ITERATIONS = 10;
 const MAX_BACKOFF_MS = 60 * 60 * 1000; // 1h ceiling
 
 // Exponential backoff with a 30s base and a 1h cap. `attempts` is
