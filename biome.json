@@ -1,5 +1,5 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.3.14/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.4.15/schema.json",
   "vcs": {
     "enabled": true,
     "clientKind": "git",
@@ -7,7 +7,15 @@
   },
   "files": {
     "ignoreUnknown": false,
-    "includes": ["**", "!**/routeTree.gen.ts", "!spec/**"]
+    "includes": [
+      "app/**",
+      "scripts/**",
+      "infra/**",
+      "*.ts",
+      "*.mjs",
+      "*.json",
+      "!**/routeTree.gen.ts"
+    ]
   },
   "formatter": {
     "enabled": true,
@@ -17,10 +25,12 @@
   "linter": {
     "enabled": true,
     "includes": [
-      "**",
-      "!**/components/ui/**/*",
-      "!**/styles/**/*",
-      "!**/templates/*"
+      "app/**",
+      "scripts/**",
+      "infra/**",
+      "!**/components/ui/**",
+      "!**/styles/**",
+      "!**/templates/**"
     ],
     "rules": {
       "recommended": true,

@@ -114,14 +114,5 @@
     "vite": "^8.0.12",
     "vitest": "^4.1.6",
     "wrangler": "^4.90.1"
-  },
-  "pnpm": {
-    "overrides": {
-      "tinypool": "1.0.2"
-    },
-    "onlyBuiltDependencies": [
-      "esbuild",
-      "workerd"
-    ]
   }
 }
