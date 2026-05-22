@@ -11,6 +11,10 @@
 /.wrangler/
 /worker-configuration.d.ts
 /.dev.vars
+# Rendered from `wrangler.<stage>.toml.tpl` by scripts/render-wrangler.ts.
+# Edit the `.tpl` instead — these are regenerated on every deploy.
+/wrangler.staging.toml
+/wrangler.production.toml
 
 # Node runtime
 /data/

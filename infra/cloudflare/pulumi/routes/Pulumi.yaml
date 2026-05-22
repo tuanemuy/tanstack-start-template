@@ -1,0 +1,10 @@
+name: tanstack-start-template-cf-routes
+runtime:
+  name: nodejs
+  options:
+    packagemanager: pnpm
+description: |
+  Cloudflare custom domain / route bindings. Deploy this stack AFTER
+  `wrangler deploy` has uploaded the Worker scripts referenced below —
+  Cloudflare rejects a custom-domain binding for a non-existent service.
+main: index.ts

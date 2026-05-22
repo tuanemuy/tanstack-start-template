@@ -1,0 +1,22 @@
+{
+  "name": "tanstack-start-template-infra-cloudflare",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "preview:resources": "pulumi -C resources preview",
+    "up:resources": "pulumi -C resources up",
+    "preview:routes": "pulumi -C routes preview",
+    "up:routes": "pulumi -C routes up",
+    "render": "tsx ../../../scripts/render-wrangler.ts"
+  },
+  "dependencies": {
+    "@pulumi/cloudflare": "^5.49.0",
+    "@pulumi/pulumi": "^3.140.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.7.0",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3"
+  }
+}

@@ -1,0 +1,6 @@
+config:
+  tanstack-start-template-cf-resources:accountId: REPLACE_WITH_CF_ACCOUNT_ID
+  tanstack-start-template-cf-resources:zoneName: example.com
+  tanstack-start-template-cf-resources:appHostname: app.example.com
+  tanstack-start-template-cf-resources:appUrl: https://app.example.com
+  tanstack-start-template-cf-resources:resourcePrefix: tanstack-start-template-production

@@ -1,0 +1,14 @@
+name: tanstack-start-template-cf-resources
+runtime:
+  name: nodejs
+  options:
+    packagemanager: pnpm
+description: |
+  Cloudflare persistent resources (Zone, DNS, D1, Queues) for the
+  tanstack-start-template runtime. Deploy this stack BEFORE running
+  `wrangler deploy` — its outputs feed `scripts/render-wrangler.ts`.
+main: index.ts
+config:
+  pulumi:tags:
+    value:
+      pulumi:template: typescript
