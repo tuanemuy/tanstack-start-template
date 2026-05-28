@@ -415,6 +415,11 @@ function PostPage() {
 
 - loader は server function bridge を呼ぶだけ。`renderServerComponent(<RSC />)` と
   server-only import は bridge の handler 側に閉じ込める。
+- **共有 shell（Header / Sidebar / Dialog mount など）は親ルートの `component` に置く。
+  leaf の `renderServerComponent(...)` の引数に shell を含めない。** 含めると遷移ごとに
+  shell が RSC ツリーごと差し替わって再マウントされ、サイドバー開閉などクライアント状態が
+  飛んでちらつく。RSC payload には leaf 固有のコンテンツだけを渡す。参考実装は
+  `app/components/todo/TodoShell/` と `app/routes/todo/{route,about,index}.tsx`。
 - ナビゲーション後も `staleTime` が効くため、同じ URL に戻ったときにキャッシュを再利用できる。
 - 強制再取得したいときはクライアント側で `useRouter().invalidate()`。
 - 入力バリデーションは `.inputValidator(...)`。**旧 API の `.validator(...)` は使わない。**

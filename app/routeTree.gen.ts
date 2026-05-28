@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as TodoRouteRouteImport } from './routes/todo/route'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as TodoIndexRouteImport } from './routes/todo/index'
+import { Route as TodoAboutRouteImport } from './routes/todo/about'
 
 const TodoRouteRoute = TodoRouteRouteImport.update({
   id: '/todo',
@@ -28,28 +29,36 @@ const TodoIndexRoute = TodoIndexRouteImport.update({
   path: '/',
   getParentRoute: () => TodoRouteRoute,
 } as any)
+const TodoAboutRoute = TodoAboutRouteImport.update({
+  id: '/about',
+  path: '/about',
+  getParentRoute: () => TodoRouteRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/todo': typeof TodoRouteRouteWithChildren
+  '/todo/about': typeof TodoAboutRoute
   '/todo/': typeof TodoIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/todo/about': typeof TodoAboutRoute
   '/todo': typeof TodoIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/todo': typeof TodoRouteRouteWithChildren
+  '/todo/about': typeof TodoAboutRoute
   '/todo/': typeof TodoIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/todo' | '/todo/'
+  fullPaths: '/' | '/todo' | '/todo/about' | '/todo/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/todo'
-  id: '__root__' | '/' | '/todo' | '/todo/'
+  to: '/' | '/todo/about' | '/todo'
+  id: '__root__' | '/' | '/todo' | '/todo/about' | '/todo/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -73,6 +82,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/todo/about': {
+      id: '/todo/about'
+      path: '/about'
+      fullPath: '/todo/about'
+      preLoaderRoute: typeof TodoAboutRouteImport
+      parentRoute: typeof TodoRouteRoute
+    }
     '/todo/': {
       id: '/todo/'
       path: '/'
@@ -84,10 +100,12 @@ declare module '@tanstack/react-router' {
 }
 
 interface TodoRouteRouteChildren {
+  TodoAboutRoute: typeof TodoAboutRoute
   TodoIndexRoute: typeof TodoIndexRoute
 }
 
 const TodoRouteRouteChildren: TodoRouteRouteChildren = {
+  TodoAboutRoute: TodoAboutRoute,
   TodoIndexRoute: TodoIndexRoute,
 }
 
