@@ -1,18 +1,6 @@
-import { createFileRoute, Link, Outlet } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
+import { TodoShell } from "@/components/todo/TodoShell";
 
 export const Route = createFileRoute("/todo")({
-  component: TodoLayout,
+  component: TodoShell,
 });
-
-function TodoLayout() {
-  return (
-    <div>
-      <header>
-        <nav>
-          <Link to="/">← Home</Link>
-        </nav>
-      </header>
-      <Outlet />
-    </div>
-  );
-}

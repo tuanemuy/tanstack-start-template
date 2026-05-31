@@ -34,24 +34,28 @@ function isStage(value: string): value is Stage {
 
 const stageArg = process.argv[2];
 if (stageArg === undefined || !isStage(stageArg)) {
-  console.error(
-    `usage: render-wrangler.ts <${SUPPORTED_STAGES.join("|")}>`,
-  );
+  console.error(`usage: render-wrangler.ts <${SUPPORTED_STAGES.join("|")}>`);
   process.exit(1);
 }
 const stage: Stage = stageArg;
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const resourcesDir = resolve(
-  repoRoot,
-  "infra/cloudflare/pulumi/resources",
-);
+const resourcesDir = resolve(repoRoot, "infra/cloudflare/pulumi/resources");
 const templatePath = resolve(repoRoot, `wrangler.${stage}.toml.tpl`);
 const outPath = resolve(repoRoot, `wrangler.${stage}.toml`);
 
 const raw = execFileSync(
   "pulumi",
-  ["-C", resourcesDir, "-s", stage, "stack", "output", "--json", "--show-secrets"],
+  [
+    "-C",
+    resourcesDir,
+    "-s",
+    stage,
+    "stack",
+    "output",
+    "--json",
+    "--show-secrets",
+  ],
   { encoding: "utf8" },
 );
 const outputs = JSON.parse(raw) as Record<string, string>;
