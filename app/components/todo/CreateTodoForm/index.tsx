@@ -3,6 +3,7 @@
 import { useRouter } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useActionState, useId, useState } from "react";
+import type { TodoView } from "@/core/application/todo/view";
 import { displayError } from "@/core/presentation/errorDisplay";
 import {
   extractSerializedError,
@@ -15,7 +16,13 @@ type FormState = { error: SerializedError | null };
 
 const initialState: FormState = { error: null };
 
-export function CreateTodoForm() {
+type Props = {
+  // Dispatched into the parent's optimistic list so the new row shows before
+  // the server confirms; reverts automatically if the action throws.
+  onOptimisticAdd: (todo: TodoView) => void;
+};
+
+export function CreateTodoForm({ onOptimisticAdd }: Props) {
   const router = useRouter();
   const createTodo = useServerFn(createTodoFn);
   const [title, setTitle] = useState("");
@@ -27,6 +34,17 @@ export function CreateTodoForm() {
     async (_prev, formData) => {
       const value = String(formData.get("title") ?? "");
       try {
+        // Placeholder row shown until `router.invalidate()` replaces it with
+        // the server-assigned record; the temp id only has to be unique within
+        // the optimistic list, never persisted.
+        const now = new Date().toISOString();
+        onOptimisticAdd({
+          id: `optimistic-${crypto.randomUUID()}`,
+          title: value.trim(),
+          status: "active",
+          createdAt: now,
+          updatedAt: now,
+        });
         await createTodo({ data: { title: value } });
         setTitle("");
         await router.invalidate();

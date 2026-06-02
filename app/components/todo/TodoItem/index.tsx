@@ -10,10 +10,15 @@ import {
   type SerializedError,
 } from "@/core/presentation/errorResponse";
 import { TODO_TITLE_MAX_LENGTH } from "../schema";
-import { changeTodoStatusFn, deleteTodoFn, renameTodoFn } from "./action";
+import { changeTodoStatusFn, renameTodoFn } from "./action";
 
 type Props = {
   todo: TodoView;
+  // Delete is a list-membership change, so the owner (TodoBoard) runs the
+  // server function and owns the optimistic removal + its error display. The
+  // leaf only signals intent — it can't keep an error visible because the
+  // optimistic removal unmounts it before the request settles.
+  onDelete: () => void;
 };
 
 function todoErrorMessage(error: SerializedError): string {
@@ -21,10 +26,9 @@ function todoErrorMessage(error: SerializedError): string {
   return displayError(error);
 }
 
-export function TodoItem({ todo }: Props) {
+export function TodoItem({ todo, onDelete }: Props) {
   const router = useRouter();
   const changeStatus = useServerFn(changeTodoStatusFn);
-  const remove = useServerFn(deleteTodoFn);
   const rename = useServerFn(renameTodoFn);
 
   const [isPending, startTransition] = useTransition();
@@ -32,6 +36,10 @@ export function TodoItem({ todo }: Props) {
   const [optimisticCompleted, setOptimisticCompleted] = useOptimistic(
     todo.status === "completed",
     (_current, next: boolean) => next,
+  );
+  const [optimisticTitle, setOptimisticTitle] = useOptimistic(
+    todo.title,
+    (_current, next: string) => next,
   );
 
   const [isEditing, setIsEditing] = useState(false);
@@ -48,18 +56,6 @@ export function TodoItem({ todo }: Props) {
         await changeStatus({
           data: { id: todo.id, status: checked ? "completed" : "active" },
         });
-        await router.invalidate();
-        setError(null);
-      } catch (e) {
-        setError(extractSerializedError(e));
-      }
-    });
-  };
-
-  const onDelete = () => {
-    startTransition(async () => {
-      try {
-        await remove({ data: { id: todo.id } });
         await router.invalidate();
         setError(null);
       } catch (e) {
@@ -85,12 +81,15 @@ export function TodoItem({ todo }: Props) {
       setIsEditing(false);
       return;
     }
+    // Close the editor and show the new title immediately; the optimistic
+    // title reverts (and the error surfaces) if the rename throws.
+    setIsEditing(false);
     startTransition(async () => {
+      setOptimisticTitle(trimmed);
       try {
         await rename({ data: { id: todo.id, title: trimmed } });
         await router.invalidate();
         setError(null);
-        setIsEditing(false);
       } catch (e) {
         setError(extractSerializedError(e));
       }
@@ -117,12 +116,12 @@ export function TodoItem({ todo }: Props) {
       />
       <label htmlFor={checkboxId}>
         {isEditing ? (
-          <span className="sr-only">{todo.title}</span>
+          <span className="sr-only">{optimisticTitle}</span>
         ) : (
           <span
             className={optimisticCompleted ? "line-through" : "no-underline"}
           >
-            {todo.title}
+            {optimisticTitle}
           </span>
         )}
       </label>
