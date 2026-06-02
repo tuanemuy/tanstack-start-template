@@ -1,11 +1,10 @@
 # Backend Implementation Guide
 
-Todo ドメインの実装が canonical example。新しいドメインを足すときも同じ構造をなぞれば良い。
+The Todo domain implementation is the canonical example. When adding a new domain, just follow the same structure.
 
-> 原則 / 抽象概念は `CLAUDE.md` を参照。本ドキュメントは「具体的にどう書くか」の
-> 写経用パターン集。
+> For principles and abstract concepts, see `CLAUDE.md`. This document is a collection of copy-and-adapt patterns for "how to actually write the code".
 
-## ファイル配置
+## File Layout
 
 ```
 app/core/
@@ -33,14 +32,14 @@ app/core/
 │   ├── errors/index.ts            NotFound / Conflict / Validation / SystemError + helpers
 │   ├── events/
 │   │   └── buildDecoder.ts
-│   ├── execution/unitOfWork.ts    UnitOfWorkContext がリポジトリスロットを直接 enumerate
+│   ├── execution/unitOfWork.ts    UnitOfWorkContext enumerates repository slots directly
 │   ├── workers/
 │   │   ├── eventRelayWorker.ts
 │   │   └── outboxPrune.ts
 │   ├── types.ts                   ServiceArgs<T>
 │   └── ${domain}/
 │       ├── view.ts
-│       ├── eventDecoders.ts       outbox row → DomainEvent 再水和（SystemError に依存するため application 側）
+│       ├── eventDecoders.ts       outbox row → DomainEvent rehydration (lives in application because it depends on SystemError)
 │       ├── ${usecase}.ts
 │       └── __tests__/
 ├── presentation/
@@ -51,17 +50,17 @@ app/core/
 └── adapters/
     └── d1/
         ├── client.ts
-        ├── schema.ts              ドメインテーブル + `_occ_guard` (deferred-batch UoW の OCC abort用)
-        ├── unitOfWork.ts          PendingBatch を組み立てて db.batch() で flush する D1UnitOfWorkProvider
-        ├── pendingBatch.ts        Drizzle BatchItem buffer + OCC guard 自動付与
+        ├── schema.ts              domain tables + `_occ_guard` (for OCC abort in the deferred-batch UoW)
+        ├── unitOfWork.ts          D1UnitOfWorkProvider that assembles a PendingBatch and flushes via db.batch()
+        ├── pendingBatch.ts        Drizzle BatchItem buffer + automatic OCC guard injection
         ├── repositories/
         │   ├── helpers.ts         mapDbError + isOccGuardViolation
         │   ├── ${domain}Repository.ts
         │   └── outboxRepository.ts
-        └── migrations/            wrangler が読む SQL マイグレーション
+        └── migrations/            SQL migrations read by wrangler
 
 app/lib/
-└── error.ts                       CodedError 基底 + SerializedErrorBase / FieldErrors / SerializableError interface（構造のみ。union は presentation で組立）
+└── error.ts                       CodedError base + SerializedErrorBase / FieldErrors / SerializableError interface (structure only; the union is assembled in presentation)
 ```
 
 ## Domain Layer
@@ -82,12 +81,13 @@ export const FooId = {
 };
 ```
 
-ポイント:
-- `unique symbol` で nominal typing
-- factory が唯一の作成経路
-- 不正値は `BusinessRuleError` を throw（Result 型は使わない）
-- **`generate()` は置かない**。id 生成は application 層の `IdGenerator` port 経由
-- domain は id を「不透明な非空文字列」として扱う。format（UUIDv7 / ULID / KSUID 等）は `IdGenerator` 実装の責務で、storage adapter が rehydration 時に `IdGenerator.validate(id)` で再検証する。生成と検証を同じ port にまとめることで、generator を差し替えたときに validator もペアで自動的に切り替わり、VO を触らずに format を入れ替えられる
+Key points:
+
+- `unique symbol` for nominal typing
+- the factory is the only creation path
+- invalid values throw `BusinessRuleError` (the Result type is not used)
+- **do not add `generate()`**. id generation goes through the `IdGenerator` port in the application layer
+- domain treats the id as an "opaque non-empty string". The format (UUIDv7 / ULID / KSUID, etc.) is the responsibility of the `IdGenerator` implementation, and the storage adapter re-validates it with `IdGenerator.validate(id)` at rehydration time. Putting generation and validation behind the same port means that when you swap the generator, the validator switches over in pair automatically, letting you swap the format without touching the VO
 
 ### Entity
 
@@ -116,13 +116,13 @@ export const Foo = {
 };
 ```
 
-ポイント:
-- 状態を discriminated union で表現 → 不正な遷移は型エラー
-- `Todo.create` のように **VO 生成は entity factory に集約**（application 層は `id` を raw string で渡す）
-- `now: Date` と必要な `id` を引数で受ける（domain は `new Date()` も `uuidv7()` も呼ばない）
-- 状態遷移は `WithEventDrafts<TEntity, TEvent>` を返して **identity-less な draft** とセットで扱う。`EventId` の付与は application 層責務（`attachEventIds`）
-- 削除のように後続エンティティが無い操作は domain にメソッドを置かず、usecase が
-  `FooEvents.deleted(...)` を直接 emit する
+Key points:
+
+- represent state with a discriminated union → invalid transitions become type errors
+- as with `Todo.create`, **VO construction is concentrated in the entity factory** (the application layer passes `id` as a raw string)
+- take `now: Date` and the required `id` as arguments (domain never calls `new Date()` or `uuidv7()`)
+- state transitions return `WithEventDrafts<TEntity, TEvent>`, handling the entity together with its **identity-less drafts**. Assigning the `EventId` is the application layer's responsibility (`attachEventIds`)
+- for operations with no successor entity, such as deletion, do not put a method on the domain; the usecase emits `FooEvents.deleted(...)` directly
 
 ### Domain Event
 
@@ -151,16 +151,15 @@ export const FooEvents = {
 };
 ```
 
-ポイント:
-- factory は **identity-less な draft** を返す。`EventId` の付与は **UoW 内部** で `idGenerator` 経由でミントされる（usecase は `collectEvents(drafts)` を呼ぶだけ）
-- これによりドメイン関数の引数から `EventId` が消え、ID 生成責務は UoW adapter 一箇所に集約される
-- domain には event 型と factory のみを置き、decoder は application 層へ（依存方向を inward に保つ）
+Key points:
 
-#### Event Decoder（application 層）
+- the factory returns **identity-less drafts**. The `EventId` is minted **inside the UoW** via `idGenerator` (the usecase just calls `collectEvents(drafts)`)
+- this removes `EventId` from domain-function arguments and concentrates the id-generation responsibility in the single UoW adapter
+- domain holds only event types and factories; the decoder goes to the application layer (keeping the dependency direction inward)
 
-decoder は `buildEventDecoder(type, schema, rehydrate)` ヘルパーで宣言的に書く。
-schema 定義 + brand 再構築だけ書けば、shape assert / `SystemError` 変換 / meta 転送は
-ヘルパーが吸収する。
+#### Event Decoder (application layer)
+
+Write the decoder declaratively with the `buildEventDecoder(type, schema, rehydrate)` helper. You only write the schema definition + brand reconstruction; the helper absorbs the shape assert / `SystemError` conversion / meta forwarding.
 
 ```ts
 // app/core/application/foo/eventDecoders.ts
@@ -189,22 +188,18 @@ export const fooEventDecoders: FooEventDecoders = {
 };
 ```
 
-ポイント:
-- decoder は **application 層** に置く。decode 失敗を `SystemError(DataIntegrityError)` に
-  マップする以上、application のエラー契約に依存するため inward 方向の domain には置けない
-- ドメイン追加時の差分は「schema 定義 + brand 再構築」だけ。shape assert / error 変換
-  ロジックは `buildEventDecoder` に閉じ込める
-- payload schema は `z.object(...).strict()` で extra field を拒否
-- map 全体を `[K in FooEvent["type"]]: EventDecoder<Extract<...>>` で型付けして
-  網羅性を強制（map に登録漏れがあると型エラー）
-- ブランド型は `rehydrate` 関数内で `FooId.create(p.fooId)` を経由して再構築
-- decode 失敗時は `SystemError(DataIntegrityError)` を throw（relay worker が
-  per-row catch してログに流す）
+Key points:
+
+- put the decoder in the **application layer**. Since it maps decode failures to `SystemError(DataIntegrityError)`, it depends on the application's error contract and therefore cannot live in the inward-facing domain
+- when adding a domain, the only diff is "schema definition + brand reconstruction". The shape assert / error conversion logic is confined to `buildEventDecoder`
+- the payload schema rejects extra fields with `z.object(...).strict()`
+- the whole map is typed as `[K in FooEvent["type"]]: EventDecoder<Extract<...>>` to enforce exhaustiveness (a missing registration in the map is a type error)
+- branded types are reconstructed inside the `rehydrate` function via `FooId.create(p.fooId)`
+- on decode failure, throw `SystemError(DataIntegrityError)` (the relay worker catches it per-row and routes it to the log)
 
 ### Repository Port
 
-OCC を含む基本契約は `TransactionalRepository<TEntity, TId>` （`app/core/domain/common/transactionalRepository.ts`）
-に集約済み。aggregate ごとの port はこれを継承し、読み取り専用クエリだけを足す:
+The base contract including OCC is already consolidated in `TransactionalRepository<TEntity, TId>` (`app/core/domain/common/transactionalRepository.ts`). Each aggregate's port extends it and only adds read-only queries:
 
 ```ts
 export interface FooRepository extends TransactionalRepository<Foo> {
@@ -212,7 +207,7 @@ export interface FooRepository extends TransactionalRepository<Foo> {
 }
 ```
 
-`TransactionalRepository<TEntity>` が提供するもの:
+What `TransactionalRepository<TEntity>` provides:
 
 ```ts
 interface TransactionalRepository<TEntity, TId = string> {
@@ -226,31 +221,26 @@ type Versioned<T> = { readonly entity: T; readonly expectedVersion: ExpectedVers
 type ExpectedVersion<T> = number & { readonly [brand]: T };  // phantom T
 ```
 
-lookup key は plain `string`。ブランドは adapter の `toFoo`（再水和）と event decoder
-だけが付ける。application 層は VO を一度も構築しない。
+The lookup key is a plain `string`. Only the adapter's `toFoo` (rehydration) and the event decoder attach the brand. The application layer never constructs a VO.
 
-OCC は `ExpectedVersion<Foo>` トークンで型強制する:
+OCC is enforced at the type level with the `ExpectedVersion<Foo>` token:
 
-- `findById` だけが正規のトークン発行口（adapter 内部の `as` キャスト 1 か所）
-- `save` / `delete` はトークンを必須引数で受ける → "読まずに書く" は型エラー
-- `insert` は初回永続化専用。版が存在しないので OCC トークンは要らない
-- `findPage` のような読み取り専用クエリは concrete port 側で別途定義
+- only `findById` is the legitimate token-issuing point (a single `as` cast inside the adapter)
+- `save` / `delete` take the token as a required argument → "writing without reading" is a type error
+- `insert` is exclusively for initial persistence. Since no version exists yet, no OCC token is needed
+- read-only queries like `findPage` are defined separately on the concrete port
 
-phantom `T` のおかげで `ExpectedVersion<Foo>` と `ExpectedVersion<Bar>` は型不一致 →
-**aggregate 間でトークンを取り違えても型エラー**。「ドメイン関数が version を bump →
-adapter で `entity.version - 1` を再計算」という implicit な接続を切り、読みの瞬間に
-観測した版が write までそのまま運ばれる契約になる。
+Thanks to the phantom `T`, `ExpectedVersion<Foo>` and `ExpectedVersion<Bar>` are type-incompatible → **mixing up tokens between aggregates is a type error**. This severs the implicit connection of "the domain function bumps the version → the adapter recomputes `entity.version - 1`", giving a contract where the version observed at read time is carried straight through to the write.
 
-新しいドメインを足すときは:
+When adding a new domain:
 
-1. `UnitOfWorkContext` にスロットを 1 行追加（`app/core/application/execution/unitOfWork.ts`）
-2. D1 adapter (`app/core/adapters/d1/unitOfWork.ts`) で `PendingBatch` を共有しつつ
-   リポジトリインスタンスを生成し context に詰める
+1. add one slot line to `UnitOfWorkContext` (`app/core/application/execution/unitOfWork.ts`)
+2. in the D1 adapter (`app/core/adapters/d1/unitOfWork.ts`), create the repository instance sharing the `PendingBatch` and stuff it into the context
 
 ```ts
 export interface UnitOfWorkContext {
   todoRepository: TodoRepository;
-  fooRepository: FooRepository;          // ← 追加
+  fooRepository: FooRepository;          // ← added
   collectEvents(events: readonly DomainEvent[]): void;
 }
 ```
@@ -284,7 +274,7 @@ export async function createFoo({
 ```
 
 ```ts
-// 削除のように「後続エンティティが無い」操作は usecase で event を直接 emit する
+// for operations with "no successor entity", such as deletion, the usecase emits the event directly
 export async function deleteFoo({
   container,
   input,
@@ -302,21 +292,19 @@ export async function deleteFoo({
 }
 ```
 
-ポイント:
-- `now` / `id` を usecase 冒頭で resolve。`EventId` は **UoW が `collectEvents` 内部で** `idGenerator` 経由でミントするので、usecase は気にしなくていい
-- VO 生成点は entity factory / adapter 再水和 / event decoder の 3 箇所だけ
-- ドメイン関数は identity-less な draft を返し、`collectEvents(drafts)` でそのまま流すだけ。型引数の明示も不要
-- `collectEvents` で Outbox パターンに乗せる（同一 tx で flush）
-- 戻り値は DTO（`view.ts` 内の helper で射影）
+Key points:
 
-OCC retry 用の汎用ユーティリティはあえて持たない。`ConflictError` は caller に
-そのまま伝播し、必要な usecase だけが個別に retry を組む。
+- resolve `now` / `id` at the top of the usecase. The `EventId` is minted **by the UoW inside `collectEvents`** via `idGenerator`, so the usecase doesn't have to care
+- there are only 3 VO-construction sites: the entity factory, adapter rehydration, and the event decoder
+- domain functions return identity-less drafts, and you just pass them straight through with `collectEvents(drafts)`. No explicit type arguments needed
+- ride the Outbox pattern with `collectEvents` (flushed in the same tx)
+- the return value is a DTO (projected by a helper in `view.ts`)
 
-### Container 配線
+There is intentionally no generic utility for OCC retry. `ConflictError` propagates straight to the caller, and only the usecases that need it build their own retry individually.
 
-Container は **scope ごとに独立した型** として 2 系統用意する。`SharedDeps`
-（`clock` / `idGenerator` / `logger` / `shutdown`）を intersection で混ぜ込み、
-それ以外のフィールドはその scope でしか必要にならないものだけを持つ。
+### Container Wiring
+
+Provide the container as **two independent types, one per scope**. Mix in `SharedDeps` (`clock` / `idGenerator` / `logger` / `shutdown`) by intersection, and have each scope hold only the fields that are needed in that scope alone.
 
 ```ts
 export type SharedDeps = Readonly<{
@@ -326,14 +314,14 @@ export type SharedDeps = Readonly<{
   shutdown: () => Promise<void>;
 }>;
 
-// 集約変更を行う usecase / SSR head 用。`outboxRepository` は持たない
-// (`collectEvents` 経由で UoW 内部から書く) し、`idempotencyStore` も持たない
-// (queue consumer 専用)。
+// For usecases that mutate aggregates / SSR head. It does not hold `outboxRepository`
+// (writes happen from inside the UoW via `collectEvents`), nor `idempotencyStore`
+// (queue-consumer only).
 export type RequestContainer = SharedDeps &
   Readonly<{ config: AppConfig; unitOfWorkProvider: UnitOfWorkProvider }>;
 
-// 直接 outbox を読み書きする relay / pruner / queue consumer / DLQ 用。
-// `config` と `unitOfWorkProvider` は持たない。
+// For relay / pruner / queue consumer / DLQ that read and write the outbox directly.
+// It does not hold `config` or `unitOfWorkProvider`.
 export type WorkerContainer = SharedDeps &
   Readonly<{
     outboxRepository: OutboxRepository;
@@ -351,28 +339,17 @@ export function createWorkerContainer(env: ServerEnv): WorkerContainer {
 }
 ```
 
-`UnitOfWorkProvider` には `idGenerator` を渡す。これは `collectEvents` が
-draft を outbox に flush する際に `EventId` をミントするのに使う。Container
-本体の `idGenerator` と同じ instance を渡せば、テストで Fake に差し替えるとき
-にも 1 箇所で済む。
+Pass `idGenerator` to the `UnitOfWorkProvider`. It uses this to mint the `EventId` when `collectEvents` flushes drafts to the outbox. If you pass the same instance as the container's own `idGenerator`, swapping in a Fake for tests is a single-point change.
 
-request 側 env を読むパスは `readRequestServerConfig()` に集約する。worker は
-`env: ServerEnv` をそのまま `createWorkerContainer` に渡せばよく、`AppConfig`
-や `relay` Service Binding を経由しない（worker は HTML を返さず、relay を
-キックする側でもないため）。
+Consolidate the path that reads request-side env into `readRequestServerConfig()`. A worker just passes `env: ServerEnv` straight to `createWorkerContainer`, without going through `AppConfig` or the `relay` Service Binding (because a worker neither returns HTML nor kicks the relay).
 
-テスト用の `TestContainer = RequestContainer & WorkerContainer & { db }` は
-両 scope のフィールドを 1 つの fat shape にしたもので、test 内で usecase 起動と
-worker pipeline の検証を同居させるための便宜上の型。production code はこの
-intersection を直接持たず、必ず `RequestContainer` / `WorkerContainer` の
-どちらかを受け取る。
+The test-only `TestContainer = RequestContainer & WorkerContainer & { db }` flattens the fields of both scopes into a single fat shape — a convenience type for co-locating usecase invocation and worker-pipeline verification within a test. Production code never holds this intersection directly; it always receives either `RequestContainer` or `WorkerContainer`.
 
-`SQLITE_BUSY` 等の transient lock contention は `DrizzleSqliteUnitOfWorkProvider` が
-内部で retry する（driver-level concern なので application 層は触らない）。
+Transient lock contention such as `SQLITE_BUSY` is retried internally by `DrizzleSqliteUnitOfWorkProvider` (a driver-level concern, so the application layer doesn't touch it).
 
 ## Adapter Layer
 
-### Repository（OCC 実装）
+### Repository (OCC implementation)
 
 ```ts
 async save(foo: Foo): Promise<void> {
@@ -394,28 +371,25 @@ async save(foo: Foo): Promise<void> {
 }
 ```
 
-ポイント:
-- 0 件 update → `ConflictError("OPTIMISTIC_LOCK_FAILURE")`
-- DB 例外は `mapDbError` で `SystemError(DatabaseError)` に変換
-- upsert (`ON CONFLICT DO UPDATE`) は使わない（lost update を隠すため）
+Key points:
+
+- a 0-row update → `ConflictError("OPTIMISTIC_LOCK_FAILURE")`
+- DB exceptions are converted to `SystemError(DatabaseError)` by `mapDbError`
+- do not use upsert (`ON CONFLICT DO UPDATE`) (because it would hide lost updates)
 
 ### Unit of Work
 
-`app/core/adapters/d1/unitOfWork.ts` が `UnitOfWorkProvider.run(fn)` を実装する:
+`app/core/adapters/d1/unitOfWork.ts` implements `UnitOfWorkProvider.run(fn)`:
 
-1. `PendingBatch` (Drizzle BatchItem buffer) を新規生成
-2. repository / outbox インスタンスを共有 PendingBatch とともに構築し、`UnitOfWorkContext` に詰める
-3. `collectEvents` のバッファを集めるコンテキストを fn に渡す
-4. fn 解決後、collected events も同じ PendingBatch に積む
-5. `db.batch(pending.build())` でアトミックに flush
+1. create a fresh `PendingBatch` (Drizzle BatchItem buffer)
+2. build the repository / outbox instances together with the shared PendingBatch and stuff them into `UnitOfWorkContext`
+3. pass `fn` a context that gathers the `collectEvents` buffer
+4. after `fn` resolves, stack the collected events onto the same PendingBatch
+5. flush atomically with `db.batch(pending.build())`
 
-D1 にはインタラクティブ tx が無いため、書き込みは UoW 内で都度実行されず PendingBatch
-に蓄積される。読み取りは binding 直叩きで即時。OCC mismatch は `_occ_guard` テーブル
-の CHECK 制約で batch 全体を abort させ、`ConflictError("OPTIMISTIC_LOCK_FAILURE")`
-として presentation 層に届ける。
+Because D1 has no interactive tx, writes are not executed one-by-one inside the UoW but accumulated in the PendingBatch. Reads are immediate, hitting the binding directly. An OCC mismatch aborts the entire batch via the CHECK constraint on the `_occ_guard` table and reaches the presentation layer as `ConflictError("OPTIMISTIC_LOCK_FAILURE")`.
 
-driver-level の transient エラーは Cloudflare の binding 側がハンドルするため
-application-level retry は無い。
+There is no application-level retry because driver-level transient errors are handled on the Cloudflare binding side.
 
 ## Outbox Worker
 
@@ -423,112 +397,60 @@ application-level retry は無い。
 import { processOutboxEvents } from "@/core/application/workers/eventRelayWorker";
 
 await processOutboxEvents(container, async (event) => {
-  // event.type で switch して下流ハンドラへ dispatch
+  // switch on event.type and dispatch to the downstream handler
 }, { batchSize: 100 });
 ```
 
-### Delivery contract（consumer 実装で守るべき落とし穴）
+### Delivery contract (pitfalls the consumer implementation must guard against)
 
-CLAUDE.md key concepts の通り、Outbox は **at-least-once delivery / ordering なし** で
-動く。consumer はその前提で書く。原則の "なぜ" は CLAUDE.md、ここでは「実装で何を
-守るべきか」を展開する。
+As stated in the CLAUDE.md key concepts, the Outbox operates with **at-least-once delivery / no ordering**. Write the consumer on that premise. The "why" of the principle is in CLAUDE.md; here we expand on "what the implementation must guard against".
 
-- **At-least-once（同じ event が 2 回以上届く）** — relay worker は「dispatch 成功 →
-  outbox 行の `processed_at` 更新」の順で動く。dispatch は通ったが update 直前で
-  プロセスが落ちると同じ event が次のラウンドで再 dispatch される。consumer は
-  `event.id` ベースの dedupe（処理済み id テーブル / unique index）か、natural key の
-  upsert で **同じ event を N 回処理しても結果が変わらない** ように書く。「副作用を
-  1 回だけ起こす」前提のコード（外部送信・課金・通知の "送りっぱなし"）はそのまま
-  だと at-most-once が崩れた瞬間に重複する。
-  - テンプレに同梱の `IdempotencyStore` ポート（`processed_events` テーブル + D1
-    `INSERT OR IGNORE` で claim 化）が「処理済み id テーブル」の最小実装。`handleQueue`
-    が `markProcessed(event.id)` を handler 実行前に呼び、`alreadyProcessed: true`
-    なら handler を skip して ack。新しい consumer を書くときも同じパターンを踏襲する。
-  - **Stamp first vs stamp inside handler** — テンプレ既定は stamp first（claim →
-    handler → ack）。handler 側を「再実行しても結果が変わらない」上書き形（projection
-    の UPSERT 等）に書けばこの順序で安全。逆に **副作用と stamp を一緒にロールバック
-    したい**（外部送信・課金・通知の単発系）場合は handler を `UnitOfWorkProvider.run`
-    で包み、その UoW 内で `markProcessed` と side-effect 書き込みを同一 batch にする。
-- **Ordering なし（順序保証ゼロ）** — 各行は `next_attempt_at`（backoff + jitter で
-  ばらける）と `attempts` の状態で個別に再スケジュールされるため、`foo.created` の
-  前に `foo.updated` / `foo.deleted` が届く並びは普通に起こる。consumer 側で
-  「`deleted` を見たら `created` も見ているはず」のような状態遷移を仮定したロジックは
-  書かない。順序が必要なら **aggregate の現在状態を read してから判断する** か、
-  event payload に必要な状態を全部載せて self-contained にする。
-- **Quarantine（poison row 隔離）** — `attempts` が `maxAttempts`（デフォルト 2）に
-  達した行は `failed_at` をセットしてクワランティン化される。partial index で
-  `claimPending` から外れるので poison row が hot path をブロックしない。再キックは
-  `failed_at` / `next_attempt_at` を NULL に戻して `attempts` を 0 リセット。
-  decode 失敗（payload schema 不一致）も同じ retry path に乗る — schema 修正後に
-  再キックして再 dispatch される。relay の `maxAttempts` × consumer の
-  `1 + max_retries`（`wrangler.consumer.toml`）= ユーザーから見える総試行回数。
-  小さい値同士の積で済ませるのが鉄則で、片方を 5 にすると相手が 5 でも 25 試行に膨らむ。
-- **Multi-worker 安全性（claim/lease）** — 行は claim+select の 1 トランザクションで
-  ロックされ、リース期間内は他 worker から不可視になる。worker クラッシュ時はリース
-  満了で再 claim 可能。複数 worker を起動しても同一行が二重 dispatch されない。
+- **At-least-once (the same event arrives two or more times)** — the relay worker operates in the order "dispatch succeeds → update the outbox row's `processed_at`". If dispatch goes through but the process dies just before the update, the same event is re-dispatched in the next round. Write the consumer so that **processing the same event N times produces the same result**, either via `event.id`-based dedupe (a processed-id table / unique index) or a natural-key upsert. Code that assumes "trigger a side effect exactly once" (the "fire-and-forget" of external sends, billing, notifications) will duplicate the moment at-most-once breaks.
+  - The `IdempotencyStore` port bundled with the template (the `processed_events` table + D1 `INSERT OR IGNORE` to claim) is the minimal implementation of a "processed-id table". `handleQueue` calls `markProcessed(event.id)` before running the handler, and if `alreadyProcessed: true` it skips the handler and acks. Follow the same pattern when writing new consumers.
+  - **Stamp first vs stamp inside handler** — the template default is stamp first (claim → handler → ack). This order is safe if you write the handler as an idempotent overwrite (a projection UPSERT, etc.) whose result is unchanged on re-run. Conversely, when you want to **roll back the side effect and the stamp together** (the one-shot kind of external send, billing, notification), wrap the handler in `UnitOfWorkProvider.run` and put `markProcessed` and the side-effect write in the same batch within that UoW.
+- **No ordering (zero ordering guarantee)** — each row is rescheduled individually based on its `next_attempt_at` (spread out by backoff + jitter) and `attempts`, so an ordering where `foo.updated` / `foo.deleted` arrives before `foo.created` happens routinely. Don't write consumer-side logic that assumes a state transition like "if I see `deleted`, I must have seen `created`". If you need order, either **read the aggregate's current state before deciding**, or make the event self-contained by putting all the required state into the event payload.
+- **Quarantine (isolating poison rows)** — a row whose `attempts` reaches `maxAttempts` (default 2) gets `failed_at` set and is quarantined. A partial index drops it from `claimPending`, so a poison row doesn't block the hot path. To re-kick, reset `failed_at` / `next_attempt_at` to NULL and reset `attempts` to 0. Decode failures (payload schema mismatch) ride the same retry path — after fixing the schema, re-kick and it is re-dispatched. The relay's `maxAttempts` × the consumer's `1 + max_retries` (`wrangler.consumer.toml`) = the total number of attempts visible to the user. The rule of thumb is to keep this as a product of small values; setting one side to 5 inflates to 25 attempts even if the other is only 5.
+- **Multi-worker safety (claim/lease)** — a row is locked within a single claim+select transaction and becomes invisible to other workers for the lease period. On worker crash, the row is re-claimable once the lease expires. Even with multiple workers running, the same row is not dispatched twice.
 
-### ポイント
+### Key points
 
-- decode / dispatch 失敗は logger に出して `attempts++` + exponential backoff で
-  `next_attempt_at` を再スケジュール
+- log decode / dispatch failures to the logger and reschedule `next_attempt_at` with `attempts++` + exponential backoff
 
-新しいドメインを足したら、`app/core/application/${domain}/eventDecoders.ts` から
-`<domain>EventDecoders` を export し、`eventRelayWorker.ts` の
-`AllDomainEvents` 型ユニオンと `defaultEventDecoderRegistry` の双方に追加する：
+After adding a new domain, export `<domain>EventDecoders` from `app/core/application/${domain}/eventDecoders.ts` and add it to both the `AllDomainEvents` type union and `defaultEventDecoderRegistry` in `eventRelayWorker.ts`:
 
 ```ts
-type AllDomainEvents = TodoEvent | FooEvent;        // ← union を拡張
+type AllDomainEvents = TodoEvent | FooEvent;        // ← extend the union
 
 export const defaultEventDecoderRegistry = {
   ...todoEventDecoders,
-  ...fooEventDecoders,        // ← decoder を追加
+  ...fooEventDecoders,        // ← add the decoder
 } satisfies DefaultEventDecoderRegistry;
 ```
 
-`DefaultEventDecoderRegistry` は `AllDomainEvents` から派生する完全マップ型で、
-`satisfies` がドメインを足し忘れたまま decoder だけ書いた／その逆をコンパイルエラーで
-弾く。`EventDecoderRegistry`（`Partial<DefaultEventDecoderRegistry>`）はテスト等で
-override を渡す際の型で、未知の event type を構文レベルで禁止する。
+`DefaultEventDecoderRegistry` is a complete map type derived from `AllDomainEvents`, and `satisfies` rejects, as a compile error, the case where you wrote only the decoder while forgetting to add the domain — and vice versa. `EventDecoderRegistry` (`Partial<DefaultEventDecoderRegistry>`) is the type for passing overrides in tests and the like, forbidding unknown event types at the syntax level.
 
 ### Outbox Prune
 
 ```ts
 import { pruneOutbox } from "@/core/application/workers/outboxPrune";
 
-await pruneOutbox(container, { retentionMs: 7 * 86_400_000 }); // 7 日保持
+await pruneOutbox(container, { retentionMs: 7 * 86_400_000 }); // retain for 7 days
 ```
 
-`retentionMs` は raw milliseconds。`pruneOutbox` は `clock.now() - retentionMs` を
-cutoff にして `outboxRepository.pruneProcessed(cutoff)` を呼ぶ。pending な行
-（`processed_at IS NULL`）には触らない。relay worker と並行して走らせて安全。
+`retentionMs` is raw milliseconds. `pruneOutbox` uses `clock.now() - retentionMs` as the cutoff and calls `outboxRepository.pruneProcessed(cutoff)`. It does not touch pending rows (`processed_at IS NULL`). It is safe to run concurrently with the relay worker.
 
-## エラー設計
+## Error Design
 
-| レイヤー | エラー型 | 置き場所 |
+| Layer | Error type | Location |
 |---|---|---|
 | Domain | `BusinessRuleError<FooErrorCode>` | `app/core/domain/error.ts` |
 | Application | `NotFoundError`, `ConflictError`, `ValidationError`, `SystemError` | `app/core/application/errors/index.ts` |
 | Presentation | `AppServerError` | `app/core/presentation/errorResponse.ts` |
 
-すべてのエラークラスは `app/lib/error.ts` の抽象基底 `CodedError<TCode extends string>`
-を継承する。基底クラスが `code: TCode` フィールド・デフォルトの `retryable: false` getter・
-抽象メソッド `toSerialized()` を所有する。基底の戻り値型は構造的な
-`SerializedErrorBase & { kind: string }` で、各サブクラスは override で自分の
-`kind`-tagged variant に narrow する。
+Every error class extends the abstract base `CodedError<TCode extends string>` in `app/lib/error.ts`. The base class owns the `code: TCode` field, a default `retryable: false` getter, and the abstract method `toSerialized()`. The base's return type is the structural `SerializedErrorBase & { kind: string }`, and each subclass narrows it via override to its own `kind`-tagged variant.
 
-`code` は plain string。per-class enum はあえて畳んでいる（domain enum と
-presentation で組み立てる `SerializedErrorKind` で必要な分類は揃う）。`SystemErrorCode` は
-runtime の `retryable` 判定に使うので残してある。
+`code` is a plain string. The per-class enums are deliberately collapsed (the domain enum plus the `SerializedErrorKind` assembled in presentation cover the classification we need). `SystemErrorCode` is kept because it is used for the runtime `retryable` decision.
 
-`BusinessRuleError<TCode extends string = never>` のデフォルトは `never`。
-未パラメータ化の `BusinessRuleError` を許すと catch 時に `code` が `string` まで
-広がるので、throw 側でドメインの literal union を渡すことを強制している。
-`isBusinessRuleError(...)` は `BusinessRuleError<string>` に narrow する。
+`BusinessRuleError<TCode extends string = never>` defaults to `never`. Allowing an unparameterized `BusinessRuleError` would widen `code` to `string` at catch time, so we force the throw side to pass the domain's literal union. `isBusinessRuleError(...)` narrows to `BusinessRuleError<string>`.
 
-各エラークラスは自分の `Serialized*Error` variant を同じファイルで宣言し
-（`SerializedBusinessError` は domain、`SerializedNotFoundError` 等は application）、
-`toSerialized()` でその variant を返す。presentation 層の `errorResponse.ts` が
-全 variant を寄せ集めて `SerializedError` discriminated union を組み立てる。
-新しいエラー型を足しても presentation の `serializeError` は触らなくて良い
-（構造的に `toSerialized()` を呼ぶだけ）。`SerializedError` union と
-`SerializedErrorKind` だけは presentation 層に追記する。
+Each error class declares its own `Serialized*Error` variant in the same file (`SerializedBusinessError` in domain, `SerializedNotFoundError` etc. in application) and returns that variant from `toSerialized()`. The presentation layer's `errorResponse.ts` gathers all variants and assembles the `SerializedError` discriminated union. Adding a new error type does not require touching presentation's `serializeError` (it just calls `toSerialized()` structurally). Only the `SerializedError` union and `SerializedErrorKind` need to be appended in the presentation layer.

@@ -1,139 +1,78 @@
 # Testing
 
-テストは **レイヤー × 目的** の 2 軸で分類する。高速に回す unit 層と、実 DB で
-concurrent / OCC 挙動を検証する integration 層を分けることで、日常の開発
-ループを軽く保ちつつ adapter の落とし穴を継続的にカバーする。
+Tests are classified along two axes: **layer × purpose**. By separating a fast unit layer from an integration layer that verifies concurrent / OCC behavior against a real DB, we keep the day-to-day development loop light while continuously covering adapter pitfalls.
 
-## テスト層の分類
+## Test layer classification
 
 ### Unit (`pnpm test:unit`)
 
-- **対象**: domain 層 + application 層のロジック（pure な部分）。
-- **依存**: 在庫している fake は `app/core/application/__tests__/fakes/` 以下の
-  `FakeIdGenerator`（決定論的 UUIDv7 ストリーム）と `FakeLogger`（記録用 Logger）
-  の 2 つだけ。`Clock` はフリースタンディング関数として `now: Date` を usecase に
-  渡せば良いし、リポジトリ系の fake は意図的に置いていない（in-memory fake で
-  transaction / OCC を模倣しても integration の代替にはならないという判断）。
-  application 層のロジックを fake で網羅することは目指さず、振る舞い検証は
-  integration test に寄せる。
-- **狙い**: domain 層（value object / entity / events のデコード）の不変条件、
-  エラーコード分岐、`retry()` のような application-層ヘルパーの挙動確認。
-- **速度**: 数ミリ秒〜十数ミリ秒。Vitest の `--exclude '**/*.integration.test.ts'` で
-  integration をスキップする。
-- **命名**: `**/__tests__/<target>.test.ts`（例: `entity.test.ts`, `events.test.ts`,
-  `retry.test.ts`）。
+- **Targets**: domain-layer + application-layer logic (the pure parts).
+- **Dependencies**: the only fakes kept on hand are the two under `app/core/application/__tests__/fakes/`: `FakeIdGenerator` (a deterministic UUIDv7 stream) and `FakeLogger` (a recording Logger). `Clock` can simply be passed to the usecase as a freestanding `now: Date`, and repository-style fakes are intentionally absent (the judgment being that imitating transaction / OCC with an in-memory fake is no substitute for integration). We don't aim to exhaustively cover application-layer logic with fakes; behavior verification is pushed onto integration tests.
+- **Aim**: invariants of the domain layer (value object / entity / events decoding), error-code branching, and the behavior of application-layer helpers like `retry()`.
+- **Speed**: a few to a dozen-or-so milliseconds. Vitest's `--exclude '**/*.integration.test.ts'` skips integration.
+- **Naming**: `**/__tests__/<target>.test.ts` (e.g. `entity.test.ts`, `events.test.ts`, `retry.test.ts`).
 
 ### Integration (`pnpm test:integration`)
 
-- **対象**: Drizzle SQLite アダプタ実装、adapter × application 連携、
-  concurrent / OCC（optimistic concurrency control）シナリオ、outbox の
-  poll / dispatch 挙動。
-- **依存**: 実 SQLite（in-memory）。`setupTestContainer()` が
-  `:memory:` 上に migration を流したコンテナを組み、afterEach で client を
-  close する。
-- **狙い**: transaction rollback、adapter 内蔵の `SQLITE_BUSY` リトライ、
-  `OptimisticLockFailure`、outbox の `claimPending` / `finalize` を
-  リアルに確認する。
-- **速度**: unit の 10 倍程度。普段は `pnpm test:unit` で回し、adapter を
-  触ったときや PR 前に `pnpm test:integration` を流す。
-- **命名**: `**/__tests__/<target>.integration.test.ts`（例: `todo.integration.test.ts`,
-  `todoRepository.integration.test.ts`, `outboxRepository.integration.test.ts`）。
+- **Targets**: the Drizzle SQLite adapter implementation, adapter × application integration, concurrent / OCC (optimistic concurrency control) scenarios, and outbox poll / dispatch behavior.
+- **Dependencies**: real SQLite (in-memory). `setupTestContainer()` builds a container with migrations applied on top of `:memory:`, and closes the client in afterEach.
+- **Aim**: realistically verify transaction rollback, the adapter's built-in `SQLITE_BUSY` retry, `OptimisticLockFailure`, and the outbox's `claimPending` / `finalize`.
+- **Speed**: roughly 10× unit. Day to day you run `pnpm test:unit`, and run `pnpm test:integration` when you touch an adapter or before a PR.
+- **Naming**: `**/__tests__/<target>.integration.test.ts` (e.g. `todo.integration.test.ts`, `todoRepository.integration.test.ts`, `outboxRepository.integration.test.ts`).
 
 ### Property-based (fast-check)
 
-- **対象**: value object の不変条件、entity の状態遷移、ランダム入力で
-  落ちるエッジケース。
-- **依存**: `fast-check`（devDependency）。
-- **狙い**: 「trim 後に長さが 1-140 なら必ず受理される」「`complete` → `reopen`
-  で元の active 状態に戻る」「change status が同じ入力で冪等」等を数百サンプルで
-  自動検証する。
-- **使う場面**: 境界値（TitleEmpty / TitleTooLong）、状態遷移（active ⇄
-  completed）、不変条件（`version` の単調増加）。独自の arbitrary は必要最小限に
-  とどめ、`fc.string()` / `fc.integer()` の組み合わせで書けるものはそれで済ます。
-- **命名**: `**/__tests__/<target>.property.test.ts`（例:
-  `valueObject.property.test.ts`, `entity.property.test.ts`）。
+- **Targets**: value-object invariants, entity state transitions, and edge cases that fail under random input.
+- **Dependencies**: `fast-check` (devDependency).
+- **Aim**: automatically verify properties such as "if the post-trim length is 1-140 it is always accepted", "`complete` → `reopen` returns to the original active state", and "change status is idempotent for the same input" over hundreds of samples.
+- **When to use**: boundary values (TitleEmpty / TitleTooLong), state transitions (active ⇄ completed), invariants (monotonic increase of `version`). Keep custom arbitraries to the bare minimum, and use combinations of `fc.string()` / `fc.integer()` for anything that can be written that way.
+- **Naming**: `**/__tests__/<target>.property.test.ts` (e.g. `valueObject.property.test.ts`, `entity.property.test.ts`).
 
-## Fake 方針
+## Fake policy
 
-`app/core/application/__tests__/fakes/` に在庫しているのは現状以下の 2 つ：
+Currently the following two are the only fakes kept under `app/core/application/__tests__/fakes/`:
 
-- **`FakeIdGenerator`** — カウンタを UUIDv7 のテンプレに埋め込む形で決定論的な
-  id を返す。出力は adapter 側の rehydration validation（`IdGenerator.validate`）
-  を通る形になっており、storage 経由の round-trip テストでも format 検証で落ちない。
-  `seed` で開始番号を固定でき、生成 id がテストの outbox 行よりも後に並ぶよう
-  prefix を `f0...` にしてある（`(createdAt, id)` ソート時にテスト固定の
-  `01950000-...` 系より後に来る）。
-- **`FakeLogger`** — `info` / `warn` / `error` の各呼び出しを `entries` 配列に
-  記録するだけ。`byLevel("error")` で取り出して relay worker / usecase の観測性
-  挙動を assert する。
+- **`FakeIdGenerator`** — returns deterministic ids by embedding a counter into a UUIDv7 template. The output is shaped to pass the adapter-side rehydration validation (`IdGenerator.validate`), so it won't fail format checks even in round-trip tests through storage. The starting number can be fixed via `seed`, and the prefix is set to `f0...` so that generated ids sort after the test's outbox rows (they come after the test-fixed `01950000-...` series when sorting by `(createdAt, id)`).
+- **`FakeLogger`** — merely records each `info` / `warn` / `error` call into an `entries` array. Use `byLevel("error")` to extract them and assert on the observability behavior of the relay worker / usecase.
 
-リポジトリ・UoW・Clock 用の fake は意図的に持たない。
+Fakes for repositories, the UoW, and the Clock are intentionally not kept.
 
-- リポジトリ / UoW を in-memory で fake にしても transaction、`SQLITE_BUSY`
-  retry、`OptimisticLockFailure` のような adapter 由来の本質的挙動は再現できない。
-  application service のロジックテストは integration 層（実 SQLite）で行う方が
-  実害をカバーできる。
-- `Clock` は単なる `() => Date` なので、テスト内で `new Date(0)` などの定数を
-  作って usecase / domain に渡せば足りる。port のオブジェクトとして fake 化する
-  必要は無い。
+- Even if you fake repositories / the UoW in-memory, you can't reproduce the essential adapter-derived behaviors like transactions, `SQLITE_BUSY` retry, or `OptimisticLockFailure`. Logic tests for application services are better done at the integration layer (real SQLite), where they cover actual harm.
+- `Clock` is just a `() => Date`, so it's enough to construct a constant like `new Date(0)` within a test and pass it to the usecase / domain. There's no need to fake it as a port object.
 
-## Real DB test（integration）方針
+## Real DB test (integration) policy
 
-- 統合テストは `vitest-pool-workers` 経由で **Workers isolate + Miniflare の
-  D1 binding** に対して走る。`vitest.config.integration.ts` がプール設定、
-  `app/core/adapters/d1/__tests__/setup.ts` がマイグレーション適用と
-  `beforeEach` の TRUNCATE を担う。
-- `setupTestContainer()` (`app/core/application/__tests__/helpers.ts`) が
-  `env.DB` から D1 backed の production 相当コンテナを返す。テスト間の
-  状態クリーンアップはグローバル setup が見るので、helper は単なる
-  factory + getter。
-- ファイル名は `*.integration.test.ts`。Node プールの `vitest.config.ts`
-  はこのパターンを除外して unit テストのみ走らせる。
-- concurrent / OCC を意識したテストを書くときは、`Promise.all` で
-  `run` を同時発火させて `OptimisticLockFailure` を観測する、
-  などのパターンを使う。D1 の deferred-batch UoW では race の片側が
-  `_occ_guard` の CHECK 違反、もう片側が空 batch、と分岐するため、
-  どちらの失敗形でも通るようアサーションを緩めにすると安定する。
+- Integration tests run against a **Workers isolate + Miniflare D1 binding** via `vitest-pool-workers`. `vitest.config.integration.ts` handles the pool configuration, and `app/core/adapters/d1/__tests__/setup.ts` handles applying migrations and the `beforeEach` TRUNCATE.
+- `setupTestContainer()` (`app/core/application/__tests__/helpers.ts`) returns a production-equivalent, D1-backed container from `env.DB`. Cross-test state cleanup is handled by the global setup, so the helper is just a factory + getter.
+- File names are `*.integration.test.ts`. The Node pool's `vitest.config.ts` excludes this pattern and runs only unit tests.
+- When writing tests that are conscious of concurrent / OCC, use patterns such as firing `run` simultaneously with `Promise.all` and observing `OptimisticLockFailure`. In D1's deferred-batch UoW, a race branches such that one side hits a CHECK violation on `_occ_guard` and the other gets an empty batch, so keep assertions loose enough to pass under either failure shape for stability.
 
-## Property-based 方針
+## Property-based policy
 
-- fast-check を採用しているのは **境界値 + 不変条件** の確認が主目的。
-- ドメインの各 value object ファクトリ、entity の state transition
-  （`complete` → `reopen` で active 状態に戻る、`rename` を同じ値で繰り返しても
-  version が増えない冪等性、など）、set 系 usecase の冪等性のような性質検査に有用。
-- custom arbitrary を書く前に、既存の `fc.string()` / `fc.integer()` と `filter`
-  で足りるか検討する。ドメインを fast-check に過度に依存させない。
+- fast-check is adopted mainly to verify **boundary values + invariants**.
+- It's useful for property checks such as each domain value-object factory, entity state transitions (`complete` → `reopen` returns to the active state, the idempotency where repeating `rename` with the same value doesn't increment version, etc.), and the idempotency of set-style usecases.
+- Before writing a custom arbitrary, consider whether existing `fc.string()` / `fc.integer()` plus `filter` suffice. Don't make the domain overly dependent on fast-check.
 
 ## Timeout / flakiness
 
-- `vitest.config.ts` は `testTimeout: 15_000`, `hookTimeout: 15_000`。
-  unit は数百ミリ秒で終わるのでこの上限は実質 integration 専用。
-- adapter 内蔵の transient retry のバックオフが stack すると 1 テストで
-  数秒消費しうる。flaky を感じたら個別に `test.extend` / `vi.useFakeTimers` で
-  時計を固定する前に、まず adapter のリトライ設定を確認する。
-- 再試行のないテスト（単純な CRUD 成功パス等）がタイムアウトする場合は
-  `SQLITE_BUSY` が潜んでいることが多い。integration の方で再現するか確認する。
+- `vitest.config.ts` sets `testTimeout: 15_000`, `hookTimeout: 15_000`. Unit finishes in a few hundred milliseconds, so this ceiling is effectively integration-only.
+- If the backoff of the adapter's built-in transient retry stacks up, a single test can consume several seconds. When you sense flakiness, before fixing the clock with per-test `test.extend` / `vi.useFakeTimers`, first check the adapter's retry settings.
+- When a test with no retries (a simple CRUD success path, etc.) times out, a `SQLITE_BUSY` is often lurking. Check whether it reproduces on the integration side.
 
 ## Commands
 
-| 目的 | コマンド |
+| Purpose | Command |
 |---|---|
-| 全部 | `pnpm test` |
-| Unit だけ | `pnpm test:unit` |
-| Integration だけ | `pnpm test:integration` |
-| 特定ドメイン (application) | `TEST_DOMAIN=todo pnpm test:domain` |
-| 特定ドメイン (domain) | `TEST_DOMAIN=todo pnpm test:domain-layer` |
+| All | `pnpm test` |
+| Unit only | `pnpm test:unit` |
+| Integration only | `pnpm test:integration` |
+| Specific domain (application) | `TEST_DOMAIN=todo pnpm test:domain` |
+| Specific domain (domain) | `TEST_DOMAIN=todo pnpm test:domain-layer` |
 
 ## Coverage
 
-カバレッジ値は強制しない。目安：
+Coverage numbers are not enforced. Rules of thumb:
 
-- **Domain**: ~100% を狙う。ロジックが局所的で FF 化しやすく、テスト漏れが
-  そのまま不変条件崩壊に直結する。
-- **Application + Adapter (integration)**: "代表パス" 単位。OCC 成功 / OCC 失敗、
-  outbox の同一 tx 配置、relay worker の decode 失敗 per-row 隔離、concurrent
-  delete のレースなど、経路ごとに 1 本は用意する。usecase の orchestration
-  カバレッジは fake で網羅するより integration で「実 DB 上で動いた」ことを
-  重視する。
-- **Frontend**: 必要最小限。server function の wire 型境界と UI ロジックは
-  Conform / Zod と `useActionState` / `useOptimistic` の挙動で大枠カバーされる。
+- **Domain**: aim for ~100%. Logic is local and easy to fully cover, and a missing test translates directly into a broken invariant.
+- **Application + Adapter (integration)**: per "representative path". Provide at least one for each route, such as OCC success / OCC failure, same-tx placement of the outbox, per-row isolation of relay-worker decode failures, and the race of a concurrent delete. For usecase orchestration coverage, prioritize confirming it "ran on a real DB" via integration over exhaustive coverage with fakes.
+- **Frontend**: the bare minimum. The server function's wire-type boundary and UI logic are broadly covered by the behavior of Conform / Zod and `useActionState` / `useOptimistic`.
