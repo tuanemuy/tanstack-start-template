@@ -1,4 +1,5 @@
 import { TodoEvents } from "@/core/domain/todo/events";
+import { TodoId } from "@/core/domain/todo/valueObject";
 import { NotFoundError } from "../errors";
 import type { ServiceArgs } from "../types";
 
@@ -11,10 +12,11 @@ export async function deleteTodo({
   input,
 }: ServiceArgs<DeleteTodoInput>): Promise<void> {
   const now = container.clock.now();
+  const id = TodoId.create(input.id);
 
   await container.unitOfWorkProvider.run(
     async ({ todoRepository, collectEvents }) => {
-      const found = await todoRepository.findById(input.id);
+      const found = await todoRepository.findById(id);
       if (!found) {
         throw new NotFoundError(
           "TODO_NOT_FOUND",

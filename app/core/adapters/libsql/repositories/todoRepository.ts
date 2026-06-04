@@ -16,6 +16,7 @@ import type {
 import { isRehydrationError } from "@/core/domain/error";
 import { Todo } from "@/core/domain/todo/entity";
 import type { TodoRepository } from "@/core/domain/todo/ports/todoRepository";
+import type { TodoId } from "@/core/domain/todo/valueObject";
 import type { Database } from "../client";
 import type { PendingBatch } from "../pendingBatch";
 import { todos } from "../schema";
@@ -64,7 +65,7 @@ export class LibsqlTodoRepository implements TodoRepository {
     };
   }
 
-  findById(id: string): Promise<Versioned<Todo> | null> {
+  findById(id: TodoId): Promise<Versioned<Todo> | null> {
     return mapDbError("Failed to find todo", async () => {
       const rows = await this.db
         .select()
@@ -152,7 +153,7 @@ export class LibsqlTodoRepository implements TodoRepository {
   }
 
   async delete(
-    id: string,
+    id: TodoId,
     expectedVersion: ExpectedVersion<Todo>,
   ): Promise<void> {
     this.pending.addOcc(

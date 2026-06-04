@@ -45,6 +45,14 @@ export type Versioned<T> = {
  * additional methods on the concrete repository interface — they are
  * intentionally not part of this base so that "must thread OCC" is
  * the only contract enforced here.
+ *
+ * `TId` should be bound to the aggregate's branded id value object
+ * (e.g. `TransactionalRepository<Todo, TodoId>`), not left as the raw
+ * `string` default. Binding it means the format invariant is validated
+ * exactly once — at the usecase boundary via the id's smart
+ * constructor, before the lookup — and a foreign id (a `UserId` passed
+ * to a `Todo` repository) becomes a type error. The `string` default
+ * exists only as a fallback for aggregates that have no dedicated id VO.
  */
 export interface TransactionalRepository<TEntity, TId = string> {
   insert(entity: TEntity): Promise<void>;

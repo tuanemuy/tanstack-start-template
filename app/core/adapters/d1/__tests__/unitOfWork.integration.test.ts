@@ -125,7 +125,8 @@ describe("D1UnitOfWorkProvider (integration)", () => {
   it("supports a read-only UoW (no writes / no batch flush)", async () => {
     const container = createTestContainer();
     const result = await container.unitOfWorkProvider.run(
-      async ({ todoRepository }) => todoRepository.findById("nonexistent-id"),
+      async ({ todoRepository }) =>
+        todoRepository.findById(TodoId.create("nonexistent-id")),
     );
     expect(result).toBeNull();
   });
