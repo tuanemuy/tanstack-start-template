@@ -124,7 +124,7 @@ describe("LibsqlUnitOfWorkProvider (integration)", () => {
   it("supports a read-only UoW (no writes / no transaction)", async () => {
     const c = await openContainer();
     const result = await c.unitOfWorkProvider.run(async ({ todoRepository }) =>
-      todoRepository.findById("nonexistent-id"),
+      todoRepository.findById(TodoId.create("nonexistent-id")),
     );
     expect(result).toBeNull();
   });

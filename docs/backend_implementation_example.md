@@ -202,7 +202,7 @@ Key points:
 The base contract including OCC is already consolidated in `TransactionalRepository<TEntity, TId>` (`app/core/domain/common/transactionalRepository.ts`). Each aggregate's port extends it and only adds read-only queries:
 
 ```ts
-export interface FooRepository extends TransactionalRepository<Foo> {
+export interface FooRepository extends TransactionalRepository<Foo, FooId> {
   findPage(pagination: Pagination): Promise<PaginationResult<Foo>>;
 }
 ```
@@ -221,7 +221,7 @@ type Versioned<T> = { readonly entity: T; readonly expectedVersion: ExpectedVers
 type ExpectedVersion<T> = number & { readonly [brand]: T };  // phantom T
 ```
 
-The lookup key is a plain `string`. Only the adapter's `toFoo` (rehydration) and the event decoder attach the brand. The application layer never constructs a VO.
+Bind `TId` to the branded `FooId`, not the raw `string` default. The lookup key is then a value object: the usecase constructs it via `FooId.create(input.id)` at its boundary — before the lookup — so the id-format invariant is checked in one place and is no longer duplicated against the transport-layer schema. This is the same "validate at value-object construction" rule the entity factory already follows; an id and an entity are separate concerns, so the id VO is built up front while the entity is what `findById` returns once existence is confirmed. Binding `TId` also makes a foreign id (a `BarId` passed to a `Foo` repository) a type error.
 
 OCC is enforced at the type level with the `ExpectedVersion<Foo>` token:
 
@@ -280,10 +280,11 @@ export async function deleteFoo({
   input,
 }: ServiceArgs<DeleteFooInput>): Promise<void> {
   const now = container.clock.now();
+  const id = FooId.create(input.id);
 
   await container.unitOfWorkProvider.run(
     async ({ fooRepository, collectEvents }) => {
-      const found = await fooRepository.findById(input.id);
+      const found = await fooRepository.findById(id);
       if (!found) throw new NotFoundError("FOO_NOT_FOUND", `...`);
       await fooRepository.delete(found.entity.id, found.expectedVersion);
       collectEvents([FooEvents.deleted(found.entity.id, now)]);
@@ -295,10 +296,10 @@ export async function deleteFoo({
 Key points:
 
 - resolve `now` / `id` at the top of the usecase. The `EventId` is minted **by the UoW inside `collectEvents`** via `idGenerator`, so the usecase doesn't have to care
-- there are only 3 VO-construction sites: the entity factory, adapter rehydration, and the event decoder
+- there are 4 VO-construction sites: the entity factory, the lookup-key construction at the top of a mutate/delete usecase (`FooId.create(input.id)`), adapter rehydration, and the event decoder
 - domain functions return identity-less drafts, and you just pass them straight through with `collectEvents(drafts)`. No explicit type arguments needed
 - ride the Outbox pattern with `collectEvents` (flushed in the same tx)
-- the return value is a DTO (projected by a helper in `view.ts`)
+- the return value is a DTO (projected by a helper in `view.ts`). Type its fields as primitives, never branded VOs — brands widen to their primitive for free, so projection stays cast-free; the inbound direction is the VO `create()` above, also not a cast
 
 There is intentionally no generic utility for OCC retry. `ConflictError` propagates straight to the caller, and only the usecases that need it build their own retry individually.
 
