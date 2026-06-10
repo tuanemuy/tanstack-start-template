@@ -29,4 +29,10 @@ export default defineConfig({
       ignored: ["**/.direnv/**"],
     },
   },
+  ssr: {
+    external: ["@libsql/client", "libsql"],
+  },
+  optimizeDeps: {
+    exclude: ["@libsql/client", "libsql"],
+  },
 });
