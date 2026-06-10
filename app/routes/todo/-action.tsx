@@ -11,5 +11,10 @@ export const renderTodoList = createServerFn({ method: "GET" })
     const { TodoList } = await import("@/components/todo/TodoList");
     // Wrap leaf content only — shared shell (Header/Sidebar) lives in the
     // parent route's `component`, never inside this RSC payload.
-    return renderServerComponent(<TodoList pagination={data} />);
+    //
+    // Return the UNRESOLVED RSC payload promise so the route loader can forward
+    // it without awaiting: navigation settles immediately and the list streams
+    // in under <Suspense fallback={<TodoListSkeleton/>}>. Await it here (or in
+    // the loader) and you collapse back to a blocking render — no skeleton.
+    return { TodoList: renderServerComponent(<TodoList pagination={data} />) };
   });

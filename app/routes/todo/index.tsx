@@ -1,4 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { Suspense } from "react";
+import { TodoListSkeleton } from "@/components/todo/TodoListSkeleton";
+import { Deferred } from "@/components/ui/Deferred";
 import { sanitizeRouteError } from "@/core/presentation/errorDisplay";
 import { buildHead } from "@/core/presentation/head";
 import { paginationSearchSchema } from "@/core/presentation/pagination";
@@ -9,7 +12,10 @@ export const Route = createFileRoute("/todo/")({
   validateSearch: (search) => paginationSearchSchema.parse(search),
   loaderDeps: ({ search }) => search,
   loader: async ({ deps }) => {
-    const TodoList = await renderTodoList({ data: deps });
+    // `renderTodoList` settles as soon as the RSC payload starts; `TodoList` is
+    // the still-unresolved promise. Forwarding it (instead of awaiting) lets the
+    // list stream in under the Suspense fallback below.
+    const { TodoList } = await renderTodoList({ data: deps });
     return { TodoList };
   },
   head: ({ match }) => {
@@ -29,5 +35,9 @@ export const Route = createFileRoute("/todo/")({
 
 function TodoPage() {
   const { TodoList } = Route.useLoaderData();
-  return <>{TodoList}</>;
+  return (
+    <Suspense fallback={<TodoListSkeleton />}>
+      <Deferred promise={TodoList} />
+    </Suspense>
+  );
 }

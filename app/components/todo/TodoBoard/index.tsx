@@ -32,6 +32,11 @@ import { deleteTodoFn } from "./action";
  * Each mutation calls `router.invalidate()` once it resolves; the loader
  * re-renders with fresh data and the optimistic list re-bases onto it. A
  * failed mutation reverts automatically.
+ *
+ * Loading is split by phase: the initial/streaming load is owned by
+ * `TodoListSkeleton` (the route's `<Suspense>` fallback), which this component
+ * replaces wholesale once the RSC payload arrives. The `useOptimistic` /
+ * `aria-busy` here only cover post-mount mutations.
  */
 type OptimisticAction =
   | { type: "add"; todo: TodoView }

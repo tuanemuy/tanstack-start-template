@@ -57,6 +57,49 @@ Since the route file also enters the client graph, do not statically import serv
 
 **When to choose**: fragments uniquely determined by URL parameters, such as list and detail pages.
 
+#### Streaming variant: defer the payload and show a skeleton
+
+The example above `await`s the RSC payload in the loader, so navigation blocks until the data is fully resolved (no fallback is ever shown). To make the shell appear instantly and stream the fragment in, have the bridge **return the unresolved promise** and let a client-side `<Suspense>` boundary render a skeleton until the React Flight payload arrives. This is the recommended default for list/detail fragments.
+
+```tsx
+// bridge — return the UNRESOLVED promise (do not await renderServerComponent)
+export const renderTodoList = createServerFn({ method: "GET" })
+  .middleware([errorResponseMiddleware])
+  .inputValidator(validateInput(paginationSchema))
+  .handler(async ({ data }) => {
+    const { TodoList } = await import("@/components/todo/TodoList");
+    return { TodoList: renderServerComponent(<TodoList pagination={data} />) };
+  });
+
+// route — forward the inner promise, resolve it under <Suspense>
+export const Route = createFileRoute("/todo/")({
+  loader: async ({ deps }) => {
+    const { TodoList } = await renderTodoList({ data: deps });
+    return { TodoList }; // TodoList is still a Promise<ReactNode>
+  },
+  component: TodoPage,
+});
+
+function TodoPage() {
+  const { TodoList } = Route.useLoaderData();
+  return (
+    <Suspense fallback={<TodoListSkeleton />}>
+      <Deferred promise={TodoList} />
+    </Suspense>
+  );
+}
+
+// app/components/ui/Deferred — generic, reusable client resolver
+("use client");
+export function Deferred<T extends ReactNode>({ promise }: { promise: Usable<T> }) {
+  return use(promise);
+}
+```
+
+The skeleton (`app/components/ui/Skeleton` for the generic block, `app/components/todo/TodoListSkeleton` shaped to `TodoBoard`'s DOM) carries one `role="status"` announcement; the individual bars are `aria-hidden` and respect `prefers-reduced-motion` via `motion-reduce:animate-none`.
+
+This is the **per-fragment** loading mechanism. For navigation pending UI on routes whose loader genuinely *blocks*, use the router's `defaultPendingComponent` (+ `defaultPendingMs` / `defaultPendingMinMs`) in `app/router.tsx` instead — a streaming route like `/todo` settles its loader immediately and never triggers it.
+
 ### 2. Held by TanStack Query
 
 For widgets that are not route-shaped, or when you want to invalidate independently. `structuralSharing: false` is mandatory when putting RSC values into Query.
