@@ -35,10 +35,15 @@ pnpm db:migrate:gcp
 docker build -f Dockerfile.gcp -t gcr.io/$PROJECT/server:latest .
 docker push gcr.io/$PROJECT/server:latest
 
-# 4. Provision the rest with Terraform (see infra/gcp/example/).
+# 4. Provision the rest with Terraform — three-stage apply
+#    (see infra/gcp/example/README.md for full flags).
 cd infra/gcp/example
-terraform apply -var "project_id=$PROJECT" -var "image=gcr.io/$PROJECT/server:latest" \
-  -var "turso_database_url=libsql://..." -var "app_url=https://app.example.com"
+( cd base     && terraform init && terraform apply -var "project_id=$PROJECT" \
+    -var "turso_auth_token=$TURSO_AUTH_TOKEN" )
+( cd services && terraform init && terraform apply -var "project_id=$PROJECT" \
+    -var "image=gcr.io/$PROJECT/server:latest" \
+    -var "turso_database_url=libsql://..." -var "app_url=https://app.example.com" )
+( cd wiring   && terraform init && terraform apply -var "project_id=$PROJECT" )
 ```
 
 ## Environment variables
@@ -55,7 +60,7 @@ For local container runs, pass `--env-file=.env.gcp` to `docker run` (or invoke 
 | `WORKER_ROLE`                     | all roles                   | `app`   | One of `app`, `relay`, `consumer`, `dlq`. Drives the role dispatch in `server.gcp.ts`.        |
 | `GCP_PROJECT_ID`                  | `relay`                     | (auto)  | Pub/Sub client project. Defaults to the Cloud Run metadata server.                            |
 | `EVENTS_TOPIC`                    | `relay`                     | —       | Pub/Sub topic the relay publishes to (no `projects/...` prefix).                              |
-| `RELAY_URL`                       | `app`, `relay`              | —       | Relay Cloud Run URL. Used by both the `app` service (after UoW commit) and the relay self-chain. |
+| `RELAY_URL`                       | `app`                       | —       | Relay Cloud Run URL. Used by the `app` service after each UoW commit. The relay self-chain is disabled on GCP (see [Relay trigger model](#relay-trigger-model)); leaving `RELAY_URL` unset on the relay role is intentional. |
 | `DATABASE_AUTH_TOKEN_SECRET_NAME` | optional                    | —       | Secret Manager version name. When set, the boot loader fetches it into `DATABASE_AUTH_TOKEN`. |
 | `OUTBOX_BATCH_SIZE`               | optional                    | `100`   | Max outbox rows claimed per relay tick.                                                       |
 | `OUTBOX_LEASE_MS`                 | optional                    | `300000`| Lease window before a stuck claim becomes reclaimable.                                        |
@@ -89,7 +94,9 @@ The `/prune` endpoint lives on the `app` service rather than a dedicated `pruner
 
 `CloudRunRelayTrigger` (`app/core/adapters/gcp/cloudRunRelayTrigger.ts`) issues an authenticated `POST` to the relay service after a UoW commit. The OIDC ID token is minted via `google-auth-library` with the relay service URL as the audience; Cloud Run verifies the token and the `roles/run.invoker` binding.
 
-The fetch is fire-and-forget — the request handler returns the HTTP response without awaiting the kick. A 5-minute Cloud Scheduler cron acts as the safety net, and the relay self-kicks (`POST` to its own URL) when a tick saturates `maxIterations`.
+The fetch is fire-and-forget — the request handler returns the HTTP response without awaiting the kick. A 5-minute Cloud Scheduler cron acts as the safety net.
+
+On GCP the saturation self-chain is **disabled by design**: the reference Terraform layout avoids the Cloud Run self-reference cycle by not injecting `RELAY_URL` into the relay role. When a tick saturates `maxIterations`, the relay returns without re-kicking itself and the next Scheduler tick (or the next post-UoW kick from `app`) picks up the remaining outbox rows. At-least-once delivery and idempotent consumers are unaffected — only worst-case backlog drain latency is. See `infra/gcp/example/README.md` for the trade-off and how to re-enable the self-chain if you need it.
 
 ## Pub/Sub envelope
 
@@ -139,7 +146,7 @@ For the Pub/Sub emulator, run `gcloud beta emulators pubsub start --host-port=0.
 
 ## Infrastructure (Terraform)
 
-`infra/gcp/example/` contains a **reference** Terraform module — read its README before applying. It creates the four Cloud Run services, both Pub/Sub topics with subscriptions, the Cloud Scheduler jobs, Secret Manager entry, and the service-to-service IAM bindings.
+`infra/gcp/example/` contains a **reference** Terraform layout — read its README before applying. It is split into three sibling root modules (`base/`, `services/`, `wiring/`) applied in order; the split exists so that Cloud Run URLs flow into Pub/Sub subscriptions and Scheduler jobs without an intra-stack reference cycle. Between them they create the four Cloud Run services, both Pub/Sub topics with subscriptions, the Cloud Scheduler jobs, Secret Manager entry, and the service-to-service IAM bindings.
 
 It does **not** create:
 - The container image (build + push separately)
