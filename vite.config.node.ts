@@ -29,4 +29,13 @@ export default defineConfig({
       ignored: ["**/.direnv/**"],
     },
   },
+  // libSQL ships a native addon; letting vite pre-bundle it breaks dev with
+  // `target is not defined` (500 on every route). Keep it external on both the
+  // SSR graph and the client optimizer so Node `require`s the real binary.
+  ssr: {
+    external: ["@libsql/client", "libsql"],
+  },
+  optimizeDeps: {
+    exclude: ["@libsql/client", "libsql"],
+  },
 });
