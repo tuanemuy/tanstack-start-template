@@ -7,7 +7,7 @@ import { Skeleton } from "@/components/ui/Skeleton";
  * loader genuinely blocks resolves (past `defaultPendingMs`). Routes that
  * stream their own content via `<Suspense>` (e.g. `/todo`) settle their loader
  * instantly and never trigger this — they rely on a per-fragment skeleton
- * instead. This is the fallback for any route that blocks in its loader.
+ * instead.
  *
  * `role="status"` + `aria-live="polite"` + the sr-only label give one polite
  * announcement for the whole region; the bars are `aria-hidden` via `Skeleton`.

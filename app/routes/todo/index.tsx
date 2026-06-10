@@ -12,9 +12,8 @@ export const Route = createFileRoute("/todo/")({
   validateSearch: (search) => paginationSearchSchema.parse(search),
   loaderDeps: ({ search }) => search,
   loader: async ({ deps }) => {
-    // `renderTodoList` settles as soon as the RSC payload starts; `TodoList` is
-    // the still-unresolved promise. Forwarding it (instead of awaiting) lets the
-    // list stream in under the Suspense fallback below.
+    // `TodoList` is a still-unresolved promise; forward it (don't await) so the
+    // list streams in under the Suspense fallback below.
     const { TodoList } = await renderTodoList({ data: deps });
     return { TodoList };
   },
