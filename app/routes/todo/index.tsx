@@ -8,7 +8,13 @@ import { paginationSearchSchema } from "@/core/presentation/pagination";
 import { renderTodoList } from "./-action";
 
 export const Route = createFileRoute("/todo/")({
-  staleTime: 0,
+  // This loader returns an unresolved `renderServerComponent(...)` promise that
+  // the Suspense boundary below resolves. With `staleTime: 0` the loader re-runs
+  // on every navigation, so a revisit yields a fresh promise that re-suspends —
+  // the cached list flashes back to the skeleton. Freshness is instead guaranteed
+  // by the explicit `router.invalidate()` each mutation runs, so cache the
+  // resolved payload in prod and keep `0` only in DEV for HMR.
+  staleTime: import.meta.env.DEV ? 0 : Number.POSITIVE_INFINITY,
   validateSearch: (search) => paginationSearchSchema.parse(search),
   loaderDeps: ({ search }) => search,
   loader: async ({ deps }) => {

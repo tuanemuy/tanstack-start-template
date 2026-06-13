@@ -34,9 +34,11 @@ const loadTodoListRouteData = createServerFn({ method: "GET" }).handler(
 );
 
 export const Route = createFileRoute("/")({
-  // With staleTime: 0, re-run the loader every time to fetch the latest RSC.
-  // Since TodoList does `cache()` internally, there is no duplicate fetch within the same navigation.
-  staleTime: 0,
+  // Cache the resolved RSC in prod so a revisit reuses it; keep `0` in DEV for HMR.
+  // Freshness after a mutation is driven by an explicit `useRouter().invalidate()`,
+  // not by re-running the loader on every navigation. (See the streaming variant
+  // below for why `staleTime: 0` is actively harmful once the payload is deferred.)
+  staleTime: import.meta.env.DEV ? 0 : Number.POSITIVE_INFINITY,
   loader: () => loadTodoListRouteData(),
   component: HomePage,
   errorComponent: ({ error }) => (
@@ -73,6 +75,13 @@ export const renderTodoList = createServerFn({ method: "GET" })
 
 // route — forward the inner promise, resolve it under <Suspense>
 export const Route = createFileRoute("/todo/")({
+  // MANDATORY for the streaming variant. The loaderData holds an unresolved
+  // promise; under `staleTime: 0` a revisit re-runs the loader, produces a fresh
+  // promise, and the Suspense boundary re-suspends — so the cached list flashes
+  // back to the skeleton on every back-navigation / in-app link. Caching the
+  // settled promise (Infinity in prod) keeps the resolved list on screen; mutation
+  // freshness comes from the explicit `router.invalidate()`, not from re-fetching.
+  staleTime: import.meta.env.DEV ? 0 : Number.POSITIVE_INFINITY,
   loader: async ({ deps }) => {
     const { TodoList } = await renderTodoList({ data: deps });
     return { TodoList }; // TodoList is still a Promise<ReactNode>
