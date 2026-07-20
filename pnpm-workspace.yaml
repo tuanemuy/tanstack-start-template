@@ -1,3 +1,5 @@
+packages:
+  - "infra/aws"
 overrides:
   tinypool: 1.0.2
 allowBuilds:

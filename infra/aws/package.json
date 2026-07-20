@@ -1,5 +1,5 @@
 {
-  "name": "tanstack-start-template-infra-aws",
+  "name": "@repo/infra-aws",
   "version": "0.0.0",
   "private": true,
   "type": "module",

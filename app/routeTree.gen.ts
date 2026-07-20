@@ -82,18 +82,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/todo/about': {
-      id: '/todo/about'
-      path: '/about'
-      fullPath: '/todo/about'
-      preLoaderRoute: typeof TodoAboutRouteImport
-      parentRoute: typeof TodoRouteRoute
-    }
     '/todo/': {
       id: '/todo/'
       path: '/'
       fullPath: '/todo/'
       preLoaderRoute: typeof TodoIndexRouteImport
+      parentRoute: typeof TodoRouteRoute
+    }
+    '/todo/about': {
+      id: '/todo/about'
+      path: '/about'
+      fullPath: '/todo/about'
+      preLoaderRoute: typeof TodoAboutRouteImport
       parentRoute: typeof TodoRouteRoute
     }
   }
