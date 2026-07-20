@@ -63,7 +63,7 @@ export default defineConfig({
   ],
   test: {
     include: [
-      "app/**/*.integration.test.ts",
+      "apps/web/app/**/*.integration.test.ts",
       "packages/**/*.integration.test.ts",
     ],
     // The libSQL adapter and the in-process worker runner have their
@@ -78,7 +78,7 @@ export default defineConfig({
       "**/.direnv/**",
       "packages/core/src/adapters/libsql/**",
       "packages/core/src/adapters/node/**",
-      "app/worker/node/**",
+      "apps/web/app/worker/node/**",
     ],
     setupFiles: ["packages/core/src/adapters/d1/__tests__/setup.ts"],
   },

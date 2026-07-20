@@ -43,7 +43,7 @@ async function main(): Promise<void> {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const migrationsFolder = path.resolve(
     here,
-    "../app/core/adapters/libsql/migrations",
+    "../../../packages/core/src/adapters/libsql/migrations",
   );
 
   console.log(

@@ -8,9 +8,8 @@
   "files": {
     "ignoreUnknown": false,
     "includes": [
-      "app/**",
+      "apps/**",
       "packages/**",
-      "scripts/**",
       "infra/**",
       "*.ts",
       "*.mjs",
@@ -26,9 +25,8 @@
   "linter": {
     "enabled": true,
     "includes": [
-      "app/**",
+      "apps/**",
       "packages/**",
-      "scripts/**",
       "infra/**",
       "!**/components/ui/**",
       "!**/styles/**",

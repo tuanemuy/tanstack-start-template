@@ -30,7 +30,7 @@ APP_URL = "http://localhost:8787"
 binding = "DB"
 database_name = "tanstack-start-template-d1"
 database_id = "00000000-0000-0000-0000-000000000000"
-migrations_dir = "packages/core/src/adapters/d1/migrations"
+migrations_dir = "../../packages/core/src/adapters/d1/migrations"
 
 # Service Binding to the relay Worker — kicked from usecases right
 # after a UoW commit so newly-persisted outbox rows publish without
@@ -63,7 +63,7 @@ OUTBOX_MAX_ATTEMPTS = "2"    # multiplied by [env.consumer] max_retries — keep
 binding = "DB"
 database_name = "tanstack-start-template-d1"
 database_id = "00000000-0000-0000-0000-000000000000"
-migrations_dir = "packages/core/src/adapters/d1/migrations"
+migrations_dir = "../../packages/core/src/adapters/d1/migrations"
 
 [[env.relay.queues.producers]]
 binding = "EVENTS_QUEUE"
@@ -93,7 +93,7 @@ APP_URL = "http://localhost:8787"
 binding = "DB"
 database_name = "tanstack-start-template-d1"
 database_id = "00000000-0000-0000-0000-000000000000"
-migrations_dir = "packages/core/src/adapters/d1/migrations"
+migrations_dir = "../../packages/core/src/adapters/d1/migrations"
 
 [[env.consumer.queues.consumers]]
 queue = "tanstack-start-template-events"
@@ -128,7 +128,7 @@ OUTBOX_RETENTION_MS = "604800000"   # 7 days
 binding = "DB"
 database_name = "tanstack-start-template-d1"
 database_id = "00000000-0000-0000-0000-000000000000"
-migrations_dir = "packages/core/src/adapters/d1/migrations"
+migrations_dir = "../../packages/core/src/adapters/d1/migrations"
 
 [env.pruner.triggers]
 crons = ["0 3 * * *"] # 03:00 UTC daily
@@ -153,7 +153,7 @@ APP_URL = "http://localhost:8787"
 binding = "DB"
 database_name = "tanstack-start-template-d1"
 database_id = "00000000-0000-0000-0000-000000000000"
-migrations_dir = "packages/core/src/adapters/d1/migrations"
+migrations_dir = "../../packages/core/src/adapters/d1/migrations"
 
 [[env.dlq.queues.consumers]]
 queue = "tanstack-start-template-events-dlq"

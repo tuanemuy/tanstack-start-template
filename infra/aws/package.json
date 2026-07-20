@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "typecheck": "tsgo --noEmit",
     "synth": "cdk synth",
     "diff": "cdk diff",
     "deploy:staging": "cdk deploy AppStack-staging",

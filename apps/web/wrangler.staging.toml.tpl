@@ -1,17 +1,17 @@
-# Production deploy config TEMPLATE — rendered to `wrangler.production.toml`
-# by `scripts/render-wrangler.ts production`, which substitutes `${...}`
-# placeholders with outputs from the `cf-resources/production` Pulumi stack.
+# Staging deploy config TEMPLATE — rendered to `wrangler.staging.toml` by
+# `scripts/render-wrangler.ts staging`, which substitutes `${...}`
+# placeholders with outputs from the `cf-resources/staging` Pulumi stack.
 #
 # Source of truth: this `.tpl` file (committed) + Pulumi state.
-# The rendered `wrangler.production.toml` is git-ignored — do not edit it
+# The rendered `wrangler.staging.toml` is git-ignored — do not edit it
 # directly; re-run the render script instead.
 #
 # === Before first deploy =================================================
-#   1. `pulumi -C infra/cloudflare/pulumi/resources -s production up`
-#   2. `pnpm tsx scripts/render-wrangler.ts production`
-#   3. `wrangler secret put <NAME> --config wrangler.production.toml [--env <role>]`
-#   4. `wrangler deploy -c wrangler.production.toml` (+ each `--env <role>`)
-#   5. `pulumi -C infra/cloudflare/pulumi/routes -s production up`
+#   1. `pulumi -C infra/cloudflare/pulumi/resources -s staging up`
+#   2. `pnpm tsx scripts/render-wrangler.ts staging`
+#   3. `wrangler secret put <NAME> --config wrangler.staging.toml [--env <role>]`
+#   4. `wrangler deploy -c wrangler.staging.toml` (+ each `--env <role>`)
+#   5. `pulumi -C infra/cloudflare/pulumi/routes -s staging up`
 # =========================================================================
 #
 # Wrangler does NOT inherit `d1_databases` / `vars` from top level into
@@ -33,7 +33,7 @@ APP_URL = "${APP_URL}"
 binding = "DB"
 database_name = "${D1_DATABASE_NAME}"
 database_id = "${D1_DATABASE_ID}"
-migrations_dir = "packages/core/src/adapters/d1/migrations"
+migrations_dir = "../../packages/core/src/adapters/d1/migrations"
 
 [[services]]
 binding = "RELAY"
@@ -57,7 +57,7 @@ OUTBOX_MAX_ATTEMPTS = "2"    # multiplied by [env.consumer] max_retries — keep
 binding = "DB"
 database_name = "${D1_DATABASE_NAME}"
 database_id = "${D1_DATABASE_ID}"
-migrations_dir = "packages/core/src/adapters/d1/migrations"
+migrations_dir = "../../packages/core/src/adapters/d1/migrations"
 
 [[env.relay.queues.producers]]
 binding = "EVENTS_QUEUE"
@@ -81,7 +81,7 @@ APP_URL = "${APP_URL}"
 binding = "DB"
 database_name = "${D1_DATABASE_NAME}"
 database_id = "${D1_DATABASE_ID}"
-migrations_dir = "packages/core/src/adapters/d1/migrations"
+migrations_dir = "../../packages/core/src/adapters/d1/migrations"
 
 [[env.consumer.queues.consumers]]
 queue = "${EVENTS_QUEUE_NAME}"
@@ -106,7 +106,7 @@ OUTBOX_RETENTION_MS = "604800000"   # 7 days
 binding = "DB"
 database_name = "${D1_DATABASE_NAME}"
 database_id = "${D1_DATABASE_ID}"
-migrations_dir = "packages/core/src/adapters/d1/migrations"
+migrations_dir = "../../packages/core/src/adapters/d1/migrations"
 
 [env.pruner.triggers]
 crons = ["0 3 * * *"] # 03:00 UTC daily
@@ -126,7 +126,7 @@ APP_URL = "${APP_URL}"
 binding = "DB"
 database_name = "${D1_DATABASE_NAME}"
 database_id = "${D1_DATABASE_ID}"
-migrations_dir = "packages/core/src/adapters/d1/migrations"
+migrations_dir = "../../packages/core/src/adapters/d1/migrations"
 
 [[env.dlq.queues.consumers]]
 queue = "${DLQ_QUEUE_NAME}"

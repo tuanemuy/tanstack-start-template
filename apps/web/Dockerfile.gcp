@@ -2,19 +2,25 @@
 # Cloud Run service (`app` / `relay` / `consumer` / `dlq`); the role is
 # selected at runtime via the `WORKER_ROLE` env var read by
 # `app/server.gcp.ts`.
+#
+# Build from the repository root so the workspace packages are in
+# context:  docker build -f apps/web/Dockerfile.gcp .
 
 # --- build stage -------------------------------------------------------------
 FROM node:22-slim AS build
-WORKDIR /app
+WORKDIR /repo
 
 # Enable pnpm via corepack (Node ≥22 ships corepack).
 RUN corepack enable
 
-COPY pnpm-lock.yaml package.json ./
-RUN pnpm install --frozen-lockfile
+COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
+COPY apps/web/package.json apps/web/
+COPY packages/core/package.json packages/core/
+COPY infra/aws/package.json infra/aws/
+RUN pnpm install --frozen-lockfile --filter @repo/web --filter @repo/core
 
 COPY . .
-RUN pnpm build:gcp
+RUN pnpm --filter @repo/web build:gcp
 
 # --- runtime stage -----------------------------------------------------------
 # Cloud Run expects a process that listens on $PORT (default 8080). We
@@ -22,19 +28,23 @@ RUN pnpm build:gcp
 # container is lean — the launcher is plain ESM JavaScript and runs on
 # bare `node`, so we don't need `tsx` / `dotenv` at runtime.
 FROM node:22-slim AS runtime
-WORKDIR /app
+WORKDIR /repo
 ENV NODE_ENV=production
 ENV PORT=8080
 
 RUN corepack enable
 
-COPY pnpm-lock.yaml package.json ./
-RUN pnpm install --frozen-lockfile --prod
+COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
+COPY apps/web/package.json apps/web/
+COPY packages/core/package.json packages/core/
+COPY infra/aws/package.json infra/aws/
+RUN pnpm install --frozen-lockfile --prod --filter @repo/web --filter @repo/core
 
 # Copy the built server bundle and the plain-JS launcher.
-COPY --from=build /app/dist ./dist
-COPY scripts/listen.gcp.mjs ./scripts/listen.gcp.mjs
+COPY --from=build /repo/apps/web/dist ./apps/web/dist
+COPY apps/web/scripts/listen.gcp.mjs ./apps/web/scripts/listen.gcp.mjs
 
+WORKDIR /repo/apps/web
 EXPOSE 8080
 
 # Cloud Run injects env vars natively (`--set-env-vars`, Secret Manager
