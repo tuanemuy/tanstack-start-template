@@ -85,7 +85,7 @@ wrangler secret put MY_SECRET --config wrangler.production.toml
 
 For local dev, drop them into `.dev.vars` (copied from `.dev.vars.example`).
 
-The outbox tuning variables (`OUTBOX_BATCH_SIZE`, `OUTBOX_LEASE_MS`, `OUTBOX_MAX_ATTEMPTS`, `OUTBOX_RETENTION_MS`) live in `[vars]` (not `.dev.vars`) and are documented in `.env.example` — the schema is shared with the Node runtime via `app/core/application/di/env.ts`.
+The outbox tuning variables (`OUTBOX_BATCH_SIZE`, `OUTBOX_LEASE_MS`, `OUTBOX_MAX_ATTEMPTS`, `OUTBOX_RETENTION_MS`) live in `[vars]` (not `.dev.vars`) and are documented in `.env.example` — the schema is shared with the Node runtime via `packages/core/src/application/di/env.ts`.
 
 ## Deployment
 
@@ -111,7 +111,7 @@ pnpm deploy:production:all:dry       # dry run
 
 ## D1 migrations
 
-The canonical SQL lives under `app/core/adapters/d1/migrations/`. Generate it with `pnpm db:generate:cf` (alias `pnpm db:generate`) from `app/core/adapters/d1/schema.ts`.
+The canonical SQL lives under `packages/core/src/adapters/d1/migrations/`. Generate it with `pnpm db:generate:cf` (alias `pnpm db:generate`) from `packages/core/src/adapters/d1/schema.ts`.
 
 ```bash
 pnpm db:apply:local                    # apply to the local D1
@@ -155,7 +155,7 @@ The user-visible attempt count is the **product** of those numbers (max 8 by def
 
 ## D1-specific behaviour and the libSQL diff
 
-The SQLite schema and SQL are shared verbatim across runtimes — both adapters consume `app/core/adapters/d1/schema.ts` (libSQL re-exports it). What differs:
+The SQLite schema and SQL are shared verbatim across runtimes — both adapters consume `packages/core/src/adapters/d1/schema.ts` (libSQL re-exports it). What differs:
 
 | Concern                     | D1                                                      | libSQL                                                          |
 | --------------------------- | ------------------------------------------------------- | --------------------------------------------------------------- |

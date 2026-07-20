@@ -7,7 +7,7 @@ The Todo domain implementation is the canonical example. When adding a new domai
 ## File Layout
 
 ```
-app/core/
+packages/core/src/
 ├── domain/
 │   ├── common/
 │   │   ├── event.ts               DomainEventBase, EventDraft, EventDecoder, WithEventDrafts
@@ -59,7 +59,7 @@ app/core/
         │   └── outboxRepository.ts
         └── migrations/            SQL migrations read by wrangler
 
-app/lib/
+packages/core/src/lib/
 └── error.ts                       CodedError base + SerializedErrorBase / FieldErrors / SerializableError interface (structure only; the union is assembled in presentation)
 ```
 
@@ -162,11 +162,11 @@ Key points:
 Write the decoder declaratively with the `buildEventDecoder(type, schema, rehydrate)` helper. You only write the schema definition + brand reconstruction; the helper absorbs the shape assert / `SystemError` conversion / meta forwarding.
 
 ```ts
-// app/core/application/foo/eventDecoders.ts
+// packages/core/src/application/foo/eventDecoders.ts
 import { z } from "zod";
-import type { EventDecoder } from "@/core/domain/common/event";
-import type { FooEvent } from "@/core/domain/foo/events";
-import { FooId } from "@/core/domain/foo/valueObject";
+import type { EventDecoder } from "@repo/core/domain/common/event";
+import type { FooEvent } from "@repo/core/domain/foo/events";
+import { FooId } from "@repo/core/domain/foo/valueObject";
 import { buildEventDecoder } from "../events/buildDecoder";
 
 const fooCreatedSchema = z.object({ fooId: z.string() }).strict();
@@ -199,7 +199,7 @@ Key points:
 
 ### Repository Port
 
-The base contract including OCC is already consolidated in `TransactionalRepository<TEntity, TId>` (`app/core/domain/common/transactionalRepository.ts`). Each aggregate's port extends it and only adds read-only queries:
+The base contract including OCC is already consolidated in `TransactionalRepository<TEntity, TId>` (`packages/core/src/domain/common/transactionalRepository.ts`). Each aggregate's port extends it and only adds read-only queries:
 
 ```ts
 export interface FooRepository extends TransactionalRepository<Foo, FooId> {
@@ -234,8 +234,8 @@ Thanks to the phantom `T`, `ExpectedVersion<Foo>` and `ExpectedVersion<Bar>` are
 
 When adding a new domain:
 
-1. add one slot line to `UnitOfWorkContext` (`app/core/application/execution/unitOfWork.ts`)
-2. in the D1 adapter (`app/core/adapters/d1/unitOfWork.ts`), create the repository instance sharing the `PendingBatch` and stuff it into the context
+1. add one slot line to `UnitOfWorkContext` (`packages/core/src/application/execution/unitOfWork.ts`)
+2. in the D1 adapter (`packages/core/src/adapters/d1/unitOfWork.ts`), create the repository instance sharing the `PendingBatch` and stuff it into the context
 
 ```ts
 export interface UnitOfWorkContext {
@@ -380,7 +380,7 @@ Key points:
 
 ### Unit of Work
 
-`app/core/adapters/d1/unitOfWork.ts` implements `UnitOfWorkProvider.run(fn)`:
+`packages/core/src/adapters/d1/unitOfWork.ts` implements `UnitOfWorkProvider.run(fn)`:
 
 1. create a fresh `PendingBatch` (Drizzle BatchItem buffer)
 2. build the repository / outbox instances together with the shared PendingBatch and stuff them into `UnitOfWorkContext`
@@ -395,7 +395,7 @@ There is no application-level retry because driver-level transient errors are ha
 ## Outbox Worker
 
 ```ts
-import { processOutboxEvents } from "@/core/application/workers/eventRelayWorker";
+import { processOutboxEvents } from "@repo/core/application/workers/eventRelayWorker";
 
 await processOutboxEvents(container, async (event) => {
   // switch on event.type and dispatch to the downstream handler
@@ -417,7 +417,7 @@ As stated in the CLAUDE.md key concepts, the Outbox operates with **at-least-onc
 
 - log decode / dispatch failures to the logger and reschedule `next_attempt_at` with `attempts++` + exponential backoff
 
-After adding a new domain, export `<domain>EventDecoders` from `app/core/application/${domain}/eventDecoders.ts` and add it to both the `AllDomainEvents` type union and `defaultEventDecoderRegistry` in `eventRelayWorker.ts`:
+After adding a new domain, export `<domain>EventDecoders` from `packages/core/src/application/${domain}/eventDecoders.ts` and add it to both the `AllDomainEvents` type union and `defaultEventDecoderRegistry` in `eventRelayWorker.ts`:
 
 ```ts
 type AllDomainEvents = TodoEvent | FooEvent;        // ← extend the union
@@ -433,7 +433,7 @@ export const defaultEventDecoderRegistry = {
 ### Outbox Prune
 
 ```ts
-import { pruneOutbox } from "@/core/application/workers/outboxPrune";
+import { pruneOutbox } from "@repo/core/application/workers/outboxPrune";
 
 await pruneOutbox(container, { retentionMs: 7 * 86_400_000 }); // retain for 7 days
 ```
@@ -444,11 +444,11 @@ await pruneOutbox(container, { retentionMs: 7 * 86_400_000 }); // retain for 7 d
 
 | Layer | Error type | Location |
 |---|---|---|
-| Domain | `BusinessRuleError<FooErrorCode>` | `app/core/domain/error.ts` |
-| Application | `NotFoundError`, `ConflictError`, `ValidationError`, `SystemError` | `app/core/application/errors/index.ts` |
-| Presentation | `AppServerError` | `app/core/presentation/errorResponse.ts` |
+| Domain | `BusinessRuleError<FooErrorCode>` | `packages/core/src/domain/error.ts` |
+| Application | `NotFoundError`, `ConflictError`, `ValidationError`, `SystemError` | `packages/core/src/application/errors/index.ts` |
+| Presentation | `AppServerError` | `apps/web/app/presentation/errorResponse.ts` |
 
-Every error class extends the abstract base `CodedError<TCode extends string>` in `app/lib/error.ts`. The base class owns the `code: TCode` field, a default `retryable: false` getter, and the abstract method `toSerialized()`. The base's return type is the structural `SerializedErrorBase & { kind: string }`, and each subclass narrows it via override to its own `kind`-tagged variant.
+Every error class extends the abstract base `CodedError<TCode extends string>` in `packages/core/src/lib/error.ts`. The base class owns the `code: TCode` field, a default `retryable: false` getter, and the abstract method `toSerialized()`. The base's return type is the structural `SerializedErrorBase & { kind: string }`, and each subclass narrows it via override to its own `kind`-tagged variant.
 
 `code` is a plain string. The per-class enums are deliberately collapsed (the domain enum plus the `SerializedErrorKind` assembled in presentation cover the classification we need). `SystemErrorCode` is kept because it is used for the runtime `retryable` decision.
 

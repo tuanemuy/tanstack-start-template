@@ -30,18 +30,18 @@ For a production build:
 
 ```bash
 pnpm build                 # vite build with the Node target (vite.config.node.ts)
-pnpm start                 # tsx scripts/listen.node.ts — boots @hono/node-server
+pnpm start                 # tsx apps/web/scripts/listen.node.ts — boots @hono/node-server
 ```
 
 The flow:
 
-1. `vite build --config vite.config.node.ts` writes a fetch-handler bundle to `dist/server/server.node.js`.
-2. `scripts/listen.node.ts` loads `dotenv`, dynamically imports the bundle, calls its `boot()` to construct the libSQL client + DI container + worker runner, then registers the handler with `@hono/node-server`.
+1. `vite build --config vite.config.node.ts` writes a fetch-handler bundle to `apps/web/dist/server/server.node.js`.
+2. `apps/web/scripts/listen.node.ts` loads `dotenv`, dynamically imports the bundle, calls its `boot()` to construct the libSQL client + DI container + worker runner, then registers the handler with `@hono/node-server`.
 3. SIGTERM / SIGINT triggers the shutdown sequence described below.
 
 ## Environment variables
 
-`scripts/listen.node.ts` and `scripts/migrate.node.ts` both load `.env` via `dotenv/config` before importing the rest of the app. Copy `.env.example` to `.env` and edit; the schema is validated at boot in `app/core/application/di/serverNode.ts`.
+`apps/web/scripts/listen.node.ts` and `apps/web/scripts/migrate.node.ts` both load `.env` via `dotenv/config` before importing the rest of the app. Copy `.env.example` to `.env` and edit; the schema is validated at boot in `packages/core/src/application/di/serverNode.ts`.
 
 | Variable                  | Required | Default                  | Purpose                                                                                              |
 | ------------------------- | -------- | ------------------------ | ---------------------------------------------------------------------------------------------------- |
@@ -56,7 +56,7 @@ The flow:
 | `OUTBOX_MAX_ATTEMPTS`     | no       | `3`                      | Per-event max attempts before quarantine (`failed_at` stamp).                                        |
 | `OUTBOX_RETENTION_MS`     | no       | `604800000` (7 days)     | Retention window before processed outbox rows are pruned.                                            |
 
-The outbox tuning variables are shared with the Cloudflare runtime; the schema is declared once in `app/core/application/di/env.ts` and consumed by both `serverNode.ts` and the wrangler `[vars]` readers.
+The outbox tuning variables are shared with the Cloudflare runtime; the schema is declared once in `packages/core/src/application/di/env.ts` and consumed by both `serverNode.ts` and the wrangler `[vars]` readers.
 
 ## The libSQL data file
 
@@ -69,7 +69,7 @@ data/
 └─ app.db-shm    # shared memory file used by WAL
 ```
 
-`./data/` is gitignored, and `scripts/migrate.node.ts` + `app/server.node.ts` both `mkdir -p` the parent directory at boot — libSQL's embedded driver does not create it automatically.
+`./data/` is gitignored, and `apps/web/scripts/migrate.node.ts` + `apps/web/app/server.node.ts` both `mkdir -p` the parent directory at boot — libSQL's embedded driver does not create it automatically.
 
 ### Backup
 
@@ -94,7 +94,7 @@ The `*-wal` / `*-shm` sidecar files do **not** need to be copied; SQLite reconst
 
 ## SQLite PRAGMAs applied at boot
 
-`app/core/adapters/libsql/client.ts#applyPragmas` runs three statements after the client is constructed (unless `wal: false` is passed for `:memory:` / read-only test databases):
+`packages/core/src/adapters/libsql/client.ts#applyPragmas` runs three statements after the client is constructed (unless `wal: false` is passed for `:memory:` / read-only test databases):
 
 | PRAGMA                  | Why                                                                                                                                                                                                       |
 | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -104,7 +104,7 @@ The `*-wal` / `*-shm` sidecar files do **not** need to be copied; SQLite reconst
 
 ## Worker runner (relay / consumer / pruner)
 
-`app/worker/node/runner.ts#createNodeWorkerRunner` is the same-process orchestrator for the four roles that ship as separate Workers on Cloudflare.
+`apps/web/app/worker/node/runner.ts#createNodeWorkerRunner` is the same-process orchestrator for the four roles that ship as separate Workers on Cloudflare.
 
 | Role     | Cloudflare                              | Node                                                                                                              |
 | -------- | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
@@ -123,32 +123,32 @@ Concurrent kicks are collapsed: the periodic fallback and request-path kicks sha
 
 ### Consumer handler
 
-`consumerHandler` is a required dependency on `createNodeWorkerRunner` so wiring is explicit at the type level. `app/server.node.ts` passes an inline `async () => {}` as the template default — replace it with your application-specific subscriber. Idempotency is enforced by the dispatcher before the handler runs, so handlers stay idempotent without per-handler bookkeeping.
+`consumerHandler` is a required dependency on `createNodeWorkerRunner` so wiring is explicit at the type level. `apps/web/app/server.node.ts` passes an inline `async () => {}` as the template default — replace it with your application-specific subscriber. Idempotency is enforced by the dispatcher before the handler runs, so handlers stay idempotent without per-handler bookkeeping.
 
 ## Migrations
 
-The canonical schema lives at `app/core/adapters/d1/schema.ts`; `app/core/adapters/libsql/schema.ts` re-exports it so both runtimes share an identical type-level surface.
+The canonical schema lives at `packages/core/src/adapters/d1/schema.ts`; `packages/core/src/adapters/libsql/schema.ts` re-exports it so both runtimes share an identical type-level surface.
 
 ```bash
 pnpm db:generate           # alias of db:generate:cf
-pnpm db:generate:cf        # drizzle-kit generate → app/core/adapters/d1/migrations/
-pnpm db:generate:node      # drizzle-kit generate → app/core/adapters/libsql/migrations/ (mirror)
+pnpm db:generate:cf        # drizzle-kit generate → packages/core/src/adapters/d1/migrations/
+pnpm db:generate:node      # drizzle-kit generate → packages/core/src/adapters/libsql/migrations/ (mirror)
 pnpm db:migrate            # alias of db:migrate:node
-pnpm db:migrate:node       # tsx scripts/migrate.node.ts — applies libSQL migrations
+pnpm db:migrate:node       # tsx apps/web/scripts/migrate.node.ts — applies libSQL migrations
 ```
 
 Workflow:
 
-1. Edit `app/core/adapters/d1/schema.ts`.
+1. Edit `packages/core/src/adapters/d1/schema.ts`.
 2. `pnpm db:generate:cf` to author the SQL (this is the source of truth).
-3. `pnpm db:generate:node` to mirror it under `app/core/adapters/libsql/migrations/`.
+3. `pnpm db:generate:node` to mirror it under `packages/core/src/adapters/libsql/migrations/`.
 4. `pnpm db:migrate` to apply against the local libSQL file.
 
 Drizzle's programmatic migrator writes its bookkeeping into the `__drizzle_migrations` table inside the database, so re-running `pnpm db:migrate` is idempotent.
 
 ## Graceful shutdown
 
-`scripts/listen.node.ts` and `app/server.node.ts` both register SIGTERM / SIGINT handlers. The shutdown sequence:
+`apps/web/scripts/listen.node.ts` and `apps/web/app/server.node.ts` both register SIGTERM / SIGINT handlers. The shutdown sequence:
 
 1. `@hono/node-server` stops accepting new HTTP connections.
 2. `runner.stop()`:
@@ -176,7 +176,7 @@ Implications:
 
 ## Logging and observability
 
-The application uses the `ConsoleLogger` port (`app/core/application/ports/logger.ts`) — every log line is `console.log` / `console.error` formatted as JSON-ish objects. On Cloudflare this is picked up by `wrangler tail` / Logpush; on Node the lines go straight to stdout / stderr and can be piped into any aggregator (journald, vector, etc).
+The application uses the `ConsoleLogger` port (`packages/core/src/application/ports/logger.ts`) — every log line is `console.log` / `console.error` formatted as JSON-ish objects. On Cloudflare this is picked up by `wrangler tail` / Logpush; on Node the lines go straight to stdout / stderr and can be piped into any aggregator (journald, vector, etc).
 
 Structured logging via `pino` or similar is a deliberate non-goal of the current template (the Cloudflare runtime constrains the choices). It is on the open-issues list in `plan.md`.
 

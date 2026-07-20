@@ -7,7 +7,7 @@ Tests are classified along two axes: **layer × purpose**. By separating a fast 
 ### Unit (`pnpm test:unit`)
 
 - **Targets**: domain-layer + application-layer logic (the pure parts).
-- **Dependencies**: the only fakes kept on hand are the two under `app/core/application/__tests__/fakes/`: `FakeIdGenerator` (a deterministic UUIDv7 stream) and `FakeLogger` (a recording Logger). `Clock` can simply be passed to the usecase as a freestanding `now: Date`, and repository-style fakes are intentionally absent (the judgment being that imitating transaction / OCC with an in-memory fake is no substitute for integration). We don't aim to exhaustively cover application-layer logic with fakes; behavior verification is pushed onto integration tests.
+- **Dependencies**: the only fakes kept on hand are the two under `packages/core/src/application/__tests__/fakes/`: `FakeIdGenerator` (a deterministic UUIDv7 stream) and `FakeLogger` (a recording Logger). `Clock` can simply be passed to the usecase as a freestanding `now: Date`, and repository-style fakes are intentionally absent (the judgment being that imitating transaction / OCC with an in-memory fake is no substitute for integration). We don't aim to exhaustively cover application-layer logic with fakes; behavior verification is pushed onto integration tests.
 - **Aim**: invariants of the domain layer (value object / entity / events decoding), error-code branching, and the behavior of application-layer helpers like `retry()`.
 - **Speed**: a few to a dozen-or-so milliseconds. Vitest's `--exclude '**/*.integration.test.ts'` skips integration.
 - **Naming**: `**/__tests__/<target>.test.ts` (e.g. `entity.test.ts`, `events.test.ts`, `retry.test.ts`).
@@ -30,7 +30,7 @@ Tests are classified along two axes: **layer × purpose**. By separating a fast 
 
 ## Fake policy
 
-Currently the following two are the only fakes kept under `app/core/application/__tests__/fakes/`:
+Currently the following two are the only fakes kept under `packages/core/src/application/__tests__/fakes/`:
 
 - **`FakeIdGenerator`** — returns deterministic ids by embedding a counter into a UUIDv7 template. The output is shaped to pass the adapter-side rehydration validation (`IdGenerator.validate`), so it won't fail format checks even in round-trip tests through storage. The starting number can be fixed via `seed`, and the prefix is set to `f0...` so that generated ids sort after the test's outbox rows (they come after the test-fixed `01950000-...` series when sorting by `(createdAt, id)`).
 - **`FakeLogger`** — merely records each `info` / `warn` / `error` call into an `entries` array. Use `byLevel("error")` to extract them and assert on the observability behavior of the relay worker / usecase.
@@ -42,8 +42,8 @@ Fakes for repositories, the UoW, and the Clock are intentionally not kept.
 
 ## Real DB test (integration) policy
 
-- Integration tests run against a **Workers isolate + Miniflare D1 binding** via `vitest-pool-workers`. `vitest.config.integration.ts` handles the pool configuration, and `app/core/adapters/d1/__tests__/setup.ts` handles applying migrations and the `beforeEach` TRUNCATE.
-- `setupTestContainer()` (`app/core/application/__tests__/helpers.ts`) returns a production-equivalent, D1-backed container from `env.DB`. Cross-test state cleanup is handled by the global setup, so the helper is just a factory + getter.
+- Integration tests run against a **Workers isolate + Miniflare D1 binding** via `vitest-pool-workers`. `vitest.config.integration.ts` handles the pool configuration, and `packages/core/src/adapters/d1/__tests__/setup.ts` handles applying migrations and the `beforeEach` TRUNCATE.
+- `setupTestContainer()` (`packages/core/src/application/__tests__/helpers.ts`) returns a production-equivalent, D1-backed container from `env.DB`. Cross-test state cleanup is handled by the global setup, so the helper is just a factory + getter.
 - File names are `*.integration.test.ts`. The Node pool's `vitest.config.ts` excludes this pattern and runs only unit tests.
 - When writing tests that are conscious of concurrent / OCC, use patterns such as firing `run` simultaneously with `Promise.all` and observing `OptimisticLockFailure`. In D1's deferred-batch UoW, a race branches such that one side hits a CHECK violation on `_occ_guard` and the other gets an empty batch, so keep assertions loose enough to pass under either failure shape for stability.
 

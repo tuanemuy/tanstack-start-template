@@ -22,19 +22,24 @@ The goal is to give you a worked example of:
 ## Directory layout
 
 ```
-app/
-├─ core/
-│  ├─ domain/         # entities, value objects, port interfaces, domain events
-│  ├─ application/    # use cases, UoW, cross-cutting ports (clock / id / logger), DTO projection
-│  ├─ adapters/       # concrete port implementations (DB, workers, external services)
-│  └─ presentation/   # server-function entry, error responses, input validation
-├─ routes/            # TanStack Router (file-based)
-├─ components/
-├─ styles/
-├─ lib/               # structural primitives shared by every layer (e.g. CodedError)
-├─ worker/            # background-worker entries (relay / consumer / pruner / dlq)
-└─ server.*.ts        # server fetch entries
-scripts/              # migration and production launcher scripts
+packages/
+└─ core/              # @repo/core — framework-free, imported as @repo/core/*
+   └─ src/
+      ├─ domain/      # entities, value objects, port interfaces, domain events
+      ├─ application/ # use cases, UoW, cross-cutting ports (clock / id / logger), DTO projection
+      ├─ adapters/    # concrete port implementations (DB, workers, external services)
+      └─ lib/         # structural primitives shared by every layer (e.g. CodedError)
+apps/
+└─ web/               # @repo/web — the TanStack Start app + its runtime configs
+   ├─ app/
+   │  ├─ presentation/ # server-function entry, error responses, input validation
+   │  ├─ routes/       # TanStack Router (file-based)
+   │  ├─ components/
+   │  ├─ styles/
+   │  ├─ worker/       # background-worker entries (relay / consumer / pruner / dlq)
+   │  └─ server.*.ts   # server fetch entries
+   └─ scripts/         # migration and production launcher scripts
+infra/                # aws (CDK, workspace member), cloudflare (Pulumi), gcp (Terraform)
 docs/                 # implementation pattern examples + runtime guides
 spec/                 # entry point for the /spec workflow
 ```
@@ -50,7 +55,7 @@ The template ships **two reference runtime wirings** as worked examples of how t
 
 **Pick one and delete the other** when you start a real project. Or, if you genuinely need both targets, keep both. The template does not assume you maintain a dual deployment.
 
-To target a different runtime (AWS Lambda, Cloud Run, Bun, etc.), add a new adapter group under `app/core/adapters/{provider}/` and a paired entry point — the inward layers stay put.
+To target a different runtime (AWS Lambda, Cloud Run, Bun, etc.), add a new adapter group under `packages/core/src/adapters/{provider}/` and a paired entry point — the inward layers stay put.
 
 Per-runtime operational guidance: [`docs/runtime_node.md`](docs/runtime_node.md) / [`docs/runtime_cloudflare.md`](docs/runtime_cloudflare.md).
 
