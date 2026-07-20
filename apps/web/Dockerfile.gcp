@@ -17,7 +17,10 @@ COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 COPY apps/web/package.json apps/web/
 COPY packages/core/package.json packages/core/
 COPY infra/aws/package.json infra/aws/
-RUN pnpm install --frozen-lockfile --filter @repo/web --filter @repo/core
+# --ignore-scripts: the web postinstall (`wrangler types`) needs
+# wrangler.toml (not copied yet) and only feeds typechecking; the GCP
+# build needs neither it nor any dependency lifecycle script.
+RUN pnpm install --frozen-lockfile --ignore-scripts --filter @repo/web --filter @repo/core
 
 COPY . .
 RUN pnpm --filter @repo/web build:gcp
@@ -38,7 +41,7 @@ COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 COPY apps/web/package.json apps/web/
 COPY packages/core/package.json packages/core/
 COPY infra/aws/package.json infra/aws/
-RUN pnpm install --frozen-lockfile --prod --filter @repo/web --filter @repo/core
+RUN pnpm install --frozen-lockfile --ignore-scripts --prod --filter @repo/web --filter @repo/core
 
 # Copy the built server bundle and the plain-JS launcher.
 COPY --from=build /repo/apps/web/dist ./apps/web/dist

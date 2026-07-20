@@ -62,6 +62,7 @@
     "db:execute:production": "wrangler d1 execute tanstack-start-template-d1-production --remote --config wrangler.production.toml --file"
   },
   "dependencies": {
+    "@repo/core": "workspace:*",
     "@aws-sdk/client-lambda": "^3.726.0",
     "@aws-sdk/client-secrets-manager": "^3.726.0",
     "@aws-sdk/client-sqs": "^3.726.0",

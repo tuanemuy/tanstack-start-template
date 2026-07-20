@@ -8,7 +8,7 @@ import { defineConfig } from "drizzle-kit";
 // than a connection URL.
 // `driver: 'd1-http'` is intentionally omitted to keep wrangler as the single migration-application route (drizzle-kit push would bypass the wrangler ledger).
 export default defineConfig({
-  out: "./packages/core/src/adapters/d1/migrations",
-  schema: "./packages/core/src/adapters/d1/schema.ts",
+  out: "../../packages/core/src/adapters/d1/migrations",
+  schema: "../../packages/core/src/adapters/d1/schema.ts",
   dialect: "sqlite",
 });

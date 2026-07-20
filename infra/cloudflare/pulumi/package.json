@@ -8,7 +8,7 @@
     "up:resources": "pulumi -C resources up",
     "preview:routes": "pulumi -C routes preview",
     "up:routes": "pulumi -C routes up",
-    "render": "tsx ../../../scripts/render-wrangler.ts"
+    "render": "tsx ../../../apps/web/scripts/render-wrangler.ts"
   },
   "dependencies": {
     "@pulumi/cloudflare": "^5.49.0",

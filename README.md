@@ -71,7 +71,7 @@ The default scripts target the Node runtime.
 
 ```bash
 pnpm install
-cp .env.example .env       # edit DATABASE_URL / APP_URL / PORT if needed
+cp apps/web/.env.example apps/web/.env   # edit DATABASE_URL / APP_URL / PORT if needed
 pnpm db:migrate            # creates ./data/app.db and applies SQL migrations
 pnpm dev                   # vite dev server on http://localhost:3000
 ```

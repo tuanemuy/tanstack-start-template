@@ -14,14 +14,21 @@ import viteReact from "@vitejs/plugin-react";
 import rsc from "@vitejs/plugin-rsc";
 import { defineConfig } from "vite";
 
+// `@libsql/client` is here for the same reason as the gRPC packages:
+// inlining it strands the `require("@libsql/<platform>")` native lookup
+// inside the bundle, where it can no longer resolve through the
+// package's own node_modules.
 const gcpRuntimePackages = [
   "@google-cloud/pubsub",
   "@google-cloud/secret-manager",
   "google-auth-library",
+  "@libsql/client",
 ];
 const gcpRuntimeProvidedSubpaths = [
   /^@google-cloud\//,
   /^google-auth-library(\/|$)/,
+  /^@libsql\//,
+  /^libsql(\/|$)/,
 ];
 
 export default defineConfig({

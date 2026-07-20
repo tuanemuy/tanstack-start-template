@@ -39,10 +39,11 @@ if (stageArg === undefined || !isStage(stageArg)) {
 }
 const stage: Stage = stageArg;
 
-const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const webRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const repoRoot = resolve(webRoot, "../..");
 const resourcesDir = resolve(repoRoot, "infra/cloudflare/pulumi/resources");
-const templatePath = resolve(repoRoot, `wrangler.${stage}.toml.tpl`);
-const outPath = resolve(repoRoot, `wrangler.${stage}.toml`);
+const templatePath = resolve(webRoot, `wrangler.${stage}.toml.tpl`);
+const outPath = resolve(webRoot, `wrangler.${stage}.toml`);
 
 const raw = execFileSync(
   "pulumi",
