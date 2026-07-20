@@ -20,7 +20,9 @@ pnpm monorepo. One lockfile at the root; packages resolve each other via tsconfi
 - `infra/aws` (`@repo/infra-aws`) — CDK stack. `infra/cloudflare` (Pulumi) and `infra/gcp` (Terraform) are not npm packages and live outside the workspace.
 - Root — shared tooling only: Biome, vitest orchestration configs, delegating scripts. `@types/*` are publicly hoisted (see `pnpm-workspace.yaml`) so `.d.ts` files inside the pnpm store can resolve `react` / `vitest` types.
 
-A future app (MCP server, CLI, …) is a new `apps/*` package that maps the same `@repo/core/*` tsconfig path and owns its DI wiring or reuses one from `packages/core/src/application/di/`.
+- `apps/mcp` (`@repo/mcp`) and `apps/cli` (`@repo/cli`) — reference non-web presentation surfaces over the same usecases: an MCP server (stdio) and a CLI. Each validates input at its own transport boundary, reuses the Node DI wiring from `packages/core/src/application/di/serverNode.ts`, and reports errors via their `kind`-tagged serialized form. Delete them if you don't need them.
+
+A future app is a new `apps/*` package that maps the same `@repo/core/*` tsconfig path and owns its DI wiring or reuses one from `packages/core/src/application/di/`.
 
 ## Development Commands
 

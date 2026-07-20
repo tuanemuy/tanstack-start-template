@@ -30,6 +30,8 @@ packages/
       ├─ adapters/    # concrete port implementations (DB, workers, external services)
       └─ lib/         # structural primitives shared by every layer (e.g. CodedError)
 apps/
+├─ mcp/               # @repo/mcp — reference MCP server (stdio) over the core usecases
+├─ cli/               # @repo/cli — reference CLI over the core usecases
 └─ web/               # @repo/web — the TanStack Start app + its runtime configs
    ├─ app/
    │  ├─ presentation/ # server-function entry, error responses, input validation
