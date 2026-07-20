@@ -7,12 +7,12 @@ import "dotenv/config";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import { migrate } from "drizzle-orm/libsql/migrator";
 import {
   applyPragmas,
   createLibsqlClient,
   getDatabase,
-} from "@/core/adapters/libsql/client";
+} from "@repo/core/adapters/libsql/client";
+import { migrate } from "drizzle-orm/libsql/migrator";
 
 async function main(): Promise<void> {
   const url = process.env["DATABASE_URL"];

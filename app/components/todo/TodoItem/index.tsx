@@ -1,14 +1,14 @@
 "use client";
 
+import type { TodoView } from "@repo/core/application/todo/view";
 import { useRouter } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useId, useOptimistic, useState, useTransition } from "react";
-import type { TodoView } from "@/core/application/todo/view";
-import { displayError } from "@/core/presentation/errorDisplay";
+import { displayError } from "@/presentation/errorDisplay";
 import {
   extractSerializedError,
   type SerializedError,
-} from "@/core/presentation/errorResponse";
+} from "@/presentation/errorResponse";
 import { TODO_TITLE_MAX_LENGTH } from "../schema";
 import { changeTodoStatusFn, renameTodoFn } from "./action";
 

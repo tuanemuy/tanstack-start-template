@@ -10,8 +10,9 @@ export default defineConfig({
     globals: true,
     environment: "node",
     include: [
-      "app/core/adapters/libsql/__tests__/**/*.integration.test.ts",
-      "app/core/adapters/node/__tests__/**/*.integration.test.ts",
+      "packages/core/src/adapters/libsql/__tests__/**/*.integration.test.ts",
+      "packages/core/src/adapters/node/__tests__/**/*.integration.test.ts",
+      "app/worker/node/__tests__/**/*.integration.test.ts",
     ],
     exclude: ["**/node_modules/**", "**/dist/**", "**/.direnv/**"],
   },

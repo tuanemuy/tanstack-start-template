@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { sanitizeRouteError } from "@/core/presentation/errorDisplay";
-import { buildHead } from "@/core/presentation/head";
+import { sanitizeRouteError } from "@/presentation/errorDisplay";
+import { buildHead } from "@/presentation/head";
 
 export const Route = createFileRoute("/")({
   head: ({ match }) => {

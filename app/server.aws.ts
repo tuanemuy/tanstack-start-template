@@ -3,23 +3,26 @@ import { Buffer } from "node:buffer";
 import process from "node:process";
 import { LambdaClient } from "@aws-sdk/client-lambda";
 import { SecretsManagerClient } from "@aws-sdk/client-secrets-manager";
-import type {
-  APIGatewayProxyEventV2,
-  APIGatewayProxyStructuredResultV2,
-  Context,
-} from "aws-lambda";
-import { LambdaInvokeRelayTrigger } from "@/core/adapters/aws/lambdaInvokeRelayTrigger";
-import { loadSecretsIntoEnv } from "@/core/adapters/aws/secretsLoader";
-import { createLibsqlClient, getDatabase } from "@/core/adapters/libsql/client";
-import { installContainerStore } from "@/core/application/di/containerStore";
+import { LambdaInvokeRelayTrigger } from "@repo/core/adapters/aws/lambdaInvokeRelayTrigger";
+import { loadSecretsIntoEnv } from "@repo/core/adapters/aws/secretsLoader";
+import {
+  createLibsqlClient,
+  getDatabase,
+} from "@repo/core/adapters/libsql/client";
+import { installContainerStore } from "@repo/core/application/di/containerStore";
 import {
   type AwsServerEnv,
   createAwsRequestContainer,
   readAwsRequestServerConfig,
   readAwsServerEnv,
-} from "@/core/application/di/serverAws";
-import type { RequestContainer } from "@/core/application/di/types";
-import { ConsoleLogger } from "@/core/application/ports/logger";
+} from "@repo/core/application/di/serverAws";
+import type { RequestContainer } from "@repo/core/application/di/types";
+import { ConsoleLogger } from "@repo/core/application/ports/logger";
+import type {
+  APIGatewayProxyEventV2,
+  APIGatewayProxyStructuredResultV2,
+  Context,
+} from "aws-lambda";
 
 // SSR and RSC are separate module graphs in the same isolate; pin the
 // ALS on `globalThis` so both resolve the same store.

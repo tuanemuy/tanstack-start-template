@@ -1,8 +1,8 @@
 import { createServerFn } from "@tanstack/react-start";
 import { renderServerComponent } from "@tanstack/react-start/rsc";
-import { errorResponseMiddleware } from "@/core/presentation/errorResponseMiddleware";
-import { paginationSchema } from "@/core/presentation/pagination";
-import { validateInput } from "@/core/presentation/validator";
+import { errorResponseMiddleware } from "@/presentation/errorResponseMiddleware";
+import { paginationSchema } from "@/presentation/pagination";
+import { validateInput } from "@/presentation/validator";
 
 export const renderTodoList = createServerFn({ method: "GET" })
   .middleware([errorResponseMiddleware])

@@ -5,8 +5,11 @@ import "dotenv/config";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import {
+  createLibsqlClient,
+  getDatabase,
+} from "@repo/core/adapters/libsql/client";
 import { migrate } from "drizzle-orm/libsql/migrator";
-import { createLibsqlClient, getDatabase } from "@/core/adapters/libsql/client";
 
 async function main(): Promise<void> {
   const url = process.env["DATABASE_URL"];

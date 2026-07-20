@@ -8,17 +8,17 @@ import {
   readPruneTuning,
   readRelayTuning,
   type ServerEnv,
-} from "@/core/application/di/serverCloudflare";
+} from "@repo/core/application/di/serverCloudflare";
 import {
   type EventDispatcher,
   type ProcessOutboxEventsOptions,
   processOutboxEvents,
-} from "@/core/application/workers/eventRelayWorker";
+} from "@repo/core/application/workers/eventRelayWorker";
 import {
   type PruneOutboxOptions,
   pruneOutbox,
-} from "@/core/application/workers/outboxPrune";
-import type { DomainEvent } from "@/core/domain/common/event";
+} from "@repo/core/application/workers/outboxPrune";
+import type { DomainEvent } from "@repo/core/domain/common/event";
 
 export type RelayEnv = ServerEnv &
   Readonly<{

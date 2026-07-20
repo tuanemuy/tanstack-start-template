@@ -1,24 +1,24 @@
 import {
   type ConsumerHandler,
   createInMemoryQueueDispatcher,
-} from "@/core/adapters/node/inMemoryQueueDispatcher";
+} from "@repo/core/adapters/node/inMemoryQueueDispatcher";
 import {
   createInProcessRelayTrigger,
   type InProcessRelayTrigger,
-} from "@/core/adapters/node/inProcessRelayTrigger";
-import type { WorkerContainer } from "@/core/application/di/types";
-import type { Logger } from "@/core/application/ports/logger";
-import type { RelayTrigger } from "@/core/application/ports/relayTrigger";
+} from "@repo/core/adapters/node/inProcessRelayTrigger";
+import type { WorkerContainer } from "@repo/core/application/di/types";
+import type { Logger } from "@repo/core/application/ports/logger";
+import type { RelayTrigger } from "@repo/core/application/ports/relayTrigger";
 import {
   type EventDispatcher,
   type ProcessOutboxEventsOptions,
   processOutboxEvents,
-} from "@/core/application/workers/eventRelayWorker";
+} from "@repo/core/application/workers/eventRelayWorker";
 import {
   DEFAULT_OUTBOX_RETENTION_MS,
   pruneOutbox,
-} from "@/core/application/workers/outboxPrune";
-import type { DomainEvent } from "@/core/domain/common/event";
+} from "@repo/core/application/workers/outboxPrune";
+import type { DomainEvent } from "@repo/core/domain/common/event";
 
 export type NodeWorkerRunnerTuning = Readonly<{
   relayIntervalMs?: number;

@@ -3,14 +3,14 @@
 // dynamic imports traced by vite.
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { ExecutionContext } from "@cloudflare/workers-types";
-import { default as defaultEntry } from "@tanstack/react-start/server-entry";
-import { installContainerStore } from "@/core/application/di/containerStore";
+import { installContainerStore } from "@repo/core/application/di/containerStore";
 import {
   createRequestContainer,
   readRequestServerConfig,
   type ServerEnv,
-} from "@/core/application/di/serverCloudflare";
-import type { RequestContainer } from "@/core/application/di/types";
+} from "@repo/core/application/di/serverCloudflare";
+import type { RequestContainer } from "@repo/core/application/di/types";
+import { default as defaultEntry } from "@tanstack/react-start/server-entry";
 
 // SSR and RSC are separate module graphs in the same isolate; pin the
 // ALS on `globalThis` (and on `import.meta.hot.data` for HMR) so both

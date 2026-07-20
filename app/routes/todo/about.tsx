@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { buildHead } from "@/core/presentation/head";
+import { buildHead } from "@/presentation/head";
 
 export const Route = createFileRoute("/todo/about")({
   head: ({ match }) => {

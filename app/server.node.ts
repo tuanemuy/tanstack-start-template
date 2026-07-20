@@ -6,16 +6,16 @@ import {
   applyPragmas,
   createLibsqlClient,
   getDatabase,
-} from "@/core/adapters/libsql/client";
-import { installContainerStore } from "@/core/application/di/containerStore";
+} from "@repo/core/adapters/libsql/client";
+import { installContainerStore } from "@repo/core/application/di/containerStore";
 import {
   createNodeRequestContainer,
   createNodeWorkerContainer,
   readNodeRequestServerConfig,
   readNodeServerEnv,
-} from "@/core/application/di/serverNode";
-import type { RequestContainer } from "@/core/application/di/types";
-import { ConsoleLogger } from "@/core/application/ports/logger";
+} from "@repo/core/application/di/serverNode";
+import type { RequestContainer } from "@repo/core/application/di/types";
+import { ConsoleLogger } from "@repo/core/application/ports/logger";
 import { createNodeWorkerRunner } from "@/worker/node/runner";
 
 // SSR and RSC are separate module graphs in the same process; pin the

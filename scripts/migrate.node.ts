@@ -4,12 +4,12 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import { migrate } from "drizzle-orm/libsql/migrator";
 import {
   applyPragmas,
   createLibsqlClient,
   getDatabase,
-} from "@/core/adapters/libsql/client";
+} from "@repo/core/adapters/libsql/client";
+import { migrate } from "drizzle-orm/libsql/migrator";
 
 const DEFAULT_DATABASE_URL = "file:./data/app.db";
 

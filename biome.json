@@ -9,6 +9,7 @@
     "ignoreUnknown": false,
     "includes": [
       "app/**",
+      "packages/**",
       "scripts/**",
       "infra/**",
       "*.ts",
@@ -26,6 +27,7 @@
     "enabled": true,
     "includes": [
       "app/**",
+      "packages/**",
       "scripts/**",
       "infra/**",
       "!**/components/ui/**",

@@ -2,24 +2,23 @@ import process from "node:process";
 import { PubSub } from "@google-cloud/pubsub";
 import { SecretManagerServiceClient } from "@google-cloud/secret-manager";
 import type { Client } from "@libsql/client";
-import { GoogleAuth } from "google-auth-library";
-import { CloudRunRelayTrigger } from "@/core/adapters/gcp/cloudRunRelayTrigger";
-import { createPubsubQueueDispatcher } from "@/core/adapters/gcp/pubsubQueueDispatcher";
-import { loadSecretsIntoEnv } from "@/core/adapters/gcp/secretsLoader";
+import { CloudRunRelayTrigger } from "@repo/core/adapters/gcp/cloudRunRelayTrigger";
+import { createPubsubQueueDispatcher } from "@repo/core/adapters/gcp/pubsubQueueDispatcher";
+import { loadSecretsIntoEnv } from "@repo/core/adapters/gcp/secretsLoader";
 import {
   applyPragmas,
   createLibsqlClient,
   type Database,
   getDatabase,
-} from "@/core/adapters/libsql/client";
+} from "@repo/core/adapters/libsql/client";
 import {
   createGcpWorkerContainer,
   type GcpServerEnv,
   readGcpServerEnv,
   readPruneTuning,
   readRelayTuning,
-} from "@/core/application/di/serverGcp";
-import type { WorkerContainer } from "@/core/application/di/types";
+} from "@repo/core/application/di/serverGcp";
+import type { WorkerContainer } from "@repo/core/application/di/types";
 import {
   DEFAULT_BATCH_SIZE,
   DEFAULT_MAX_ITERATIONS,
@@ -27,16 +26,17 @@ import {
   type EventDecoderRegistry,
   type ProcessOutboxEventsOptions,
   processOutboxEvents,
-} from "@/core/application/workers/eventRelayWorker";
+} from "@repo/core/application/workers/eventRelayWorker";
 import {
   type PruneOutboxOptions,
   pruneOutbox,
-} from "@/core/application/workers/outboxPrune";
+} from "@repo/core/application/workers/outboxPrune";
 import {
   type DomainEvent,
   type EventDecoder,
   EventId,
-} from "@/core/domain/common/event";
+} from "@repo/core/domain/common/event";
+import { GoogleAuth } from "google-auth-library";
 
 type WorkerBoot = Readonly<{
   env: GcpServerEnv;

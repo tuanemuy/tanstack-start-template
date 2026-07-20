@@ -2,9 +2,9 @@ import { createFileRoute } from "@tanstack/react-router";
 import { Suspense } from "react";
 import { TodoListSkeleton } from "@/components/todo/TodoListSkeleton";
 import { Deferred } from "@/components/ui/Deferred";
-import { sanitizeRouteError } from "@/core/presentation/errorDisplay";
-import { buildHead } from "@/core/presentation/head";
-import { paginationSearchSchema } from "@/core/presentation/pagination";
+import { sanitizeRouteError } from "@/presentation/errorDisplay";
+import { buildHead } from "@/presentation/head";
+import { paginationSearchSchema } from "@/presentation/pagination";
 import { renderTodoList } from "./-action";
 
 export const Route = createFileRoute("/todo/")({

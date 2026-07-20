@@ -1,4 +1,4 @@
-import type { Pagination } from "@/core/domain/common/pagination";
+import type { Pagination } from "@repo/core/domain/common/pagination";
 import { TodoBoard } from "../TodoBoard";
 import { loadTodos } from "./action";
 

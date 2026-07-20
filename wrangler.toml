@@ -25,12 +25,12 @@ binding = "ASSETS"
 APP_URL = "http://localhost:8787"
 
 # D1: read/write for the request path. Outbox writes happen here
-# transactionally with aggregate writes — see app/core/adapters/d1/.
+# transactionally with aggregate writes — see packages/core/src/adapters/d1/.
 [[d1_databases]]
 binding = "DB"
 database_name = "tanstack-start-template-d1"
 database_id = "00000000-0000-0000-0000-000000000000"
-migrations_dir = "app/core/adapters/d1/migrations"
+migrations_dir = "packages/core/src/adapters/d1/migrations"
 
 # Service Binding to the relay Worker — kicked from usecases right
 # after a UoW commit so newly-persisted outbox rows publish without
@@ -53,7 +53,7 @@ APP_URL = "http://localhost:8787"
 # Outbox relay tuning. Strings because wrangler `[vars]` cannot carry
 # numeric types; parsed + validated at the worker entry boundary by
 # `readRelayTuning(env)`. Values match the application-layer defaults
-# exported from `app/core/application/workers/eventRelayWorker.ts`.
+# exported from `packages/core/src/application/workers/eventRelayWorker.ts`.
 # Edit here (not in code) to tune prod / staging.
 OUTBOX_BATCH_SIZE = "100"
 OUTBOX_LEASE_MS = "300000"   # 5 min — covers worst-case single-batch dispatch
@@ -63,7 +63,7 @@ OUTBOX_MAX_ATTEMPTS = "2"    # multiplied by [env.consumer] max_retries — keep
 binding = "DB"
 database_name = "tanstack-start-template-d1"
 database_id = "00000000-0000-0000-0000-000000000000"
-migrations_dir = "app/core/adapters/d1/migrations"
+migrations_dir = "packages/core/src/adapters/d1/migrations"
 
 [[env.relay.queues.producers]]
 binding = "EVENTS_QUEUE"
@@ -93,7 +93,7 @@ APP_URL = "http://localhost:8787"
 binding = "DB"
 database_name = "tanstack-start-template-d1"
 database_id = "00000000-0000-0000-0000-000000000000"
-migrations_dir = "app/core/adapters/d1/migrations"
+migrations_dir = "packages/core/src/adapters/d1/migrations"
 
 [[env.consumer.queues.consumers]]
 queue = "tanstack-start-template-events"
@@ -121,14 +121,14 @@ compatibility_flags = ["nodejs_compat"]
 APP_URL = "http://localhost:8787"
 # Outbox pruner tuning. Parsed + validated at the worker entry boundary
 # by `readPruneTuning(env)`. Matches `DEFAULT_OUTBOX_RETENTION_MS` in
-# `app/core/application/workers/outboxPrune.ts`.
+# `packages/core/src/application/workers/outboxPrune.ts`.
 OUTBOX_RETENTION_MS = "604800000"   # 7 days
 
 [[env.pruner.d1_databases]]
 binding = "DB"
 database_name = "tanstack-start-template-d1"
 database_id = "00000000-0000-0000-0000-000000000000"
-migrations_dir = "app/core/adapters/d1/migrations"
+migrations_dir = "packages/core/src/adapters/d1/migrations"
 
 [env.pruner.triggers]
 crons = ["0 3 * * *"] # 03:00 UTC daily
@@ -153,7 +153,7 @@ APP_URL = "http://localhost:8787"
 binding = "DB"
 database_name = "tanstack-start-template-d1"
 database_id = "00000000-0000-0000-0000-000000000000"
-migrations_dir = "app/core/adapters/d1/migrations"
+migrations_dir = "packages/core/src/adapters/d1/migrations"
 
 [[env.dlq.queues.consumers]]
 queue = "tanstack-start-template-events-dlq"

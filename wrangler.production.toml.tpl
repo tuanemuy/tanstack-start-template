@@ -33,7 +33,7 @@ APP_URL = "${APP_URL}"
 binding = "DB"
 database_name = "${D1_DATABASE_NAME}"
 database_id = "${D1_DATABASE_ID}"
-migrations_dir = "app/core/adapters/d1/migrations"
+migrations_dir = "packages/core/src/adapters/d1/migrations"
 
 [[services]]
 binding = "RELAY"
@@ -57,7 +57,7 @@ OUTBOX_MAX_ATTEMPTS = "2"    # multiplied by [env.consumer] max_retries — keep
 binding = "DB"
 database_name = "${D1_DATABASE_NAME}"
 database_id = "${D1_DATABASE_ID}"
-migrations_dir = "app/core/adapters/d1/migrations"
+migrations_dir = "packages/core/src/adapters/d1/migrations"
 
 [[env.relay.queues.producers]]
 binding = "EVENTS_QUEUE"
@@ -81,7 +81,7 @@ APP_URL = "${APP_URL}"
 binding = "DB"
 database_name = "${D1_DATABASE_NAME}"
 database_id = "${D1_DATABASE_ID}"
-migrations_dir = "app/core/adapters/d1/migrations"
+migrations_dir = "packages/core/src/adapters/d1/migrations"
 
 [[env.consumer.queues.consumers]]
 queue = "${EVENTS_QUEUE_NAME}"
@@ -106,7 +106,7 @@ OUTBOX_RETENTION_MS = "604800000"   # 7 days
 binding = "DB"
 database_name = "${D1_DATABASE_NAME}"
 database_id = "${D1_DATABASE_ID}"
-migrations_dir = "app/core/adapters/d1/migrations"
+migrations_dir = "packages/core/src/adapters/d1/migrations"
 
 [env.pruner.triggers]
 crons = ["0 3 * * *"] # 03:00 UTC daily
@@ -126,7 +126,7 @@ APP_URL = "${APP_URL}"
 binding = "DB"
 database_name = "${D1_DATABASE_NAME}"
 database_id = "${D1_DATABASE_ID}"
-migrations_dir = "app/core/adapters/d1/migrations"
+migrations_dir = "packages/core/src/adapters/d1/migrations"
 
 [[env.dlq.queues.consumers]]
 queue = "${DLQ_QUEUE_NAME}"

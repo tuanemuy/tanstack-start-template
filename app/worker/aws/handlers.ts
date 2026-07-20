@@ -6,26 +6,21 @@ import {
 import { SecretsManagerClient } from "@aws-sdk/client-secrets-manager";
 import { SQSClient } from "@aws-sdk/client-sqs";
 import type { Client } from "@libsql/client";
-import type {
-  SQSBatchItemFailure,
-  SQSBatchResponse,
-  SQSEvent,
-} from "aws-lambda";
-import { loadSecretsIntoEnv } from "@/core/adapters/aws/secretsLoader";
-import { createSqsQueueDispatcher } from "@/core/adapters/aws/sqsQueueDispatcher";
+import { loadSecretsIntoEnv } from "@repo/core/adapters/aws/secretsLoader";
+import { createSqsQueueDispatcher } from "@repo/core/adapters/aws/sqsQueueDispatcher";
 import {
   createLibsqlClient,
   type Database,
   getDatabase,
-} from "@/core/adapters/libsql/client";
+} from "@repo/core/adapters/libsql/client";
 import {
   type AwsServerEnv,
   createAwsWorkerContainer,
   readAwsServerEnv,
   readPruneTuning,
   readRelayTuning,
-} from "@/core/application/di/serverAws";
-import type { WorkerContainer } from "@/core/application/di/types";
+} from "@repo/core/application/di/serverAws";
+import type { WorkerContainer } from "@repo/core/application/di/types";
 import {
   DEFAULT_BATCH_SIZE,
   DEFAULT_MAX_ITERATIONS,
@@ -33,16 +28,21 @@ import {
   type EventDecoderRegistry,
   type ProcessOutboxEventsOptions,
   processOutboxEvents,
-} from "@/core/application/workers/eventRelayWorker";
+} from "@repo/core/application/workers/eventRelayWorker";
 import {
   type PruneOutboxOptions,
   pruneOutbox,
-} from "@/core/application/workers/outboxPrune";
+} from "@repo/core/application/workers/outboxPrune";
 import {
   type DomainEvent,
   type EventDecoder,
   EventId,
-} from "@/core/domain/common/event";
+} from "@repo/core/domain/common/event";
+import type {
+  SQSBatchItemFailure,
+  SQSBatchResponse,
+  SQSEvent,
+} from "aws-lambda";
 
 /**
  * Cold-start cache: Lambda re-uses the container across invocations on a

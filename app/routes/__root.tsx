@@ -7,9 +7,9 @@ import {
 import { TanStackRouterDevtools } from "@tanstack/react-router-devtools";
 import { createServerFn } from "@tanstack/react-start";
 import type { ReactNode } from "react";
-import { sanitizeRouteError } from "@/core/presentation/errorDisplay";
-import { errorResponseMiddleware } from "@/core/presentation/errorResponseMiddleware";
-import { buildHead } from "@/core/presentation/head";
+import { sanitizeRouteError } from "@/presentation/errorDisplay";
+import { errorResponseMiddleware } from "@/presentation/errorResponseMiddleware";
+import { buildHead } from "@/presentation/head";
 import appCss from "../styles/index.css?url";
 
 // Server fns only reachable from `"use client"` components miss the
@@ -22,7 +22,7 @@ export const loadAppContext = createServerFn({ method: "GET" })
   .middleware([errorResponseMiddleware])
   .handler(async () => {
     const { getContainer } = await import(
-      "@/core/application/di/containerStore"
+      "@repo/core/application/di/containerStore"
     );
     const container = await getContainer();
     return { config: container.config };
