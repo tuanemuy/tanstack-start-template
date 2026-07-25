@@ -8,7 +8,7 @@
 // `.env` files are intentionally NOT loaded here:
 //   - Cloud Run / Pub/Sub deployments inject env vars via
 //     `--set-env-vars` and Secret Manager bindings.
-//   - For local container runs, pass `--env-file=.env.gcp` to
+//   - For local container runs, pass `--env-file=apps/web/.env.gcp` to
 //     `docker run`, or use Node 22's built-in `node --env-file=...`.
 //
 // The launcher loads `dist/server/server.gcp.js` (the bundle vite

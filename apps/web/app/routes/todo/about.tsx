@@ -16,8 +16,8 @@ function TodoAboutPage() {
     <section>
       <h1>このテンプレについて</h1>
       <p>
-        ヘッダー・サイドバーは親ルート（<code>app/routes/todo/route.tsx</code>
-        ）の
+        ヘッダー・サイドバーは親ルート（
+        <code>apps/web/app/routes/todo/route.tsx</code>）の
         <code>component</code> に置いてある。<code>/todo</code> と{" "}
         <code>/todo/about</code>{" "}
         を行き来してもサイドバー開閉状態が保持されることを 確認してみて。

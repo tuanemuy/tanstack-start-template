@@ -1,5 +1,3 @@
-import "dotenv/config";
-
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
@@ -9,7 +7,11 @@ import {
   createLibsqlClient,
   getDatabase,
 } from "@repo/core/adapters/libsql/client";
+import { config as loadEnv } from "dotenv";
 import { migrate } from "drizzle-orm/libsql/migrator";
+
+const scriptDir = path.dirname(fileURLToPath(import.meta.url));
+loadEnv({ path: path.resolve(scriptDir, "../.env"), quiet: true });
 
 const DEFAULT_DATABASE_URL = "file:./data/app.db";
 
@@ -37,9 +39,8 @@ async function main(): Promise<void> {
   const db = getDatabase(client);
 
   // Resolve relative to this file so cwd doesn't affect the lookup.
-  const here = path.dirname(fileURLToPath(import.meta.url));
   const migrationsFolder = path.resolve(
-    here,
+    scriptDir,
     "../../../packages/core/src/adapters/libsql/migrations",
   );
 

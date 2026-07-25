@@ -15,7 +15,7 @@ Tests are classified along two axes: **layer × purpose**. By separating a fast 
 ### Integration (`pnpm test:integration`)
 
 - **Targets**: the Drizzle SQLite adapter implementation, adapter × application integration, concurrent / OCC (optimistic concurrency control) scenarios, and outbox poll / dispatch behavior.
-- **Dependencies**: real SQLite (in-memory). `setupTestContainer()` builds a container with migrations applied on top of `:memory:`, and closes the client in afterEach.
+- **Dependencies**: real SQLite through two pools. Cloudflare tests use an in-memory Miniflare D1 binding; Node tests create isolated temporary libSQL databases and close each client during teardown.
 - **Aim**: realistically verify transaction rollback, the adapter's built-in `SQLITE_BUSY` retry, `OptimisticLockFailure`, and the outbox's `claimPending` / `finalize`.
 - **Speed**: roughly 10× unit. Day to day you run `pnpm test:unit`, and run `pnpm test:integration` when you touch an adapter or before a PR.
 - **Naming**: `**/__tests__/<target>.integration.test.ts` (e.g. `todo.integration.test.ts`, `todoRepository.integration.test.ts`, `outboxRepository.integration.test.ts`).
@@ -42,7 +42,8 @@ Fakes for repositories, the UoW, and the Clock are intentionally not kept.
 
 ## Real DB test (integration) policy
 
-- Integration tests run against a **Workers isolate + Miniflare D1 binding** via `vitest-pool-workers`. `vitest.config.integration.ts` handles the pool configuration, and `packages/core/src/adapters/d1/__tests__/setup.ts` handles applying migrations and the `beforeEach` TRUNCATE.
+- `pnpm test:integration:cf` runs D1/application/Cloudflare-worker tests against a **Workers isolate + Miniflare D1 binding** via `vitest-pool-workers`. `vitest.config.integration.ts` handles the pool configuration, and `packages/core/src/adapters/d1/__tests__/setup.ts` handles applying migrations and the `beforeEach` TRUNCATE.
+- `pnpm test:integration:node` runs libSQL adapter and Node worker-runner tests through `vitest.config.integration.node.ts`; each test owns an isolated temporary database.
 - `setupTestContainer()` (`packages/core/src/application/__tests__/helpers.ts`) returns a production-equivalent, D1-backed container from `env.DB`. Cross-test state cleanup is handled by the global setup, so the helper is just a factory + getter.
 - File names are `*.integration.test.ts`. The Node pool's `vitest.config.ts` excludes this pattern and runs only unit tests.
 - When writing tests that are conscious of concurrent / OCC, use patterns such as firing `run` simultaneously with `Promise.all` and observing `OptimisticLockFailure`. In D1's deferred-batch UoW, a race branches such that one side hits a CHECK violation on `_occ_guard` and the other gets an empty batch, so keep assertions loose enough to pass under either failure shape for stability.
@@ -55,19 +56,19 @@ Fakes for repositories, the UoW, and the Clock are intentionally not kept.
 
 ## Timeout / flakiness
 
-- `vitest.config.ts` sets `testTimeout: 15_000`, `hookTimeout: 15_000`. Unit finishes in a few hundred milliseconds, so this ceiling is effectively integration-only.
+- The configs currently use Vitest's default timeouts. Unit tests finish in a few hundred milliseconds; if an integration test needs a longer ceiling, set it in the runtime-specific integration config rather than slowing the unit suite.
 - If the backoff of the adapter's built-in transient retry stacks up, a single test can consume several seconds. When you sense flakiness, before fixing the clock with per-test `test.extend` / `vi.useFakeTimers`, first check the adapter's retry settings.
 - When a test with no retries (a simple CRUD success path, etc.) times out, a `SQLITE_BUSY` is often lurking. Check whether it reproduces on the integration side.
 
 ## Commands
 
 | Purpose | Command |
-|---|---|
+| --- | --- |
 | All | `pnpm test` |
 | Unit only | `pnpm test:unit` |
 | Integration only | `pnpm test:integration` |
-| Specific domain (application) | `TEST_DOMAIN=todo pnpm test:domain` |
-| Specific domain (domain) | `TEST_DOMAIN=todo pnpm test:domain-layer` |
+| Todo application unit tests | `pnpm exec vitest run packages/core/src/application/todo` |
+| Todo domain unit tests | `pnpm exec vitest run packages/core/src/domain/todo` |
 
 ## Coverage
 

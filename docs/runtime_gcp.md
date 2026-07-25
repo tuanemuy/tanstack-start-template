@@ -24,10 +24,10 @@ See [`runtime_node.md`](./runtime_node.md) for the local-development single-proc
 # 1. Bootstrap Turso outside of GCP.
 turso db create my-app
 turso db show my-app --url            # libsql://...
-turso db tokens create my-app         # paste into .env.gcp
+turso db tokens create my-app         # paste into apps/web/.env.gcp
 
 # 2. Apply migrations against the remote DB from a developer machine.
-cp .env.gcp.example .env.gcp
+cp apps/web/.env.gcp.example apps/web/.env.gcp
 # edit DATABASE_URL / DATABASE_AUTH_TOKEN / APP_URL
 pnpm db:migrate:gcp
 
@@ -50,7 +50,7 @@ cd infra/gcp/example
 
 On Cloud Run the env vars come from `--set-env-vars` / Secret Manager bindings / the Terraform module. The schema is validated at boot in `packages/core/src/application/di/serverGcp.ts`.
 
-For local container runs, pass `--env-file=.env.gcp` to `docker run` (or invoke the launcher directly with Node's built-in `node --env-file=.env.gcp apps/web/scripts/listen.gcp.mjs`). The launcher itself is plain ESM JS and does not load `.env` files — keeping dev-only loaders out of the production image is intentional.
+For local container runs, pass `--env-file=apps/web/.env.gcp` to `docker run` (or invoke the launcher directly with Node's built-in `node --env-file=apps/web/.env.gcp apps/web/scripts/listen.gcp.mjs`). The launcher itself is plain ESM JS and does not load `.env` files — keeping dev-only loaders out of the production image is intentional.
 
 | Variable                          | Required for                | Default | Purpose                                                                                       |
 | --------------------------------- | --------------------------- | ------- | --------------------------------------------------------------------------------------------- |
@@ -124,7 +124,7 @@ Turso is SQLite-compatible, so the existing Drizzle migration set works as-is:
 pnpm db:migrate:gcp     # tsx apps/web/scripts/migrate.gcp.ts against DATABASE_URL/DATABASE_AUTH_TOKEN
 ```
 
-`__drizzle_migrations` is created in the Turso DB so reruns are idempotent. Run this from your dev machine or as a Cloud Build step before each release.
+The migrator loads `apps/web/.env.gcp` unless the process environment already provides the variables. `__drizzle_migrations` is created in the Turso DB so reruns are idempotent. Run this from your dev machine or as a Cloud Build step before each release.
 
 ## Secrets
 
@@ -140,7 +140,7 @@ The Turso URL (`DATABASE_URL`) is treated as low-sensitivity and lives as a plai
 The GCP runtime is not meant to be run end-to-end locally — Pub/Sub push delivery in particular needs an external HTTP target the emulator can reach. Two reasonable strategies:
 
 - **Default: keep using the Node runtime for local dev.** `pnpm dev` (Node, single-process) covers everything the GCP runtime does. The container shape and Pub/Sub plumbing only matter at staging time.
-- **Container parity loop:** `docker build -f apps/web/Dockerfile.gcp -t local/server . && docker run -p 8080:8080 --env-file .env.gcp local/server` boots the app role against the remote Turso DB. The relay / consumer roles can be exercised by `curl`-ing them with a mock Pub/Sub envelope.
+- **Container parity loop:** `docker build -f apps/web/Dockerfile.gcp -t local/server . && docker run -p 8080:8080 --env-file apps/web/.env.gcp local/server` boots the app role against the remote Turso DB. The relay / consumer roles can be exercised by `curl`-ing them with a mock Pub/Sub envelope.
 
 For the Pub/Sub emulator, run `gcloud beta emulators pubsub start --host-port=0.0.0.0:8085` and set `PUBSUB_EMULATOR_HOST=localhost:8085` for the relay process; the consumer side still needs you to manually craft `POST /` calls.
 

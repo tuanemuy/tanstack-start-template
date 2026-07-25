@@ -4,7 +4,7 @@
  * placeholders with outputs from the Cloudflare resources Pulumi stack.
  *
  * Usage:
- *   pnpm tsx scripts/render-wrangler.ts <stage>
+ *   pnpm cf:render:<stage>
  *
  * Placeholders recognised in the template (any `${NAME}` occurrence is
  * substituted; unknown names abort the run so we never ship a half-rendered
@@ -34,7 +34,7 @@ function isStage(value: string): value is Stage {
 
 const stageArg = process.argv[2];
 if (stageArg === undefined || !isStage(stageArg)) {
-  console.error(`usage: render-wrangler.ts <${SUPPORTED_STAGES.join("|")}>`);
+  console.error(`usage: pnpm cf:render:<${SUPPORTED_STAGES.join("|")}>`);
   process.exit(1);
 }
 const stage: Stage = stageArg;

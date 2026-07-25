@@ -1,5 +1,5 @@
 # Staging deploy config TEMPLATE — rendered to `wrangler.staging.toml` by
-# `scripts/render-wrangler.ts staging`, which substitutes `${...}`
+# `pnpm cf:render:staging`, which substitutes `${...}`
 # placeholders with outputs from the `cf-resources/staging` Pulumi stack.
 #
 # Source of truth: this `.tpl` file (committed) + Pulumi state.
@@ -8,7 +8,7 @@
 #
 # === Before first deploy =================================================
 #   1. `pulumi -C infra/cloudflare/pulumi/resources -s staging up`
-#   2. `pnpm tsx scripts/render-wrangler.ts staging`
+#   2. `pnpm cf:render:staging`
 #   3. `wrangler secret put <NAME> --config wrangler.staging.toml [--env <role>]`
 #   4. `wrangler deploy -c wrangler.staging.toml` (+ each `--env <role>`)
 #   5. `pulumi -C infra/cloudflare/pulumi/routes -s staging up`

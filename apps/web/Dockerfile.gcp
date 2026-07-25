@@ -52,6 +52,6 @@ EXPOSE 8080
 
 # Cloud Run injects env vars natively (`--set-env-vars`, Secret Manager
 # bindings), so the launcher does not load `.env` files. For local
-# container runs that need a .env file, pass `--env-file=.env.gcp` to
+# container runs that need a .env file, pass `--env-file=apps/web/.env.gcp` to
 # `docker run`.
 CMD ["node", "scripts/listen.gcp.mjs"]

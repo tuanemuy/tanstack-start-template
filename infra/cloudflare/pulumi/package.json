@@ -1,9 +1,10 @@
 {
-  "name": "tanstack-start-template-infra-cloudflare",
+  "name": "@repo/infra-cloudflare",
   "version": "0.0.0",
   "private": true,
   "type": "module",
   "scripts": {
+    "typecheck": "tsc --noEmit",
     "preview:resources": "pulumi -C resources preview",
     "up:resources": "pulumi -C resources up",
     "preview:routes": "pulumi -C routes preview",

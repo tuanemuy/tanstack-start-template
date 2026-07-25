@@ -19,7 +19,7 @@
         default = pkgs.mkShell {
           buildInputs = with pkgs; [
             biome
-            nodejs_24
+            nodejs_22
             pnpm
             tailwindcss-language-server
             vtsls

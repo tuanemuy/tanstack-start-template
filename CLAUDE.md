@@ -17,7 +17,9 @@ pnpm monorepo. One lockfile at the root; packages resolve each other via tsconfi
 
 - `packages/core` (`@repo/core`) — domain / application / adapters + shared `lib/` primitives. Framework-free; imported everywhere as `@repo/core/*`.
 - `apps/web` (`@repo/web`) — the TanStack Start app: routes, components, the presentation layer, per-runtime server entries and workers, `scripts/`, and all runtime configs (vite / wrangler / drizzle / Dockerfile).
-- `infra/aws` (`@repo/infra-aws`) — CDK stack. `infra/cloudflare` (Pulumi) and `infra/gcp` (Terraform) are not npm packages and live outside the workspace.
+- `infra/aws` (`@repo/infra-aws`) — CDK stack.
+- `infra/cloudflare/pulumi` (`@repo/infra-cloudflare`) — Pulumi resources and Wrangler-config rendering.
+- `infra/gcp` — Terraform only; it is not an npm package and lives outside the workspace.
 - Root — shared tooling only: Biome, vitest orchestration configs, delegating scripts. `@types/*` are publicly hoisted (see `pnpm-workspace.yaml`) so `.d.ts` files inside the pnpm store can resolve `react` / `vitest` types.
 
 A future app (MCP server, CLI, …) is a new `apps/*` package that maps the same `@repo/core/*` tsconfig path and owns its DI wiring or reuses one from `packages/core/src/application/di/`.
@@ -83,15 +85,16 @@ Each of these is enforced in code and documented in library-level JSDoc at the r
 
 ## Reference runtimes
 
-The template ships three reference runtime wirings — Node.js + libSQL (single process), Cloudflare Workers + D1 + Queues, and AWS Lambda + Turso + SQS — as worked examples of swapping the adapter and entry-point layers while keeping `domain` / `application` / `presentation` intact. **Pick one and delete the others**, or keep multiple if you genuinely need multiple targets; the template does not assume you maintain a multi-runtime deployment.
+The template ships four reference runtime wirings — Node.js + libSQL (single process), Cloudflare Workers + D1 + Queues, AWS Lambda + Turso + SQS, and GCP Cloud Run + Turso + Pub/Sub — as worked examples of swapping the adapter and entry-point layers while keeping `domain` / `application` / `presentation` intact. **Pick one and delete the others**, or keep multiple if you genuinely need multiple targets; the template does not assume you maintain a multi-runtime deployment.
 
 Entry points by runtime:
 
 - **Cloudflare**: `apps/web/app/server.cloudflare.ts` (fetch), `apps/web/app/worker/cloudflare/{relay,consumer,pruner,dlq}.ts`, wired by `packages/core/src/application/di/serverCloudflare.ts`.
 - **Node**: `apps/web/app/server.node.ts` (fetch handler + boot), `apps/web/app/worker/node/runner.ts` (single-process orchestrator of all four roles), `apps/web/scripts/listen.node.ts` (production launcher), `apps/web/scripts/migrate.node.ts` (libSQL migrator). Wired by `packages/core/src/application/di/serverNode.ts`.
 - **AWS**: `apps/web/app/server.aws.ts` (API Gateway → fetch), `apps/web/app/worker/aws/{relay,consumer,pruner,dlq}.ts` (thin role-typed wrappers over shared `handlers.ts`), `apps/web/scripts/migrate.aws.ts` (Turso migrator), `infra/aws/` (CDK stack). Wired by `packages/core/src/application/di/serverAws.ts`.
+- **GCP**: `apps/web/app/server.gcp.ts` (Cloud Run role dispatcher), `apps/web/app/worker/gcp/{relay,consumer,dlq}.ts`, `apps/web/scripts/migrate.gcp.ts` (Turso migrator), `infra/gcp/` (Terraform examples). Wired by `packages/core/src/application/di/serverGcp.ts`.
 
-Per-runtime operational guidance lives in `docs/runtime_node.md`, `docs/runtime_cloudflare.md`, and `docs/runtime_aws.md`. The Node runtime is the default for `pnpm dev` / `pnpm build` / `pnpm start`; the CF runtime is reached through the `:cf` script suffix and the AWS runtime through `:aws`.
+Per-runtime operational guidance lives in `docs/runtime_node.md`, `docs/runtime_cloudflare.md`, `docs/runtime_aws.md`, and `docs/runtime_gcp.md`. The Node runtime is the default for `pnpm dev` / `pnpm build` / `pnpm start`; the other runtimes use the `:cf`, `:aws`, and `:gcp` suffixes.
 
 To target a different runtime (Cloud Run, Fly Machines, etc.), add a new adapter group under `packages/core/src/adapters/{provider}/` and a paired entry point — the inward layers stay put. Existing adapters can usually be reused across runtimes (libSQL works on Lambda / Cloud Run unchanged); the swap is the entry + DI wiring, not the whole stack.
 

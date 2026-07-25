@@ -1,14 +1,14 @@
 // Loads the bundled server entry from `dist/server/server.node.js` and
 // serves its fetch handler via `@hono/node-server`. Kept separate from
 // `app/server.node.ts` so vite dev doesn't double-listen on a port.
-import "dotenv/config";
-
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { serve } from "@hono/node-server";
+import { config as loadEnv } from "dotenv";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+loadEnv({ path: path.resolve(here, "../.env"), quiet: true });
 
 const candidates = [
   path.resolve(here, "../dist/server/server.node.js"),

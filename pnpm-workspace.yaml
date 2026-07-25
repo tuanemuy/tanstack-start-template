@@ -2,6 +2,7 @@ packages:
   - "apps/*"
   - "packages/*"
   - "infra/aws"
+  - "infra/cloudflare/pulumi"
 overrides:
   tinypool: 1.0.2
 # `.d.ts` files inside the pnpm store resolve bare `react` / `vitest`

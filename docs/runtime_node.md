@@ -21,8 +21,8 @@ This is the default runtime: `pnpm dev` / `pnpm build` / `pnpm start` all alias 
 
 ```bash
 pnpm install
-cp .env.example .env       # edit if defaults are not appropriate
-pnpm db:migrate            # creates ./data/ and applies migrations
+cp apps/web/.env.example apps/web/.env
+pnpm db:migrate            # creates apps/web/data/ and applies migrations
 pnpm dev                   # http://localhost:3000
 ```
 
@@ -41,7 +41,7 @@ The flow:
 
 ## Environment variables
 
-`apps/web/scripts/listen.node.ts` and `apps/web/scripts/migrate.node.ts` both load `.env` via `dotenv/config` before importing the rest of the app. Copy `.env.example` to `.env` and edit; the schema is validated at boot in `packages/core/src/application/di/serverNode.ts`.
+`apps/web/scripts/listen.node.ts` and `apps/web/scripts/migrate.node.ts` both load `apps/web/.env` before importing the rest of the app. Copy `apps/web/.env.example` to that path and edit it; the schema is validated at boot in `packages/core/src/application/di/serverNode.ts`.
 
 | Variable                  | Required | Default                  | Purpose                                                                                              |
 | ------------------------- | -------- | ------------------------ | ---------------------------------------------------------------------------------------------------- |
@@ -60,16 +60,16 @@ The outbox tuning variables are shared with the Cloudflare runtime; the schema i
 
 ## The libSQL data file
 
-`DATABASE_URL=file:./data/app.db` (the default) produces three files at runtime:
+`DATABASE_URL=file:./data/app.db` is resolved from the `@repo/web` workspace directory, so the default produces three files under `apps/web/data/`:
 
 ```
-data/
+apps/web/data/
 ├─ app.db        # main database file
 ├─ app.db-wal    # write-ahead log (created when PRAGMA journal_mode = WAL is on)
 └─ app.db-shm    # shared memory file used by WAL
 ```
 
-`./data/` is gitignored, and `apps/web/scripts/migrate.node.ts` + `apps/web/app/server.node.ts` both `mkdir -p` the parent directory at boot — libSQL's embedded driver does not create it automatically.
+`apps/web/data/` is gitignored, and `apps/web/scripts/migrate.node.ts` + `apps/web/app/server.node.ts` both create the parent directory at boot — libSQL's embedded driver does not create it automatically.
 
 ### Backup
 
@@ -78,19 +78,19 @@ The database is plain SQLite. Two options:
 - **Cold copy** while the process is stopped:
 
   ```bash
-  pnpm stop                          # or kill the process; wait for shutdown
-  cp data/app.db data/backup-$(date +%Y%m%d).db
+  # Stop the process and wait for graceful shutdown, then:
+  cp apps/web/data/app.db apps/web/data/backup-$(date +%Y%m%d).db
   ```
 
 - **Online backup** while the process is running, via the SQLite CLI's `.backup` command:
 
   ```bash
-  sqlite3 data/app.db ".backup data/backup-$(date +%Y%m%d).db"
+  sqlite3 apps/web/data/app.db ".backup apps/web/data/backup-$(date +%Y%m%d).db"
   ```
 
   `.backup` is concurrency-safe under WAL — readers and writers continue uninterrupted.
 
-The `*-wal` / `*-shm` sidecar files do **not** need to be copied; SQLite reconstructs them from the main file on next open. Restore by stopping the process, replacing `data/app.db` with the backup, and starting again.
+The `*-wal` / `*-shm` sidecar files do **not** need to be copied; SQLite reconstructs them from the main file on next open. Restore by stopping the process, replacing `apps/web/data/app.db` with the backup, and starting again.
 
 ## SQLite PRAGMAs applied at boot
 
@@ -170,7 +170,7 @@ The Node runtime is **single-writer, single-process**. libSQL's embedded driver 
 
 Implications:
 
-- Run exactly one instance of `pnpm start` against a given `data/app.db` path.
+- Run exactly one instance of `pnpm start` against a given `apps/web/data/app.db` path.
 - Horizontal scaling (multiple Node processes behind a load balancer sharing one DB file) is **not supported** in this template. Promote to the Cloudflare runtime, or front the libSQL data with a Turso remote URL (see *Known limitations* below).
 - Vertical scaling (a single beefier machine) works fine — WAL allows many concurrent readers against the single writer.
 

@@ -3,7 +3,7 @@
 // Runs inside a Workers isolate via `vitest-pool-workers`; the
 // `cloudflare:test` `env.DB` binding is a real D1 SQLite database
 // (in-memory under Miniflare). Per-test row cleanup is owned by
-// `app/core/adapters/d1/__tests__/setup.ts` (TRUNCATE in `beforeEach`),
+// `packages/core/src/adapters/d1/__tests__/setup.ts` (TRUNCATE in `beforeEach`),
 // so the harness here is intentionally thin: each call to
 // `createTestContainer()` just builds a fresh DI container around the
 // shared binding.

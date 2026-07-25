@@ -2,8 +2,6 @@
 // from `migrate.node.ts` only in that it requires `DATABASE_URL` to be a
 // `libsql://` URL with a matching `DATABASE_AUTH_TOKEN`. Everything else
 // (schema, migration files, Drizzle dialect) is reused unchanged.
-import "dotenv/config";
-
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -12,7 +10,11 @@ import {
   createLibsqlClient,
   getDatabase,
 } from "@repo/core/adapters/libsql/client";
+import { config as loadEnv } from "dotenv";
 import { migrate } from "drizzle-orm/libsql/migrator";
+
+const scriptDir = path.dirname(fileURLToPath(import.meta.url));
+loadEnv({ path: path.resolve(scriptDir, "../.env.gcp"), quiet: true });
 
 async function main(): Promise<void> {
   const url = process.env["DATABASE_URL"];
@@ -40,9 +42,8 @@ async function main(): Promise<void> {
 
   const db = getDatabase(client);
 
-  const here = path.dirname(fileURLToPath(import.meta.url));
   const migrationsFolder = path.resolve(
-    here,
+    scriptDir,
     "../../../packages/core/src/adapters/libsql/migrations",
   );
 

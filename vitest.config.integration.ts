@@ -63,8 +63,9 @@ export default defineConfig({
   ],
   test: {
     include: [
-      "apps/web/app/**/*.integration.test.ts",
-      "packages/**/*.integration.test.ts",
+      "apps/web/app/worker/cloudflare/**/*.integration.test.ts",
+      "packages/core/src/adapters/d1/**/*.integration.test.ts",
+      "packages/core/src/application/**/*.integration.test.ts",
     ],
     // The libSQL adapter and the in-process worker runner have their
     // own Node-pool integration tests (`vitest.config.integration.node.ts`).

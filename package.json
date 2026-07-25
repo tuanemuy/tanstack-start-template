@@ -2,6 +2,11 @@
   "name": "tanstack-start-template",
   "private": true,
   "type": "module",
+  "packageManager": "pnpm@11.1.2",
+  "engines": {
+    "node": ">=22.12.0",
+    "pnpm": "11.1.2"
+  },
   "scripts": {
     "dev": "pnpm --filter @repo/web dev",
     "dev:node": "pnpm --filter @repo/web dev:node",
@@ -18,7 +23,7 @@
     "start:gcp": "pnpm --filter @repo/web start:gcp",
     "preview": "pnpm --filter @repo/web preview",
     "typecheck": "tsgo && pnpm -r typecheck",
-    "typecheck:infra": "pnpm --filter @repo/infra-aws typecheck",
+    "typecheck:infra": "pnpm --filter @repo/infra-aws --filter @repo/infra-cloudflare typecheck",
     "lint": "biome lint",
     "lint:fix": "biome check --write",
     "format": "biome format --write",
@@ -43,6 +48,8 @@
     "db:execute:staging": "pnpm --filter @repo/web db:execute:staging",
     "db:execute:production": "pnpm --filter @repo/web db:execute:production",
     "cf:types": "pnpm --filter @repo/web cf:types",
+    "cf:render:staging": "pnpm --filter @repo/infra-cloudflare render staging",
+    "cf:render:production": "pnpm --filter @repo/infra-cloudflare render production",
     "deploy:staging": "pnpm --filter @repo/web deploy:staging",
     "deploy:staging:dry": "pnpm --filter @repo/web deploy:staging:dry",
     "deploy:staging:relay": "pnpm --filter @repo/web deploy:staging:relay",
@@ -67,10 +74,10 @@
     "deploy:production:dlq:dry": "pnpm --filter @repo/web deploy:production:dlq:dry",
     "deploy:production:all": "pnpm --filter @repo/web deploy:production:all",
     "deploy:production:all:dry": "pnpm --filter @repo/web deploy:production:all:dry",
-    "deploy:aws:staging": "pnpm build:aws && pnpm --filter @repo/infra-aws deploy:staging",
-    "deploy:aws:production": "pnpm build:aws && pnpm --filter @repo/infra-aws deploy:production",
-    "deploy:aws:synth": "pnpm build:aws && pnpm --filter @repo/infra-aws synth",
-    "deploy:aws:diff": "pnpm build:aws && pnpm --filter @repo/infra-aws diff"
+    "deploy:aws:staging": "pnpm --filter @repo/infra-aws deploy:staging",
+    "deploy:aws:production": "pnpm --filter @repo/infra-aws deploy:production",
+    "deploy:aws:synth": "pnpm --filter @repo/infra-aws synth",
+    "deploy:aws:diff": "pnpm --filter @repo/infra-aws diff"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.15",

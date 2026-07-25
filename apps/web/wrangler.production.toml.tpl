@@ -1,5 +1,5 @@
 # Production deploy config TEMPLATE — rendered to `wrangler.production.toml`
-# by `scripts/render-wrangler.ts production`, which substitutes `${...}`
+# by `pnpm cf:render:production`, which substitutes `${...}`
 # placeholders with outputs from the `cf-resources/production` Pulumi stack.
 #
 # Source of truth: this `.tpl` file (committed) + Pulumi state.
@@ -8,7 +8,7 @@
 #
 # === Before first deploy =================================================
 #   1. `pulumi -C infra/cloudflare/pulumi/resources -s production up`
-#   2. `pnpm tsx scripts/render-wrangler.ts production`
+#   2. `pnpm cf:render:production`
 #   3. `wrangler secret put <NAME> --config wrangler.production.toml [--env <role>]`
 #   4. `wrangler deploy -c wrangler.production.toml` (+ each `--env <role>`)
 #   5. `pulumi -C infra/cloudflare/pulumi/routes -s production up`

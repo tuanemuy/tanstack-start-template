@@ -19,8 +19,9 @@ wrangler.production.toml
 # Node runtime
 data/
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+!.env.*.example
 
 .envrc
 .direnv

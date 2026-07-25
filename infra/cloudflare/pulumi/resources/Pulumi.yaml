@@ -6,7 +6,7 @@ runtime:
 description: |
   Cloudflare persistent resources (Zone, DNS, D1, Queues) for the
   tanstack-start-template runtime. Deploy this stack BEFORE running
-  `wrangler deploy` — its outputs feed `scripts/render-wrangler.ts`.
+  `wrangler deploy` — its outputs feed `pnpm cf:render:<stage>`.
 main: index.ts
 config:
   pulumi:tags:

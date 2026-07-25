@@ -25,7 +25,7 @@ See [`runtime_node.md`](./runtime_node.md) for the standalone Node runtime and [
 
 ```bash
 pnpm install
-cp .env.aws.example .env.aws        # local migration / scripting only
+cp apps/web/.env.aws.example apps/web/.env.aws
 # fill in DATABASE_URL (libsql://...), DATABASE_AUTH_TOKEN
 pnpm db:migrate:aws                 # apply migrations to the Turso primary
 pnpm deploy:aws:synth               # cdk synth — sanity-check the stack
@@ -78,7 +78,7 @@ The schema is declared in `packages/core/src/application/di/serverAws.ts` and va
 | `OUTBOX_MAX_ATTEMPTS`             | no       | Per-event max relay attempts before quarantine. Default `3`.                         |
 | `OUTBOX_RETENTION_MS`             | no       | Retention window before processed rows are pruned. Default `604800000` (7 days).     |
 
-`.env.aws` (gitignored, copied from `.env.aws.example`) is only used by local scripts (`pnpm db:migrate:aws`). Deployed Lambdas read their env from CDK.
+`apps/web/.env.aws` is gitignored and used only by local scripts (`pnpm db:migrate:aws`). Deployed Lambdas read their env from CDK.
 
 ## Turso setup
 
@@ -129,7 +129,7 @@ pnpm db:generate              # drizzle-kit generate (alias of db:generate:cf)
 pnpm db:migrate:aws           # tsx apps/web/scripts/migrate.aws.ts — applies libSQL migrations to Turso
 ```
 
-The migrator reads `DATABASE_URL` / `DATABASE_AUTH_TOKEN` from `.env.aws` via `dotenv/config`. Drizzle's `__drizzle_migrations` table tracks applied versions, so re-runs are idempotent. Run the migration from CI before each deploy that introduces schema changes.
+The migrator reads `DATABASE_URL` / `DATABASE_AUTH_TOKEN` from `apps/web/.env.aws` (unless the process environment already provides them). Drizzle's `__drizzle_migrations` table tracks applied versions, so re-runs are idempotent. Run the migration from CI before each deploy that introduces schema changes.
 
 ## SQS event source mapping
 

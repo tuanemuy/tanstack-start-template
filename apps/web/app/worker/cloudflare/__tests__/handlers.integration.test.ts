@@ -36,7 +36,7 @@ import {
 // adapters and have nothing to verify beyond their type signature.
 //
 // The fetch handler is intentionally not exercised; it lives in the
-// main app Worker (`app/worker.ts`) and is gated on TanStack Start's
+// main app Worker (`apps/web/app/server.cloudflare.ts`) and is gated on TanStack Start's
 // build pipeline.
 
 let counter = 0;
