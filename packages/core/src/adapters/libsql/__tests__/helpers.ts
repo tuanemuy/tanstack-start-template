@@ -1,10 +1,11 @@
-import { existsSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
+import { existsSync, unlinkSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { Client } from "@libsql/client";
 import { SystemClock } from "@repo/core/application/ports/clock";
 import { UuidV7Generator } from "@repo/core/application/ports/idGenerator";
 import { ConsoleLogger } from "@repo/core/application/ports/logger";
+import { migrate } from "drizzle-orm/libsql/migrator";
 import { createLibsqlClient, type Database, getDatabase } from "../client";
 import { LibsqlIdempotencyStore } from "../repositories/idempotencyStore";
 import { LibsqlOutboxRepository } from "../repositories/outboxRepository";
@@ -27,7 +28,7 @@ export type TestContainer = Readonly<{
 
 /**
  * Builds an isolated libSQL DB backed by a per-test temp file, applies
- * the initial migration, and wires a full container.
+ * the drizzle migrations, and wires a full container.
  *
  * Temp file (not `:memory:`): libSQL's sqlite3 backend reopens its
  * connection on `client.transaction()`, and a fresh `:memory:`
@@ -45,26 +46,14 @@ export async function createTestContainer(): Promise<TestContainer> {
   await client.execute("PRAGMA foreign_keys = ON");
   await client.execute("PRAGMA busy_timeout = 5000");
 
-  // drizzle names migrations with a random slug, so no file name can be
-  // pinned; apply every `.sql` in `NNNN_` prefix order.
-  const files = existsSync(MIGRATIONS_DIR)
-    ? readdirSync(MIGRATIONS_DIR)
-        .filter((name) => name.endsWith(".sql"))
-        .sort()
-    : [];
-  if (files.length === 0) {
+  if (!existsSync(path.join(MIGRATIONS_DIR, "meta/_journal.json"))) {
     throw new Error(
       `No migrations in ${MIGRATIONS_DIR}. Run \`pnpm db:generate:node\` first.`,
     );
   }
-  for (const file of files) {
-    const ddl = readFileSync(path.join(MIGRATIONS_DIR, file), "utf8");
-    // Strip drizzle's statement-breakpoint markers; libSQL's
-    // executeMultiple consumes a plain semicolon-delimited script.
-    await client.executeMultiple(ddl.replace(/--> statement-breakpoint/g, ""));
-  }
 
   const db = getDatabase(client);
+  await migrate(db, { migrationsFolder: MIGRATIONS_DIR });
   return {
     unitOfWorkProvider: new LibsqlUnitOfWorkProvider(
       db,
