@@ -22,19 +22,24 @@ The goal is to give you a worked example of:
 ## Directory layout
 
 ```
-app/
-├─ core/
-│  ├─ domain/         # entities, value objects, port interfaces, domain events
-│  ├─ application/    # use cases, UoW, cross-cutting ports (clock / id / logger), DTO projection
-│  ├─ adapters/       # concrete port implementations (DB, workers, external services)
-│  └─ presentation/   # server-function entry, error responses, input validation
-├─ routes/            # TanStack Router (file-based)
-├─ components/
-├─ styles/
-├─ lib/               # structural primitives shared by every layer (e.g. CodedError)
-├─ worker/            # background-worker entries (relay / consumer / pruner / dlq)
-└─ server.*.ts        # server fetch entries
-scripts/              # migration and production launcher scripts
+packages/
+└─ core/              # @repo/core — framework-free, imported as @repo/core/*
+   └─ src/
+      ├─ domain/      # entities, value objects, port interfaces, domain events
+      ├─ application/ # use cases, UoW, cross-cutting ports (clock / id / logger), DTO projection
+      ├─ adapters/    # concrete port implementations (DB, workers, external services)
+      └─ lib/         # structural primitives shared by every layer (e.g. CodedError)
+apps/
+└─ web/               # @repo/web — the TanStack Start app + its runtime configs
+   ├─ app/
+   │  ├─ presentation/ # server-function entry, error responses, input validation
+   │  ├─ routes/       # TanStack Router (file-based)
+   │  ├─ components/
+   │  ├─ styles/
+   │  ├─ worker/       # background-worker entries (relay / consumer / pruner / dlq)
+   │  └─ server.*.ts   # server fetch entries
+   └─ scripts/         # migration and production launcher scripts
+infra/                # aws (CDK, workspace member), cloudflare (Pulumi), gcp (Terraform)
 docs/                 # implementation pattern examples + runtime guides
 spec/                 # entry point for the /spec workflow
 ```
@@ -43,22 +48,24 @@ For the deeper rationale, see [`CLAUDE.md`](CLAUDE.md), [`docs/backend_implement
 
 ## Reference runtimes
 
-The template ships **two reference runtime wirings** as worked examples of how the adapter and entry-point layers can be swapped while the inward layers stay intact:
+The template ships **four reference runtime wirings** as worked examples of how the adapter and entry-point layers can be swapped while the inward layers stay intact:
 
-- **Node.js + libSQL** — single-process, no Docker, no Cloudflare account required. The data file lives at `./data/app.db`. This is the default for `pnpm dev` / `pnpm build` / `pnpm start`.
+- **Node.js + libSQL** — single-process, no Docker or cloud account required. The data file lives at `apps/web/data/app.db`. This is the default for `pnpm dev` / `pnpm build` / `pnpm start`.
 - **Cloudflare Workers + D1 + Queues** — multi-worker, edge-distributed, managed queues. Reached via the `:cf` script suffix.
+- **AWS Lambda + Turso + SQS** — Lambda entries and CDK infrastructure. Reached via the `:aws` script suffix.
+- **GCP Cloud Run + Turso + Pub/Sub** — one container image serving four roles, with Terraform examples. Reached via the `:gcp` script suffix.
 
-**Pick one and delete the other** when you start a real project. Or, if you genuinely need both targets, keep both. The template does not assume you maintain a dual deployment.
+**Pick one and delete the others** when you start a real project. Or, if you genuinely need multiple targets, keep them. The template does not assume you maintain a multi-runtime deployment.
 
-To target a different runtime (AWS Lambda, Cloud Run, Bun, etc.), add a new adapter group under `app/core/adapters/{provider}/` and a paired entry point — the inward layers stay put.
+To target a different runtime (Bun, Fly Machines, etc.), add a new adapter group under `packages/core/src/adapters/{provider}/` and a paired entry point — the inward layers stay put.
 
-Per-runtime operational guidance: [`docs/runtime_node.md`](docs/runtime_node.md) / [`docs/runtime_cloudflare.md`](docs/runtime_cloudflare.md).
+Per-runtime operational guidance: [`docs/runtime_node.md`](docs/runtime_node.md) / [`docs/runtime_cloudflare.md`](docs/runtime_cloudflare.md) / [`docs/runtime_aws.md`](docs/runtime_aws.md) / [`docs/runtime_gcp.md`](docs/runtime_gcp.md).
 
 ## Requirements
 
 - Node.js (the `flake.nix` / `.envrc` direnv environment is recommended)
 - pnpm
-- A Cloudflare account + authenticated `wrangler` (only if you keep the Cloudflare runtime)
+- The matching cloud CLI/account only for runtimes you keep
 
 ## Quick Start
 
@@ -66,8 +73,9 @@ The default scripts target the Node runtime.
 
 ```bash
 pnpm install
-cp .env.example .env       # edit DATABASE_URL / APP_URL / PORT if needed
-pnpm db:migrate            # creates ./data/app.db and applies SQL migrations
+cp apps/web/.env.example apps/web/.env   # edit DATABASE_URL / APP_URL / PORT if needed
+pnpm db:generate           # generate SQL from the Drizzle schema
+pnpm db:migrate            # creates apps/web/data/app.db and applies SQL migrations
 pnpm dev                   # vite dev server on http://localhost:3000
 ```
 
@@ -86,10 +94,13 @@ If you want to try the Cloudflare wiring instead, see [`docs/runtime_cloudflare.
 pnpm dev                         # alias of pnpm dev:node
 pnpm dev:node                    # vite dev (Node)
 pnpm dev:cf                      # vite dev (Cloudflare / workerd)
+pnpm dev:gcp                     # vite dev with the GCP server entry
 
 pnpm build                       # alias of pnpm build:node
 pnpm build:node
 pnpm build:cf
+pnpm build:aws
+pnpm build:gcp
 
 pnpm start                       # alias of pnpm start:node
 pnpm start:node                  # @hono/node-server
@@ -114,11 +125,12 @@ pnpm typecheck && pnpm lint:fix && pnpm format
 
 ## Database migrations
 
-Migration SQL is the canonical artefact and is shared across the reference runtimes.
+The template ships no migrations — `schema.ts` is the artefact, and the SQL is yours to generate once the schema is yours. Commit what you generate from then on.
 
 ```bash
-pnpm db:generate                       # generate SQL from the Drizzle schema
+pnpm db:generate                       # generate libSQL SQL (alias of db:generate:node)
 pnpm db:migrate                        # apply to local libSQL via Drizzle's programmatic migrator
+pnpm db:generate:cf                    # generate D1 SQL
 pnpm db:migrate:cf                     # wrangler d1 migrations apply (local D1)
 ```
 

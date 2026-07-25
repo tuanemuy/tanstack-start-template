@@ -2,7 +2,7 @@
 
 Fully-serverless runtime. The request path runs as a Lambda fronted by API Gateway HTTP API (and CloudFront for static assets); outbox publish, queue consumption, daily pruning, and DLQ surfacing each ship as a sibling Lambda driven by EventBridge Scheduler, SQS event source mappings, and `lambda:Invoke` (async).
 
-The database is **Turso** (libSQL remote). The shared `app/core/adapters/libsql/` adapter is reused unchanged — only the entry points and DI wiring differ from the Node runtime.
+The database is **Turso** (libSQL remote). The shared `packages/core/src/adapters/libsql/` adapter is reused unchanged — only the entry points and DI wiring differ from the Node runtime.
 
 See [`runtime_node.md`](./runtime_node.md) for the standalone Node runtime and [`runtime_cloudflare.md`](./runtime_cloudflare.md) for the Cloudflare Workers runtime.
 
@@ -25,8 +25,9 @@ See [`runtime_node.md`](./runtime_node.md) for the standalone Node runtime and [
 
 ```bash
 pnpm install
-cp .env.aws.example .env.aws        # local migration / scripting only
+cp apps/web/.env.aws.example apps/web/.env.aws
 # fill in DATABASE_URL (libsql://...), DATABASE_AUTH_TOKEN
+pnpm db:generate                    # generate SQL from the Drizzle schema
 pnpm db:migrate:aws                 # apply migrations to the Turso primary
 pnpm deploy:aws:synth               # cdk synth — sanity-check the stack
 pnpm deploy:aws:staging             # cdk deploy AppStack-staging
@@ -36,7 +37,7 @@ Local dev does **not** simulate Lambda. Use `pnpm dev` (the Node runtime) for th
 
 ## Function matrix
 
-The stack ships five Lambdas per stage. Three of them (`relay`, `consumer`, `pruner`, `dlq`) share `app/worker/aws/handlers.ts`; entry-point files under `app/worker/aws/` are thin role-typed wrappers.
+The stack ships five Lambdas per stage. Three of them (`relay`, `consumer`, `pruner`, `dlq`) share `apps/web/app/worker/aws/handlers.ts`; entry-point files under `apps/web/app/worker/aws/` are thin role-typed wrappers.
 
 | Lambda     | Trigger                                                  | Responsibility                                              |
 | ---------- | -------------------------------------------------------- | ----------------------------------------------------------- |
@@ -54,15 +55,15 @@ Trigger model: the request-path Lambda kicks `relay` via async `Invoke` right af
 
 | Lambda       | Bundler           | Output                                                                       |
 | ------------ | ----------------- | ---------------------------------------------------------------------------- |
-| `app`        | Vite (`pnpm build:aws`) | `dist/server/server.aws.js` — self-contained (`ssr.noExternal: true`); CDK `Code.fromAsset("dist/server")` |
-| `relay` / `consumer` / `pruner` / `dlq` | CDK `NodejsFunction` (esbuild) | Bundled by CDK at synth time from `app/worker/aws/<role>.ts` |
-| Client assets | Vite (`pnpm build:aws`) | `dist/client/assets/*.<hash>.{js,css}` — uploaded to S3 by `BucketDeployment` |
+| `app`        | Vite (`pnpm build:aws`) | `apps/web/dist/server/server.aws.js` — self-contained (`ssr.noExternal: true`); CDK `Code.fromAsset("apps/web/dist/server")` |
+| `relay` / `consumer` / `pruner` / `dlq` | CDK `NodejsFunction` (esbuild) | Bundled by CDK at synth time from `apps/web/app/worker/aws/<role>.ts` |
+| Client assets | Vite (`pnpm build:aws`) | `apps/web/dist/client/assets/*.<hash>.{js,css}` — uploaded to S3 by `BucketDeployment` |
 
 `@aws-sdk/*` is externalised in both pipelines: the Lambda Node.js 22 runtime ships AWS SDK v3 in `/var/runtime/node_modules`, so bundling it would only bloat the artifact.
 
 ## Environment variables
 
-The schema is declared in `app/core/application/di/serverAws.ts` and validated at cold start. Outbox tuning vars are shared with the Node and Cloudflare runtimes via `app/core/application/di/env.ts`.
+The schema is declared in `packages/core/src/application/di/serverAws.ts` and validated at cold start. Outbox tuning vars are shared with the Node and Cloudflare runtimes via `packages/core/src/application/di/env.ts`.
 
 | Variable                          | Required | Purpose                                                                              |
 | --------------------------------- | -------- | ------------------------------------------------------------------------------------ |
@@ -78,7 +79,7 @@ The schema is declared in `app/core/application/di/serverAws.ts` and validated a
 | `OUTBOX_MAX_ATTEMPTS`             | no       | Per-event max relay attempts before quarantine. Default `3`.                         |
 | `OUTBOX_RETENTION_MS`             | no       | Retention window before processed rows are pruned. Default `604800000` (7 days).     |
 
-`.env.aws` (gitignored, copied from `.env.aws.example`) is only used by local scripts (`pnpm db:migrate:aws`). Deployed Lambdas read their env from CDK.
+`apps/web/.env.aws` is gitignored and used only by local scripts (`pnpm db:migrate:aws`). Deployed Lambdas read their env from CDK.
 
 ## Turso setup
 
@@ -120,16 +121,16 @@ pnpm deploy:aws:production           # cdk deploy AppStack-production
 
 After the first deploy, read `DistributionUrl` from the stack outputs and feed it back as `APP_URL_<STAGE>` on subsequent deploys so the app builds canonical / OG URLs against the real origin.
 
-The `app` Lambda picks up the freshly-built `dist/server/server.aws.js` because every `deploy:aws:*` script runs `pnpm build:aws` first; client assets are deployed via the `BucketDeployment` construct in the same `cdk deploy` invocation.
+The `app` Lambda picks up the freshly-built `apps/web/dist/server/server.aws.js` because every `deploy:aws:*` script runs `pnpm build:aws` first; client assets are deployed via the `BucketDeployment` construct in the same `cdk deploy` invocation.
 
 ## Migrations
 
 ```bash
-pnpm db:generate              # drizzle-kit generate (alias of db:generate:cf)
-pnpm db:migrate:aws           # tsx scripts/migrate.aws.ts — applies libSQL migrations to Turso
+pnpm db:generate              # drizzle-kit generate (alias of db:generate:node)
+pnpm db:migrate:aws           # tsx apps/web/scripts/migrate.aws.ts — applies libSQL migrations to Turso
 ```
 
-The migrator reads `DATABASE_URL` / `DATABASE_AUTH_TOKEN` from `.env.aws` via `dotenv/config`. Drizzle's `__drizzle_migrations` table tracks applied versions, so re-runs are idempotent. Run the migration from CI before each deploy that introduces schema changes.
+The migrator reads `DATABASE_URL` / `DATABASE_AUTH_TOKEN` from `apps/web/.env.aws` (unless the process environment already provides them). Drizzle's `__drizzle_migrations` table tracks applied versions, so re-runs are idempotent. Run the migration from CI before each deploy that introduces schema changes.
 
 ## SQS event source mapping
 
@@ -174,7 +175,7 @@ The user-visible attempt count is the **product** of those numbers (15 by defaul
 | `DATABASE_AUTH_TOKEN`         | Secrets Manager (referenced by ARN env var)  | The boot loader (`secretsLoader.ts`) populates `process.env.DATABASE_AUTH_TOKEN` cold-start. |
 | `DATABASE_URL`                | Lambda env var (plaintext)                   | Low sensitivity — Turso URLs are non-secret without the matching token.                     |
 | `APP_URL`                     | Lambda env var (plaintext)                   | Public origin.                                                                              |
-| Application secrets (`JWT_*`) | Secrets Manager (add bindings to `serverAws.ts`) | Extend `loadSecretsIntoEnv` bindings in `app/server.aws.ts` and worker handlers.            |
+| Application secrets (`JWT_*`) | Secrets Manager (add bindings to `serverAws.ts`) | Extend `loadSecretsIntoEnv` bindings in `apps/web/app/server.aws.ts` and worker handlers.            |
 
 Rotation: a non-empty existing env value wins over the secret, so local overrides (e.g. `.env.aws` for migrations) keep working without unsetting the ARN. To force a refresh after rotation in a long-lived dev shell, unset the env var.
 

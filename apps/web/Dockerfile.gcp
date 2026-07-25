@@ -1,0 +1,55 @@
+# Multi-stage Dockerfile for Cloud Run. The same image is used by every
+# Cloud Run service (`app` / `relay` / `consumer` / `dlq`); the role is
+# selected at runtime via the `WORKER_ROLE` env var read by
+# `app/server.gcp.ts`.
+#
+# Build from the repository root so the workspace packages are in
+# context:  docker build -f apps/web/Dockerfile.gcp .
+
+# --- build stage -------------------------------------------------------------
+FROM node:22-slim AS build
+WORKDIR /repo
+
+# Enable pnpm via corepack (Node ≥22 ships corepack).
+RUN corepack enable
+
+COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
+COPY apps/web/package.json apps/web/
+COPY packages/core/package.json packages/core/
+# --ignore-scripts: the web postinstall (`wrangler types`) needs
+# wrangler.toml (not copied yet) and only feeds typechecking; the GCP
+# build needs neither it nor any dependency lifecycle script.
+RUN pnpm install --frozen-lockfile --ignore-scripts --filter @repo/web --filter @repo/core
+
+COPY . .
+RUN pnpm --filter @repo/web build:gcp
+
+# --- runtime stage -----------------------------------------------------------
+# Cloud Run expects a process that listens on $PORT (default 8080). We
+# install only production deps in the runtime image so the resulting
+# container is lean — the launcher is plain ESM JavaScript and runs on
+# bare `node`, so we don't need `tsx` / `dotenv` at runtime.
+FROM node:22-slim AS runtime
+WORKDIR /repo
+ENV NODE_ENV=production
+ENV PORT=8080
+
+RUN corepack enable
+
+COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
+COPY apps/web/package.json apps/web/
+COPY packages/core/package.json packages/core/
+RUN pnpm install --frozen-lockfile --ignore-scripts --prod --filter @repo/web --filter @repo/core
+
+# Copy the built server bundle and the plain-JS launcher.
+COPY --from=build /repo/apps/web/dist ./apps/web/dist
+COPY apps/web/scripts/listen.gcp.mjs ./apps/web/scripts/listen.gcp.mjs
+
+WORKDIR /repo/apps/web
+EXPOSE 8080
+
+# Cloud Run injects env vars natively (`--set-env-vars`, Secret Manager
+# bindings), so the launcher does not load `.env` files. For local
+# container runs that need a .env file, pass `--env-file=apps/web/.env.gcp` to
+# `docker run`.
+CMD ["node", "scripts/listen.gcp.mjs"]

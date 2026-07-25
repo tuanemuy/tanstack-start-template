@@ -1,0 +1,162 @@
+# LOCAL DEV ONLY — `pnpm dev` / `pnpm build` auto-discover this file via
+# `@cloudflare/vite-plugin`. Do NOT run `wrangler deploy` against it:
+# the resource names below lack the stage suffix that keeps environments
+# from colliding. Deploy via `wrangler.staging.toml` / `wrangler.production.toml`.
+#
+# Sibling Workers are declared as `[env.*]` named environments below so
+# they can be spun up locally with `wrangler dev --env <role>`.
+#
+# Wrangler does NOT inherit `d1_databases` / `vars` from top level into
+# named environments — the duplication across `[env.*]` blocks is by
+# design. Keep `database_id` / `APP_URL` in sync across every block.
+name = "tanstack-start-template"
+main = "app/server.cloudflare.ts"
+compatibility_date = "2026-05-01"
+# `nodejs_compat` is required because @tanstack/react-start imports
+# `node:async_hooks` / `node:stream` / `node:crypto` / `node:util`.
+compatibility_flags = ["nodejs_compat"]
+
+# Static assets produced by `vite build` (`dist/client`).
+[assets]
+directory = "./dist/client"
+binding = "ASSETS"
+
+[vars]
+APP_URL = "http://localhost:8787"
+
+# D1: read/write for the request path. Outbox writes happen here
+# transactionally with aggregate writes — see packages/core/src/adapters/d1/.
+[[d1_databases]]
+binding = "DB"
+database_name = "tanstack-start-template-d1"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "../../packages/core/src/adapters/d1/migrations"
+
+# Service Binding to the relay Worker — kicked from usecases right
+# after a UoW commit so newly-persisted outbox rows publish without
+# waiting for the safety-net cron in [env.relay]. Failures are logged
+# and swallowed; the cron is the authoritative trigger.
+[[services]]
+binding = "RELAY"
+service = "tanstack-start-template-relay"
+
+
+# === Relay (Service Binding fetch + safety-net cron) ====================
+[env.relay]
+name = "tanstack-start-template-relay"
+main = "app/worker/cloudflare/relay.ts"
+compatibility_date = "2026-05-01"
+compatibility_flags = ["nodejs_compat"]
+
+[env.relay.vars]
+APP_URL = "http://localhost:8787"
+# Outbox relay tuning. Strings because wrangler `[vars]` cannot carry
+# numeric types; parsed + validated at the worker entry boundary by
+# `readRelayTuning(env)`. Values match the application-layer defaults
+# exported from `packages/core/src/application/workers/eventRelayWorker.ts`.
+# Edit here (not in code) to tune prod / staging.
+OUTBOX_BATCH_SIZE = "100"
+OUTBOX_LEASE_MS = "300000"   # 5 min — covers worst-case single-batch dispatch
+OUTBOX_MAX_ATTEMPTS = "2"    # multiplied by [env.consumer] max_retries — keep low
+
+[[env.relay.d1_databases]]
+binding = "DB"
+database_name = "tanstack-start-template-d1"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "../../packages/core/src/adapters/d1/migrations"
+
+[[env.relay.queues.producers]]
+binding = "EVENTS_QUEUE"
+queue = "tanstack-start-template-events"
+
+# Cron is the safety net — the primary trigger is the RELAY service
+# binding fired from usecases after each UoW commit. 5 minutes is a
+# trade-off between recovery latency on a Service Binding outage and
+# the per-cron-tick request cost.
+[env.relay.triggers]
+crons = ["*/5 * * * *"]
+
+
+# === Consumer ===========================================================
+[env.consumer]
+name = "tanstack-start-template-consumer"
+main = "app/worker/cloudflare/consumer.ts"
+compatibility_date = "2026-05-01"
+compatibility_flags = ["nodejs_compat"]
+
+[env.consumer.vars]
+APP_URL = "http://localhost:8787"
+
+# D1 is bound for subscribers that write projections / idempotency
+# stamps. Drop if your consumers are stateless.
+[[env.consumer.d1_databases]]
+binding = "DB"
+database_name = "tanstack-start-template-d1"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "../../packages/core/src/adapters/d1/migrations"
+
+[[env.consumer.queues.consumers]]
+queue = "tanstack-start-template-events"
+max_batch_size = 25
+max_batch_timeout = 30 # seconds
+# Total delivery budget: relay's `DEFAULT_MAX_ATTEMPTS = 2` (publish-side
+# retries before quarantine) × consumer `1 + max_retries` here ≈ 8 in
+# the worst case. Keep both numbers small and adjust together —
+# multiplying them is what produces the user-visible retry count.
+max_retries = 3
+dead_letter_queue = "tanstack-start-template-events-dlq"
+
+
+# === Pruner =============================================================
+# Quarantined outbox rows (`failed_at IS NOT NULL`) are intentionally
+# preserved for operator inspection — the pruner only sweeps processed
+# rows.
+[env.pruner]
+name = "tanstack-start-template-pruner"
+main = "app/worker/cloudflare/pruner.ts"
+compatibility_date = "2026-05-01"
+compatibility_flags = ["nodejs_compat"]
+
+[env.pruner.vars]
+APP_URL = "http://localhost:8787"
+# Outbox pruner tuning. Parsed + validated at the worker entry boundary
+# by `readPruneTuning(env)`. Matches `DEFAULT_OUTBOX_RETENTION_MS` in
+# `packages/core/src/application/workers/outboxPrune.ts`.
+OUTBOX_RETENTION_MS = "604800000"   # 7 days
+
+[[env.pruner.d1_databases]]
+binding = "DB"
+database_name = "tanstack-start-template-d1"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "../../packages/core/src/adapters/d1/migrations"
+
+[env.pruner.triggers]
+crons = ["0 3 * * *"] # 03:00 UTC daily
+
+
+# === DLQ ================================================================
+# DLQ intentionally has no dead-letter target — a re-failure here
+# would loop. `max_retries` is therefore kept low to absorb a transient
+# logger/projection blip without masquerading as automated recovery.
+[env.dlq]
+name = "tanstack-start-template-dlq"
+main = "app/worker/cloudflare/dlq.ts"
+compatibility_date = "2026-05-01"
+compatibility_flags = ["nodejs_compat"]
+
+[env.dlq.vars]
+APP_URL = "http://localhost:8787"
+
+# D1 mirrors the primary consumer for subscribers that persist
+# quarantined events. Drop if your DLQ handler stays purely log/metric.
+[[env.dlq.d1_databases]]
+binding = "DB"
+database_name = "tanstack-start-template-d1"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "../../packages/core/src/adapters/d1/migrations"
+
+[[env.dlq.queues.consumers]]
+queue = "tanstack-start-template-events-dlq"
+max_batch_size = 25
+max_batch_timeout = 30 # seconds
+max_retries = 1

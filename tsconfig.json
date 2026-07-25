@@ -1,16 +1,11 @@
 {
-  "include": ["**/*"],
-  "exclude": ["node_modules", "**/*.stories.*", "infra/**"],
+  "include": ["*.ts"],
   "compilerOptions": {
-    "lib": ["DOM", "DOM.Iterable", "ES2022"],
-    "types": ["node", "vite/client"],
+    "lib": ["ES2022"],
+    "types": ["node"],
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "jsx": "react-jsx",
-    "paths": {
-      "@/*": ["./app/*"]
-    },
     "esModuleInterop": true,
     "verbatimModuleSyntax": true,
     "noEmit": true,

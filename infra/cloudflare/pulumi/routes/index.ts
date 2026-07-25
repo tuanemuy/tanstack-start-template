@@ -12,7 +12,7 @@ const prefix = resources.requireOutput("exportedPrefix");
 
 // Custom Domain binding for the primary Worker. Cloudflare resolves the
 // service name eagerly — `wrangler deploy` must have run first.
-new cloudflare.WorkersCustomDomain("app", {
+new cloudflare.WorkersDomain("app", {
   accountId,
   zoneId,
   hostname: appHostname,

@@ -11,7 +11,7 @@ import { defineConfig } from "vitest/config";
 // tests run via the Node-pool `vitest.config.ts` instead.
 const migrationsPath = path.join(
   import.meta.dirname,
-  "app/core/adapters/d1/migrations",
+  "packages/core/src/adapters/d1/migrations",
 );
 
 const migrations = await readD1Migrations(migrationsPath);
@@ -62,7 +62,11 @@ export default defineConfig({
     }),
   ],
   test: {
-    include: ["app/**/*.integration.test.ts"],
+    include: [
+      "apps/web/app/worker/cloudflare/**/*.integration.test.ts",
+      "packages/core/src/adapters/d1/**/*.integration.test.ts",
+      "packages/core/src/application/**/*.integration.test.ts",
+    ],
     // The libSQL adapter and the in-process worker runner have their
     // own Node-pool integration tests (`vitest.config.integration.node.ts`).
     // They share the `*.integration.test.ts` suffix with the D1 tests
@@ -73,9 +77,10 @@ export default defineConfig({
       "**/node_modules/**",
       "**/dist/**",
       "**/.direnv/**",
-      "app/core/adapters/libsql/**",
-      "app/core/adapters/node/**",
+      "packages/core/src/adapters/libsql/**",
+      "packages/core/src/adapters/node/**",
+      "apps/web/app/worker/node/**",
     ],
-    setupFiles: ["app/core/adapters/d1/__tests__/setup.ts"],
+    setupFiles: ["packages/core/src/adapters/d1/__tests__/setup.ts"],
   },
 });

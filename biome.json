@@ -8,13 +8,14 @@
   "files": {
     "ignoreUnknown": false,
     "includes": [
-      "app/**",
-      "scripts/**",
+      "apps/**",
+      "packages/**",
       "infra/**",
       "*.ts",
       "*.mjs",
       "*.json",
-      "!**/routeTree.gen.ts"
+      "!**/routeTree.gen.ts",
+      "!**/migrations"
     ]
   },
   "formatter": {
@@ -25,8 +26,8 @@
   "linter": {
     "enabled": true,
     "includes": [
-      "app/**",
-      "scripts/**",
+      "apps/**",
+      "packages/**",
       "infra/**",
       "!**/components/ui/**",
       "!**/styles/**",

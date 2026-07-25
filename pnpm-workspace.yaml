@@ -1,5 +1,15 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+  - "infra/aws"
+  - "infra/cloudflare/pulumi"
 overrides:
   tinypool: 1.0.2
+# `.d.ts` files inside the pnpm store resolve bare `react` / `vitest`
+# type imports by walking up to the workspace root, so @types packages
+# must stay visible there now that they are declared per-package.
+publicHoistPattern:
+  - "@types/*"
 allowBuilds:
   esbuild: true
   workerd: true

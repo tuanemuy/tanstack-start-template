@@ -1,0 +1,31 @@
+{
+  "name": "@repo/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./package.json": "./package.json",
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "typecheck": "tsgo"
+  },
+  "dependencies": {
+    "@aws-sdk/client-lambda": "^3.726.0",
+    "@aws-sdk/client-secrets-manager": "^3.726.0",
+    "@aws-sdk/client-sqs": "^3.726.0",
+    "@google-cloud/pubsub": "^4.9.0",
+    "@google-cloud/secret-manager": "^5.6.0",
+    "@libsql/client": "^0.17.3",
+    "drizzle-orm": "^0.45.2",
+    "google-auth-library": "^9.15.0",
+    "uuid": "^14.0.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260511.1",
+    "@types/node": "^25.7.0",
+    "fast-check": "^4.8.0",
+    "vitest": "^4.1.6"
+  }
+}

@@ -19,11 +19,11 @@ There are 4 ways to handle an RSC, distinguished by **who holds and invalidates 
 A fragment tied 1:1 to the URL. The router cache owns it and refetches it via `router.invalidate()`.
 
 ```tsx
-// app/routes/index.tsx
+// apps/web/app/routes/index.tsx
 import { createFileRoute } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { renderServerComponent } from "@tanstack/react-start/rsc";
-import { sanitizeRouteError } from "@/core/presentation/errorDisplay";
+import { sanitizeRouteError } from "@/presentation/errorDisplay";
 
 const loadTodoListRouteData = createServerFn({ method: "GET" }).handler(
   async () => {
@@ -98,23 +98,23 @@ function TodoPage() {
   );
 }
 
-// app/components/ui/Deferred — generic, reusable client resolver
+// apps/web/app/components/ui/Deferred — generic, reusable client resolver
 ("use client");
 export function Deferred<T extends ReactNode>({ promise }: { promise: Usable<T> }) {
   return use(promise);
 }
 ```
 
-The skeleton (`app/components/ui/Skeleton` for the generic block, `app/components/todo/TodoListSkeleton` shaped to `TodoBoard`'s DOM) carries one `role="status"` announcement; the individual bars are `aria-hidden` and respect `prefers-reduced-motion` via `motion-reduce:animate-none`.
+The skeleton (`apps/web/app/components/ui/Skeleton` for the generic block, `apps/web/app/components/todo/TodoListSkeleton` shaped to `TodoBoard`'s DOM) carries one `role="status"` announcement; the individual bars are `aria-hidden` and respect `prefers-reduced-motion` via `motion-reduce:animate-none`.
 
-This is the **per-fragment** loading mechanism. For navigation pending UI on routes whose loader genuinely *blocks*, use the router's `defaultPendingComponent` (+ `defaultPendingMs` / `defaultPendingMinMs`) in `app/router.tsx` instead — a streaming route like `/todo` settles its loader immediately and never triggers it.
+This is the **per-fragment** loading mechanism. For navigation pending UI on routes whose loader genuinely *blocks*, use the router's `defaultPendingComponent` (+ `defaultPendingMs` / `defaultPendingMinMs`) in `apps/web/app/router.tsx` instead — a streaming route like `/todo` settles its loader immediately and never triggers it.
 
 ### 2. Held by TanStack Query
 
 For widgets that are not route-shaped, or when you want to invalidate independently. `structuralSharing: false` is mandatory when putting RSC values into Query.
 
 ```tsx
-// app/routes/posts/$postId.tsx
+// apps/web/app/routes/posts/$postId.tsx
 import { createFileRoute } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import {
@@ -255,13 +255,13 @@ A loader-owned RSC list can reflect within-element state (checkboxes, etc.) imme
 - In-item operations (toggle / inline rename) have the leaf call the server function itself. Since membership doesn't change and the leaf survives, the item-local `useOptimistic` and error display can also live in the leaf.
 - Operations that change membership (add / remove) have the owner (the island) call the server function. In particular, **delete must be called by the owner**: with optimistic deletion the leaf unmounts before the request settles, so the error UI placed in the leaf would be discarded. Add is dispatched from the form's action (the form lives outside the list and survives the round trip).
 
-Every operation calls `router.invalidate()` once it settles, and the optimistic list is re-based onto the refetched latest value (it reverts automatically on failure). Example: `app/components/todo/TodoBoard`.
+Every operation calls `router.invalidate()` once it settles, and the optimistic list is re-based onto the refetched latest value (it reverts automatically on failure). Example: `apps/web/app/components/todo/TodoBoard`.
 
 **When to choose**: when you want to reflect additions/removals to a list within the page immediately. Keeping it loader-owned forces add/remove to always wait on a server round trip, making it feel sluggish.
 
 ## Canonical form of the server-only entry point
 
-The template standard is to access usecase invocation on the server **via the helpers in `app/core/presentation/serverAction.ts`**. Calling `getContainer()` directly does technically work, but in this template we consolidate on the helpers.
+The template standard is to access usecase invocation on the server **via the helpers in `apps/web/app/presentation/serverAction.ts`**. Calling `getContainer()` directly does technically work, but in this template we consolidate on the helpers.
 
 ### The 2 helpers provided
 
@@ -283,14 +283,14 @@ export const createTodoFn = createServerFn({ method: "POST" })
   .inputValidator(validateInput(createTodoSchema))
   .handler(async ({ data }) => {
     const { container, module } = await loadServerDeps(
-      () => import("@/core/application/todo/createTodo"),
+      () => import("@repo/core/application/todo/createTodo"),
     );
     return module.createTodo({ container, input: data });
   });
 
 // ❌ NG — importing a pre-built builder from a separate module
 // breaks the build because TanStack Start's RSC plugin can't trace the chain root.
-import { defineServerFn } from "@/core/presentation/serverFn";
+import { defineServerFn } from "@/presentation/serverFn";
 export const createTodoFn = defineServerFn
   .inputValidator(validateInput(createTodoSchema))
   .handler(/* ... */);
@@ -310,7 +310,7 @@ The fact that `serverData` **does not take a schema** is a deliberate design cho
 
 > **Convention**: `serverData` is **for internal calls only**. Any place that handles external input (URL / form / fetch) must **always finish transport validation with either `validateSearch` or `serverAction` before** passing arguments to a loader via `serverData`. Do not run Zod again right before the usecase (the VO factory re-validates the same constraints, so it would be a duplicate and would diverge from CLAUDE.md's "validate at the boundaries").
 
-Example: `app/routes/todo/index.tsx` normalizes the URL into the Pagination type with `validateSearch: paginationSearchSchema.parse`, then `renderTodoList` (a server fn) re-validates the transport with `inputValidator(paginationSchema)` → passes a typed value to the server component `TodoList`, and `loadTodos(pagination)` (wrapped with `serverData`) **merely trusts** that type. Of the three stages, validation is confined to **the first two transport boundaries**, and the internal `serverData` is a noop.
+Example: `apps/web/app/routes/todo/index.tsx` normalizes the URL into the Pagination type with `validateSearch: paginationSearchSchema.parse`, then `renderTodoList` (a server fn) re-validates the transport with `inputValidator(paginationSchema)` → passes a typed value to the server component `TodoList`, and `loadTodos(pagination)` (wrapped with `serverData`) **merely trusts** that type. Of the three stages, validation is confined to **the first two transport boundaries**, and the internal `serverData` is a noop.
 
 ### Exception where calling `getContainer()` directly is allowed
 
@@ -321,19 +321,19 @@ A helper function that **just hits a specific port in one line**, like `containe
 The server component itself is an `async` function that calls a loader wrapped with `serverData`. React's `cache()` suppresses duplicate data fetching within the same request.
 
 ```tsx
-// app/components/post/PostDetail.tsx (server component)
+// apps/web/app/components/post/PostDetail.tsx (server component)
 
 import { cache } from "react";
 import { notFound } from "@tanstack/react-router";
 import { getRequestHeaders } from "@tanstack/react-start/server";
 
-import { isNotFoundError } from "@/core/application/errors";
-import { serverData } from "@/core/presentation/serverAction";
+import { isNotFoundError } from "@repo/core/application/errors";
+import { serverData } from "@/presentation/serverAction";
 import { RelatedPosts } from "./RelatedPosts";
 
 const loadPost = cache(
   serverData(
-    () => import("@/core/application/post/getPost"),
+    () => import("@repo/core/application/post/getPost"),
     async ({ container }, { getPost }, postId: string) => {
       try {
         return await getPost({
@@ -368,7 +368,7 @@ export async function PostDetail({ postId }: { postId: string }) {
 
 - Because we `await` inside the server component, there is no need to assemble the data in the loader.
 - For exception mapping after authentication/existence checks, `try/catch` + `throw redirect/notFound` is sufficient.
-- **The dedupe scope of `cache()` is the same request + the same arguments**. Calling `loadPost(id)` multiple times within the same RSC tree executes only once, and a different `id` is evaluated independently with a separate cache. A loader that takes no arguments should be wrapped with `cache(serverData(...))` and called via **the same function reference** (e.g. `loadTodos` in `app/components/todo/TodoList/action.ts`).
+- **The dedupe scope of `cache()` is the same request + the same arguments**. Calling `loadPost(id)` multiple times within the same RSC tree executes only once, and a different `id` is evaluated independently with a separate cache. A loader that takes no arguments should be wrapped with `cache(serverData(...))` and called via **the same function reference** (e.g. `loadTodos` in `apps/web/app/components/todo/TodoList/action.ts`).
 - Consolidate the DI / module loading for usecase invocation on the `serverData` wrapper. Calling `getContainer()` directly requires writing `import "@tanstack/react-start/server-only";` every time, and the moment someone adds a single static import line, the server graph risks leaking into the client; the wrapper's dynamic import structurally blocks this.
 
 ## Route definition (a thin proxy that pulls in an RSC)
@@ -376,7 +376,7 @@ export async function PostDetail({ postId }: { postId: string }) {
 The route's only responsibility is "pass URL parameters to the server component and send the rendered result to the client as an RSC payload".
 
 ```tsx
-// app/routes/posts/$postId.tsx
+// apps/web/app/routes/posts/$postId.tsx
 
 import { createFileRoute } from "@tanstack/react-router";
 import { renderServerComponent } from "@tanstack/react-start/rsc";
@@ -384,7 +384,7 @@ import { z } from "zod";
 
 import { createServerFn } from "@tanstack/react-start";
 
-import { errorResponseMiddleware } from "@/core/presentation/errorResponseMiddleware";
+import { errorResponseMiddleware } from "@/presentation/errorResponseMiddleware";
 
 const renderPostDetail = createServerFn({ method: "GET" })
   .middleware([errorResponseMiddleware])
@@ -418,7 +418,7 @@ function PostPage() {
 ### Points
 
 - The loader merely calls the server function bridge. Confine `renderServerComponent(<RSC />)` and server-only imports to the bridge's handler side.
-- **Place the shared shell (Header / Sidebar / Dialog mount, etc.) in the parent route's `component`. Do not include the shell in the arguments to the leaf's `renderServerComponent(...)`.** If you do, the shell gets swapped out along with the entire RSC tree and remounted on every transition, and client state such as sidebar open/close is lost and flickers. Pass only leaf-specific content into the RSC payload. Reference implementations: `app/components/todo/TodoShell/` and `app/routes/todo/{route,about,index}.tsx`.
+- **Place the shared shell (Header / Sidebar / Dialog mount, etc.) in the parent route's `component`. Do not include the shell in the arguments to the leaf's `renderServerComponent(...)`.** If you do, the shell gets swapped out along with the entire RSC tree and remounted on every transition, and client state such as sidebar open/close is lost and flickers. Pass only leaf-specific content into the RSC payload. Reference implementations: `apps/web/app/components/todo/TodoShell/` and `apps/web/app/routes/todo/{route,about,index}.tsx`.
 - Since `staleTime` remains in effect even after navigation, the cache can be reused when you return to the same URL.
 - When you want to force a refetch, use `useRouter().invalidate()` on the client.
 - Input validation uses `.inputValidator(...)`. **Do not use the old API `.validator(...)`.**
@@ -428,7 +428,7 @@ function PostPage() {
 Authentication retrieval used by multiple server components / server functions is carved out as a function and memoized with `cache()`. Since it is a **one-line port access** with no usecase module, this falls under the escape-hatch pattern of calling `getContainer()` directly rather than `serverData`.
 
 ```typescript
-// app/lib/server/currentUser.ts
+// packages/core/src/lib/server/currentUser.ts
 
 import "@tanstack/react-start/server-only";
 
@@ -436,8 +436,8 @@ import { cache } from "react";
 import { redirect } from "@tanstack/react-router";
 import { getRequestHeaders } from "@tanstack/react-start/server";
 
-import { getContainer } from "@/core/application/di/containerStore";
-import type { User } from "@/core/domain/user/entity";
+import { getContainer } from "@repo/core/application/di/containerStore";
+import type { User } from "@repo/core/domain/user/entity";
 
 export const getCurrentUser = cache(async (): Promise<User | null> => {
   const container = await getContainer();
@@ -476,10 +476,10 @@ Why not run Zod in the usecase:
 - Placing validation in the usecase mixes Zod / domain modules into the application layer, creating friction with CLAUDE.md's dependency direction (application → domain).
 - Shape checking is the transport's responsibility. Once it arrives as a type, the usecase may trust it.
 
-Because `createServerFn`'s `inputValidator` runs on both client and server, the schema statically imported from it **must not pull in `@/core/domain/*` or `@/core/application/*` at all**. Keep the schema presentation-independent in `app/components/${domain}/schema.ts`.
+Because `createServerFn`'s `inputValidator` runs on both client and server, the schema statically imported from it **must not pull in `@repo/core/domain/*` or `@repo/core/application/*` at all**. Keep the schema presentation-independent in `apps/web/app/components/${domain}/schema.ts`.
 
 ```typescript
-// app/components/todo/schema.ts
+// apps/web/app/components/todo/schema.ts
 import { z } from "zod";
 
 export const TODO_TITLE_MAX_LENGTH = 140;
@@ -490,9 +490,9 @@ export const createTodoSchema = z.object({
 ```
 
 ```typescript
-// app/core/presentation/validator.ts
+// apps/web/app/presentation/validator.ts
 import { type z, type ZodType } from "zod";
-import { CodedError, type FieldErrors } from "@/lib/error";
+import { CodedError, type FieldErrors } from "@repo/core/lib/error";
 import {
   AppServerError,
   type SerializedValidationError,
@@ -529,12 +529,12 @@ export function validateInput<T extends ZodType>(schema: T) {
 ```
 
 ```typescript
-// app/components/todo/CreateTodoForm/action.ts
+// apps/web/app/components/todo/CreateTodoForm/action.ts
 import { createServerFn } from "@tanstack/react-start";
 
-import { errorResponseMiddleware } from "@/core/presentation/errorResponseMiddleware";
-import { loadServerDeps } from "@/core/presentation/serverAction";
-import { validateInput } from "@/core/presentation/validator";
+import { errorResponseMiddleware } from "@/presentation/errorResponseMiddleware";
+import { loadServerDeps } from "@/presentation/serverAction";
+import { validateInput } from "@/presentation/validator";
 import { createTodoSchema } from "../schema";
 
 export const createTodoFn = createServerFn({ method: "POST" })
@@ -542,7 +542,7 @@ export const createTodoFn = createServerFn({ method: "POST" })
   .inputValidator(validateInput(createTodoSchema))
   .handler(async ({ data }) => {
     const { container, module } = await loadServerDeps(
-      () => import("@/core/application/todo/createTodo"),
+      () => import("@repo/core/application/todo/createTodo"),
     );
     return module.createTodo({ container, input: data });
   });
@@ -553,17 +553,17 @@ export const createTodoFn = createServerFn({ method: "POST" })
 `<form action={formAction}>` + `useActionState` is the canonical React 19 approach. Fold `SerializedError | null` into the state, and for a `validation` error, output `fieldErrors` as-is on a per-field basis.
 
 ```tsx
-// app/components/todo/CreateTodoForm/index.tsx
+// apps/web/app/components/todo/CreateTodoForm/index.tsx
 "use client";
 
 import { useRouter } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useActionState, useState } from "react";
-import { displayError } from "@/core/presentation/errorDisplay";
+import { displayError } from "@/presentation/errorDisplay";
 import {
   extractSerializedError,
   type SerializedError,
-} from "@/core/presentation/errorResponse";
+} from "@/presentation/errorResponse";
 import { createTodoFn } from "./action";
 import { TODO_TITLE_MAX_LENGTH } from "../schema";
 
@@ -632,18 +632,18 @@ export function CreateTodoForm() {
 For **immediate actions outside a form**, such as a checkbox toggle or delete button in a list, take a transition with `useTransition` and overlay `useOptimistic` on items whose state should be reflected immediately. It is a necessary condition that the `useOptimistic` setter be called **from within a transition**.
 
 ```tsx
-// app/components/todo/TodoItem.tsx
+// apps/web/app/components/todo/TodoItem.tsx
 "use client";
 
 import { useRouter } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useOptimistic, useState, useTransition } from "react";
-import type { TodoView } from "@/core/application/todo/view";
-import { displayError } from "@/core/presentation/errorDisplay";
+import type { TodoView } from "@repo/core/application/todo/view";
+import { displayError } from "@/presentation/errorDisplay";
 import {
   extractSerializedError,
   type SerializedError,
-} from "@/core/presentation/errorResponse";
+} from "@/presentation/errorResponse";
 import { changeTodoStatusFn, deleteTodoFn } from "./actions";
 
 function todoErrorMessage(error: SerializedError): string {
@@ -731,14 +731,14 @@ try {
 - A `useActionState` action may be async. State updates both before and after `await` enter the same transition. Passing it to `<form action={formAction}>` lets it progressively enhance even on a client where JS has not yet arrived.
 - When you want to update a loader-owned RSC on success, explicitly do `await router.invalidate()` inside the action / transition. Since the generic hook was abandoned, "when to invalidate" is the caller's responsibility.
 - When you want to display `fieldErrors` **on a per-field basis**, just branch on `state.error?.kind === "validation"`. This form suffices without separately introducing Conform + `parseWithZod`. Since validation is consolidated on the server-side Zod, it arrives in the same `ValidationError` envelope no matter which entry point (server function / route loader / test) calls it.
-- An item-local `useOptimistic` only works on **state that the item owns**. `TodoItem`'s `completed` toggle and `title` inline edit are both item-owned, so they are complete within the leaf with `useOptimistic` + server function (editing closes the editor immediately and optimistically displays the new title, and reverts automatically if the rename throws). On the other hand, operations that **change the list's membership**, such as add/remove, are parent state changes, so item-local cannot reach them. Carve the list out into a client island, hold the entire list array with `useOptimistic` seeded by the server value, and **have the owner call the server function** (the "Held by the client" section above / `app/components/todo/TodoBoard`). Add optimistically prepends, remove filters, and `router.invalidate()` re-bases onto the settled value. Delete cannot be placed in the leaf because optimistic deletion unmounts the leaf before settlement, erasing the error UI along with it.
+- An item-local `useOptimistic` only works on **state that the item owns**. `TodoItem`'s `completed` toggle and `title` inline edit are both item-owned, so they are complete within the leaf with `useOptimistic` + server function (editing closes the editor immediately and optimistically displays the new title, and reverts automatically if the rename throws). On the other hand, operations that **change the list's membership**, such as add/remove, are parent state changes, so item-local cannot reach them. Carve the list out into a client island, hold the entire list array with `useOptimistic` seeded by the server value, and **have the owner call the server function** (the "Held by the client" section above / `apps/web/app/components/todo/TodoBoard`). Add optimistically prepends, remove filters, and `router.invalidate()` re-bases onto the settled value. Delete cannot be placed in the leaf because optimistic deletion unmounts the leaf before settlement, erasing the error UI along with it.
 
 ## Client validation with Conform
 
 An example combining Conform's client validation + `useServerFn`.
 
 ```tsx
-// app/routes/posts/new.tsx
+// apps/web/app/routes/posts/new.tsx
 "use client";
 
 import { useTransition } from "react";
@@ -815,7 +815,7 @@ function NewPostPage() {
 Define `errorComponent` / `notFoundComponent` per route. Exceptions thrown inside a server component bubble up here.
 
 ```tsx
-// app/routes/index.tsx
+// apps/web/app/routes/index.tsx
 export const Route = createFileRoute("/")({
   loader: async () => { /* ... */ },
   component: HomePage,
@@ -828,7 +828,7 @@ export const Route = createFileRoute("/")({
 });
 ```
 
-The site-wide final fallback is the `errorComponent` / `notFoundComponent` in `app/routes/__root.tsx`. The hierarchy is as follows:
+The site-wide final fallback is the `errorComponent` / `notFoundComponent` in `apps/web/app/routes/__root.tsx`. The hierarchy is as follows:
 
 ```
 Exception source (loader / server component / server function)
@@ -845,17 +845,17 @@ __root.tsx .errorComponent          ←  final fallback (sanitizeRouteError)
 An exception thrown by `createServerFn`'s `handler` reaches the client, but if it stays a plain `Error`, the `cause` chain and stack trace break during serialization, and branching by `kind` becomes impossible. So, in the presentation layer, we provide
 
 - `AppServerError` — an exception class dedicated to propagation (holds `serialized` as an enumerable own property and survives a JSON round trip)
-- `appServerErrorAdapter` (registered with `createStart` in `app/start.ts`) — a serialization adapter that preserves the class identity of `AppServerError` across a Seroval roundtrip. **It runs only at boundaries via `createServerFn(...).middleware([errorResponseMiddleware])`**. Via direct `fetch` / an RSC error frame / a custom transport, the adapter does not run, and the client receives a plain Error/object (a remnant) that holds `serialized` as an own property
+- `appServerErrorAdapter` (registered with `createStart` in `apps/web/app/start.ts`) — a serialization adapter that preserves the class identity of `AppServerError` across a Seroval roundtrip. **It runs only at boundaries via `createServerFn(...).middleware([errorResponseMiddleware])`**. Via direct `fetch` / an RSC error frame / a custom transport, the adapter does not run, and the client receives a plain Error/object (a remnant) that holds `serialized` as an own property
 - `serializeError(error)` — folds Business / NotFound / Validation, etc. into a `SerializedError` (`{ kind, code, message, retryable?, fieldErrors? }`)
 - `extractSerializedError(error)` — extracts the `SerializedError` on the client side. Three-stage detection: (1) `instanceof AppServerError` (the adapter-passed path) → (2) structural `serialized` remnant detection (the adapter-not-passed path) → (3) `serializeError` fallback. **UI code must always go through this function. Using `instanceof AppServerError` for branching becomes false on the adapter-not-passed path and breaks silently**
-- `errorResponseMiddleware` (`app/core/presentation/errorResponseMiddleware.ts`) — wraps the entire server function (both `inputValidator` and the handler) to apply the above and set the HTTP status from `SerializedErrorKind`. TanStack Router's `redirect()` / `notFound()` sentinels are rethrown as-is. **Write `createServerFn(...).middleware([errorResponseMiddleware])` directly at the call site** (pre-applying via a separate module is not allowed because it breaks the RSC plugin's static rewrite)
+- `errorResponseMiddleware` (`apps/web/app/presentation/errorResponseMiddleware.ts`) — wraps the entire server function (both `inputValidator` and the handler) to apply the above and set the HTTP status from `SerializedErrorKind`. TanStack Router's `redirect()` / `notFound()` sentinels are rethrown as-is. **Write `createServerFn(...).middleware([errorResponseMiddleware])` directly at the call site** (pre-applying via a separate module is not allowed because it breaks the RSC plugin's static rewrite)
 
-(`app/core/presentation/errorResponse.ts`).
+(`apps/web/app/presentation/errorResponse.ts`).
 
 The side that raw-`await`s in a client action / transition / loader, etc. branches by kind with `extractSerializedError`:
 
 ```tsx
-import { extractSerializedError } from "@/core/presentation/errorResponse";
+import { extractSerializedError } from "@/presentation/errorResponse";
 
 try {
   await deleteTodo({ data: { id } });

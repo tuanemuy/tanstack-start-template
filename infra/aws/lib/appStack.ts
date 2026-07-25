@@ -103,12 +103,12 @@ export class AppStack extends Stack {
         format: OutputFormat.ESM,
         minify: true,
         sourceMap: true,
-        // Worker entries live under `app/worker/aws/` and import via `@/...`
+        // Worker entries live under `apps/web/app/worker/aws/` and import via `@/...`
         // path aliases declared in the repo-root tsconfig. NodejsFunction's
         // esbuild bundler auto-discovers tsconfig by walking up from the
         // entry, but pinning it explicitly avoids surprises when `cdk synth`
         // is invoked from `infra/aws/` (a different working directory).
-        tsconfig: path.join(repoRoot, "tsconfig.json"),
+        tsconfig: path.join(repoRoot, "apps/web/tsconfig.json"),
       },
     };
 
@@ -120,7 +120,7 @@ export class AppStack extends Stack {
     const relayFn = new NodejsFunction(this, "RelayFn", {
       ...sharedLambdaProps,
       functionName: `${props.stage}-relay`,
-      entry: path.join(repoRoot, "app/worker/aws/relay.ts"),
+      entry: path.join(repoRoot, "apps/web/app/worker/aws/relay.ts"),
       environment: { ...sharedEnv },
     });
     relayFn.addEnvironment("RELAY_FUNCTION_NAME", relayFn.functionName);
@@ -128,21 +128,21 @@ export class AppStack extends Stack {
     const consumerFn = new NodejsFunction(this, "ConsumerFn", {
       ...sharedLambdaProps,
       functionName: `${props.stage}-consumer`,
-      entry: path.join(repoRoot, "app/worker/aws/consumer.ts"),
+      entry: path.join(repoRoot, "apps/web/app/worker/aws/consumer.ts"),
       environment: { ...sharedEnv },
     });
 
     const prunerFn = new NodejsFunction(this, "PrunerFn", {
       ...sharedLambdaProps,
       functionName: `${props.stage}-pruner`,
-      entry: path.join(repoRoot, "app/worker/aws/pruner.ts"),
+      entry: path.join(repoRoot, "apps/web/app/worker/aws/pruner.ts"),
       environment: { ...sharedEnv },
     });
 
     const dlqFn = new NodejsFunction(this, "DlqFn", {
       ...sharedLambdaProps,
       functionName: `${props.stage}-dlq`,
-      entry: path.join(repoRoot, "app/worker/aws/dlq.ts"),
+      entry: path.join(repoRoot, "apps/web/app/worker/aws/dlq.ts"),
       environment: { ...sharedEnv },
     });
 
@@ -158,7 +158,7 @@ export class AppStack extends Stack {
       timeout: Duration.seconds(30),
       functionName: `${props.stage}-app`,
       handler: "server.aws.handler",
-      code: Code.fromAsset(path.join(repoRoot, "dist/server")),
+      code: Code.fromAsset(path.join(repoRoot, "apps/web/dist/server")),
       environment: {
         ...sharedEnv,
         RELAY_FUNCTION_NAME: relayFn.functionName,
@@ -202,7 +202,7 @@ export class AppStack extends Stack {
     });
 
     new BucketDeployment(this, "ClientAssetsDeployment", {
-      sources: [Source.asset(path.join(repoRoot, "dist/client"))],
+      sources: [Source.asset(path.join(repoRoot, "apps/web/dist/client"))],
       destinationBucket: clientBucket,
       // `dist/client/` already nests under `assets/`, so deploy at the
       // bucket root and the keys land at `assets/<hash>.<ext>`.

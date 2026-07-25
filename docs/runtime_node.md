@@ -21,8 +21,9 @@ This is the default runtime: `pnpm dev` / `pnpm build` / `pnpm start` all alias 
 
 ```bash
 pnpm install
-cp .env.example .env       # edit if defaults are not appropriate
-pnpm db:migrate            # creates ./data/ and applies migrations
+cp apps/web/.env.example apps/web/.env
+pnpm db:generate           # generate SQL from the Drizzle schema
+pnpm db:migrate            # creates apps/web/data/ and applies migrations
 pnpm dev                   # http://localhost:3000
 ```
 
@@ -30,18 +31,18 @@ For a production build:
 
 ```bash
 pnpm build                 # vite build with the Node target (vite.config.node.ts)
-pnpm start                 # tsx scripts/listen.node.ts — boots @hono/node-server
+pnpm start                 # tsx apps/web/scripts/listen.node.ts — boots @hono/node-server
 ```
 
 The flow:
 
-1. `vite build --config vite.config.node.ts` writes a fetch-handler bundle to `dist/server/server.node.js`.
-2. `scripts/listen.node.ts` loads `dotenv`, dynamically imports the bundle, calls its `boot()` to construct the libSQL client + DI container + worker runner, then registers the handler with `@hono/node-server`.
+1. `vite build --config vite.config.node.ts` writes a fetch-handler bundle to `apps/web/dist/server/server.node.js`.
+2. `apps/web/scripts/listen.node.ts` loads `dotenv`, dynamically imports the bundle, calls its `boot()` to construct the libSQL client + DI container + worker runner, then registers the handler with `@hono/node-server`.
 3. SIGTERM / SIGINT triggers the shutdown sequence described below.
 
 ## Environment variables
 
-`scripts/listen.node.ts` and `scripts/migrate.node.ts` both load `.env` via `dotenv/config` before importing the rest of the app. Copy `.env.example` to `.env` and edit; the schema is validated at boot in `app/core/application/di/serverNode.ts`.
+`apps/web/scripts/listen.node.ts` and `apps/web/scripts/migrate.node.ts` both load `apps/web/.env` before importing the rest of the app. Copy `apps/web/.env.example` to that path and edit it; the schema is validated at boot in `packages/core/src/application/di/serverNode.ts`.
 
 | Variable                  | Required | Default                  | Purpose                                                                                              |
 | ------------------------- | -------- | ------------------------ | ---------------------------------------------------------------------------------------------------- |
@@ -56,20 +57,20 @@ The flow:
 | `OUTBOX_MAX_ATTEMPTS`     | no       | `3`                      | Per-event max attempts before quarantine (`failed_at` stamp).                                        |
 | `OUTBOX_RETENTION_MS`     | no       | `604800000` (7 days)     | Retention window before processed outbox rows are pruned.                                            |
 
-The outbox tuning variables are shared with the Cloudflare runtime; the schema is declared once in `app/core/application/di/env.ts` and consumed by both `serverNode.ts` and the wrangler `[vars]` readers.
+The outbox tuning variables are shared with the Cloudflare runtime; the schema is declared once in `packages/core/src/application/di/env.ts` and consumed by both `serverNode.ts` and the wrangler `[vars]` readers.
 
 ## The libSQL data file
 
-`DATABASE_URL=file:./data/app.db` (the default) produces three files at runtime:
+`DATABASE_URL=file:./data/app.db` is resolved from the `@repo/web` workspace directory, so the default produces three files under `apps/web/data/`:
 
 ```
-data/
+apps/web/data/
 ├─ app.db        # main database file
 ├─ app.db-wal    # write-ahead log (created when PRAGMA journal_mode = WAL is on)
 └─ app.db-shm    # shared memory file used by WAL
 ```
 
-`./data/` is gitignored, and `scripts/migrate.node.ts` + `app/server.node.ts` both `mkdir -p` the parent directory at boot — libSQL's embedded driver does not create it automatically.
+`apps/web/data/` is gitignored, and `apps/web/scripts/migrate.node.ts` + `apps/web/app/server.node.ts` both create the parent directory at boot — libSQL's embedded driver does not create it automatically.
 
 ### Backup
 
@@ -78,23 +79,23 @@ The database is plain SQLite. Two options:
 - **Cold copy** while the process is stopped:
 
   ```bash
-  pnpm stop                          # or kill the process; wait for shutdown
-  cp data/app.db data/backup-$(date +%Y%m%d).db
+  # Stop the process and wait for graceful shutdown, then:
+  cp apps/web/data/app.db apps/web/data/backup-$(date +%Y%m%d).db
   ```
 
 - **Online backup** while the process is running, via the SQLite CLI's `.backup` command:
 
   ```bash
-  sqlite3 data/app.db ".backup data/backup-$(date +%Y%m%d).db"
+  sqlite3 apps/web/data/app.db ".backup apps/web/data/backup-$(date +%Y%m%d).db"
   ```
 
   `.backup` is concurrency-safe under WAL — readers and writers continue uninterrupted.
 
-The `*-wal` / `*-shm` sidecar files do **not** need to be copied; SQLite reconstructs them from the main file on next open. Restore by stopping the process, replacing `data/app.db` with the backup, and starting again.
+The `*-wal` / `*-shm` sidecar files do **not** need to be copied; SQLite reconstructs them from the main file on next open. Restore by stopping the process, replacing `apps/web/data/app.db` with the backup, and starting again.
 
 ## SQLite PRAGMAs applied at boot
 
-`app/core/adapters/libsql/client.ts#applyPragmas` runs three statements after the client is constructed (unless `wal: false` is passed for `:memory:` / read-only test databases):
+`packages/core/src/adapters/libsql/client.ts#applyPragmas` runs three statements after the client is constructed (unless `wal: false` is passed for `:memory:` / read-only test databases):
 
 | PRAGMA                  | Why                                                                                                                                                                                                       |
 | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -104,7 +105,7 @@ The `*-wal` / `*-shm` sidecar files do **not** need to be copied; SQLite reconst
 
 ## Worker runner (relay / consumer / pruner)
 
-`app/worker/node/runner.ts#createNodeWorkerRunner` is the same-process orchestrator for the four roles that ship as separate Workers on Cloudflare.
+`apps/web/app/worker/node/runner.ts#createNodeWorkerRunner` is the same-process orchestrator for the four roles that ship as separate Workers on Cloudflare.
 
 | Role     | Cloudflare                              | Node                                                                                                              |
 | -------- | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
@@ -123,32 +124,32 @@ Concurrent kicks are collapsed: the periodic fallback and request-path kicks sha
 
 ### Consumer handler
 
-`consumerHandler` is a required dependency on `createNodeWorkerRunner` so wiring is explicit at the type level. `app/server.node.ts` passes an inline `async () => {}` as the template default — replace it with your application-specific subscriber. Idempotency is enforced by the dispatcher before the handler runs, so handlers stay idempotent without per-handler bookkeeping.
+`consumerHandler` is a required dependency on `createNodeWorkerRunner` so wiring is explicit at the type level. `apps/web/app/server.node.ts` passes an inline `async () => {}` as the template default — replace it with your application-specific subscriber. Idempotency is enforced by the dispatcher before the handler runs, so handlers stay idempotent without per-handler bookkeeping.
 
 ## Migrations
 
-The canonical schema lives at `app/core/adapters/d1/schema.ts`; `app/core/adapters/libsql/schema.ts` re-exports it so both runtimes share an identical type-level surface.
+The canonical schema lives at `packages/core/src/adapters/d1/schema.ts`; `packages/core/src/adapters/libsql/schema.ts` re-exports it so both runtimes share an identical type-level surface.
 
 ```bash
-pnpm db:generate           # alias of db:generate:cf
-pnpm db:generate:cf        # drizzle-kit generate → app/core/adapters/d1/migrations/
-pnpm db:generate:node      # drizzle-kit generate → app/core/adapters/libsql/migrations/ (mirror)
+pnpm db:generate           # alias of db:generate:node
+pnpm db:generate:node      # drizzle-kit generate → packages/core/src/adapters/libsql/migrations/
+pnpm db:generate:cf        # drizzle-kit generate → packages/core/src/adapters/d1/migrations/ (mirror)
 pnpm db:migrate            # alias of db:migrate:node
-pnpm db:migrate:node       # tsx scripts/migrate.node.ts — applies libSQL migrations
+pnpm db:migrate:node       # tsx apps/web/scripts/migrate.node.ts — applies libSQL migrations
 ```
 
 Workflow:
 
-1. Edit `app/core/adapters/d1/schema.ts`.
+1. Edit `packages/core/src/adapters/d1/schema.ts`.
 2. `pnpm db:generate:cf` to author the SQL (this is the source of truth).
-3. `pnpm db:generate:node` to mirror it under `app/core/adapters/libsql/migrations/`.
+3. `pnpm db:generate:node` to mirror it under `packages/core/src/adapters/libsql/migrations/`.
 4. `pnpm db:migrate` to apply against the local libSQL file.
 
 Drizzle's programmatic migrator writes its bookkeeping into the `__drizzle_migrations` table inside the database, so re-running `pnpm db:migrate` is idempotent.
 
 ## Graceful shutdown
 
-`scripts/listen.node.ts` and `app/server.node.ts` both register SIGTERM / SIGINT handlers. The shutdown sequence:
+`apps/web/scripts/listen.node.ts` and `apps/web/app/server.node.ts` both register SIGTERM / SIGINT handlers. The shutdown sequence:
 
 1. `@hono/node-server` stops accepting new HTTP connections.
 2. `runner.stop()`:
@@ -170,13 +171,13 @@ The Node runtime is **single-writer, single-process**. libSQL's embedded driver 
 
 Implications:
 
-- Run exactly one instance of `pnpm start` against a given `data/app.db` path.
+- Run exactly one instance of `pnpm start` against a given `apps/web/data/app.db` path.
 - Horizontal scaling (multiple Node processes behind a load balancer sharing one DB file) is **not supported** in this template. Promote to the Cloudflare runtime, or front the libSQL data with a Turso remote URL (see *Known limitations* below).
 - Vertical scaling (a single beefier machine) works fine — WAL allows many concurrent readers against the single writer.
 
 ## Logging and observability
 
-The application uses the `ConsoleLogger` port (`app/core/application/ports/logger.ts`) — every log line is `console.log` / `console.error` formatted as JSON-ish objects. On Cloudflare this is picked up by `wrangler tail` / Logpush; on Node the lines go straight to stdout / stderr and can be piped into any aggregator (journald, vector, etc).
+The application uses the `ConsoleLogger` port (`packages/core/src/application/ports/logger.ts`) — every log line is `console.log` / `console.error` formatted as JSON-ish objects. On Cloudflare this is picked up by `wrangler tail` / Logpush; on Node the lines go straight to stdout / stderr and can be piped into any aggregator (journald, vector, etc).
 
 Structured logging via `pino` or similar is a deliberate non-goal of the current template (the Cloudflare runtime constrains the choices). It is on the open-issues list in `plan.md`.
 

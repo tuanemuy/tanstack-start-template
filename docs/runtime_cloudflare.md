@@ -22,12 +22,13 @@ See [`runtime_node.md`](./runtime_node.md) for the standalone runtime that runs 
 
 ```bash
 pnpm install
-cp .dev.vars.example .dev.vars         # wrangler-loaded secrets for local dev (gitignored)
+cp apps/web/.dev.vars.example apps/web/.dev.vars
+pnpm db:generate:cf                    # generate SQL from the Drizzle schema
 pnpm db:migrate:cf                     # apply migrations to the local D1
 pnpm dev:cf                            # vite dev backed by workerd (@cloudflare/vite-plugin)
 ```
 
-`.dev.vars` is auto-loaded by `wrangler dev` (and the workerd-backed `pnpm dev:cf`) and mirrors `wrangler secret put` for production. Non-secret config such as `APP_URL` belongs in the matching `wrangler*.toml` `[vars]`, not in `.dev.vars`.
+`apps/web/.dev.vars` is auto-loaded by `wrangler dev` (and the workerd-backed `pnpm dev:cf`) and mirrors `wrangler secret put` for production. Non-secret config such as `APP_URL` belongs in the matching `apps/web/wrangler*.toml` `[vars]`, not in `.dev.vars`.
 
 ## Worker matrix
 
@@ -47,9 +48,9 @@ Trigger model: the request path kicks the relay through the `RELAY` Service Bind
 
 | File                       | Purpose                                                                                                                                    |
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `wrangler.toml`            | **Local dev only** — `pnpm dev:cf` / `pnpm build:cf` discover it via `@cloudflare/vite-plugin` (configured in `vite.config.cloudflare.ts`). Do not deploy from this file. |
-| `wrangler.staging.toml`    | Staging deploys (`pnpm deploy:staging*`).                                                                                                  |
-| `wrangler.production.toml` | Production deploys (`pnpm deploy:production*`).                                                                                            |
+| `apps/web/wrangler.toml`            | **Local dev only** — `pnpm dev:cf` / `pnpm build:cf` discover it via `@cloudflare/vite-plugin`. Do not deploy from this file. |
+| `apps/web/wrangler.staging.toml`    | Generated staging config (`pnpm cf:render:staging`).                                                    |
+| `apps/web/wrangler.production.toml` | Generated production config (`pnpm cf:render:production`).                                              |
 
 Each stage file is a self-contained mirror of `wrangler.toml` with `-staging` / `-production` suffixed on every Cloudflare resource name (Worker name, D1 `database_name`, queue names) so the two stages never collide inside one Cloudflare account.
 
@@ -57,35 +58,35 @@ Each stage file is a self-contained mirror of `wrangler.toml` with `-staging` / 
 
 ## One-time Cloudflare resource creation
 
-Cloudflare Queues and D1 databases are not auto-created by `wrangler deploy` — create them once per stage before the first remote deployment, otherwise the Workers will fail to deploy.
+Cloudflare Queues and D1 databases are provisioned by the `@repo/infra-cloudflare` Pulumi package. Update the matching `infra/cloudflare/pulumi/resources/Pulumi.<stage>.yaml`, authenticate the Pulumi and Cloudflare CLIs, then create the persistent resources:
 
 ```bash
-# staging
-wrangler d1 create tanstack-start-template-d1-staging
-wrangler queues create tanstack-start-template-events-staging
-wrangler queues create tanstack-start-template-events-dlq-staging
-
-# production
-wrangler d1 create tanstack-start-template-d1-production
-wrangler queues create tanstack-start-template-events-production
-wrangler queues create tanstack-start-template-events-dlq-production
+pnpm --filter @repo/infra-cloudflare exec pulumi -C resources -s staging up
+pnpm --filter @repo/infra-cloudflare exec pulumi -C resources -s production up
 ```
 
-Paste the `database_id` printed by each `wrangler d1 create` into every `[[d1_databases]]` block of the matching `wrangler.<stage>.toml`. Replace the `[vars] APP_URL` placeholders in each stage file before the first deploy — leaving `https://example.com` breaks `buildHead()`'s canonical / OG image URLs.
+Render the ignored, stage-specific Wrangler configs from those Pulumi outputs:
+
+```bash
+pnpm cf:render:staging
+pnpm cf:render:production
+```
+
+Rerun the matching render command whenever a persistent-resource output or public URL changes.
 
 ## Secrets and vars
 
 Secrets are scoped per `--config` (and per `--env` for sibling Workers), so set them per stage:
 
 ```bash
-wrangler secret put MY_SECRET --config wrangler.staging.toml
-wrangler secret put MY_SECRET --config wrangler.staging.toml --env relay
-wrangler secret put MY_SECRET --config wrangler.production.toml
+pnpm --filter @repo/web exec wrangler secret put MY_SECRET --config wrangler.staging.toml
+pnpm --filter @repo/web exec wrangler secret put MY_SECRET --config wrangler.staging.toml --env relay
+pnpm --filter @repo/web exec wrangler secret put MY_SECRET --config wrangler.production.toml
 ```
 
-For local dev, drop them into `.dev.vars` (copied from `.dev.vars.example`).
+For local dev, drop them into `apps/web/.dev.vars` (copied from `apps/web/.dev.vars.example`).
 
-The outbox tuning variables (`OUTBOX_BATCH_SIZE`, `OUTBOX_LEASE_MS`, `OUTBOX_MAX_ATTEMPTS`, `OUTBOX_RETENTION_MS`) live in `[vars]` (not `.dev.vars`) and are documented in `.env.example` — the schema is shared with the Node runtime via `app/core/application/di/env.ts`.
+The outbox tuning variables (`OUTBOX_BATCH_SIZE`, `OUTBOX_LEASE_MS`, `OUTBOX_MAX_ATTEMPTS`, `OUTBOX_RETENTION_MS`) live in `[vars]` (not `.dev.vars`) and are documented in `apps/web/.env.example` — the schema is shared with the Node runtime via `packages/core/src/application/di/env.ts`.
 
 ## Deployment
 
@@ -111,7 +112,7 @@ pnpm deploy:production:all:dry       # dry run
 
 ## D1 migrations
 
-The canonical SQL lives under `app/core/adapters/d1/migrations/`. Generate it with `pnpm db:generate:cf` (alias `pnpm db:generate`) from `app/core/adapters/d1/schema.ts`.
+SQL lands in `packages/core/src/adapters/d1/migrations/`, which the template ships empty — generate it with `pnpm db:generate:cf` from `packages/core/src/adapters/d1/schema.ts` before applying anything. (Bare `pnpm db:generate` targets the libSQL runtime, matching `pnpm db:migrate`.)
 
 ```bash
 pnpm db:apply:local                    # apply to the local D1
@@ -155,7 +156,7 @@ The user-visible attempt count is the **product** of those numbers (max 8 by def
 
 ## D1-specific behaviour and the libSQL diff
 
-The SQLite schema and SQL are shared verbatim across runtimes — both adapters consume `app/core/adapters/d1/schema.ts` (libSQL re-exports it). What differs:
+The SQLite schema and SQL are shared verbatim across runtimes — both adapters consume `packages/core/src/adapters/d1/schema.ts` (libSQL re-exports it). What differs:
 
 | Concern                     | D1                                                      | libSQL                                                          |
 | --------------------------- | ------------------------------------------------------- | --------------------------------------------------------------- |
