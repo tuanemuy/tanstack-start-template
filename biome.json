@@ -14,7 +14,8 @@
       "*.ts",
       "*.mjs",
       "*.json",
-      "!**/routeTree.gen.ts"
+      "!**/routeTree.gen.ts",
+      "!**/migrations"
     ]
   },
   "formatter": {

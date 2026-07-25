@@ -118,9 +118,10 @@ Pub/Sub push subscriptions wrap each message in this envelope:
 
 ## Migrations
 
-Turso is SQLite-compatible, so the existing Drizzle migration set works as-is:
+Turso is SQLite-compatible, so the libSQL Drizzle migration set works as-is:
 
 ```bash
+pnpm db:generate        # drizzle-kit generate → packages/core/src/adapters/libsql/migrations/
 pnpm db:migrate:gcp     # tsx apps/web/scripts/migrate.gcp.ts against DATABASE_URL/DATABASE_AUTH_TOKEN
 ```
 

@@ -27,6 +27,7 @@ See [`runtime_node.md`](./runtime_node.md) for the standalone Node runtime and [
 pnpm install
 cp apps/web/.env.aws.example apps/web/.env.aws
 # fill in DATABASE_URL (libsql://...), DATABASE_AUTH_TOKEN
+pnpm db:generate                    # generate SQL from the Drizzle schema
 pnpm db:migrate:aws                 # apply migrations to the Turso primary
 pnpm deploy:aws:synth               # cdk synth — sanity-check the stack
 pnpm deploy:aws:staging             # cdk deploy AppStack-staging
@@ -125,7 +126,7 @@ The `app` Lambda picks up the freshly-built `apps/web/dist/server/server.aws.js`
 ## Migrations
 
 ```bash
-pnpm db:generate              # drizzle-kit generate (alias of db:generate:cf)
+pnpm db:generate              # drizzle-kit generate (alias of db:generate:node)
 pnpm db:migrate:aws           # tsx apps/web/scripts/migrate.aws.ts — applies libSQL migrations to Turso
 ```
 

@@ -23,6 +23,7 @@ See [`runtime_node.md`](./runtime_node.md) for the standalone runtime that runs 
 ```bash
 pnpm install
 cp apps/web/.dev.vars.example apps/web/.dev.vars
+pnpm db:generate:cf                    # generate SQL from the Drizzle schema
 pnpm db:migrate:cf                     # apply migrations to the local D1
 pnpm dev:cf                            # vite dev backed by workerd (@cloudflare/vite-plugin)
 ```
@@ -111,7 +112,7 @@ pnpm deploy:production:all:dry       # dry run
 
 ## D1 migrations
 
-The canonical SQL lives under `packages/core/src/adapters/d1/migrations/`. Generate it with `pnpm db:generate:cf` (alias `pnpm db:generate`) from `packages/core/src/adapters/d1/schema.ts`.
+SQL lands in `packages/core/src/adapters/d1/migrations/`, which the template ships empty — generate it with `pnpm db:generate:cf` from `packages/core/src/adapters/d1/schema.ts` before applying anything. (Bare `pnpm db:generate` targets the libSQL runtime, matching `pnpm db:migrate`.)
 
 ```bash
 pnpm db:apply:local                    # apply to the local D1

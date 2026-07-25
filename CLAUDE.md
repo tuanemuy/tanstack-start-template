@@ -13,7 +13,7 @@ Guidance for Claude Code working in this repository.
 
 ## Workspace layout
 
-pnpm monorepo. One lockfile at the root; packages resolve each other via tsconfig `paths` (no build step for internal packages).
+pnpm monorepo. One lockfile at the root; packages resolve each other via package `exports` pointing straight at `.ts` sources (no build step for internal packages). `@repo/core` exposes a single flat rule — `"./*": "./src/*.ts"` — so every subpath maps 1:1 to a file and there is no barrel to import from.
 
 - `packages/core` (`@repo/core`) — domain / application / adapters + shared `lib/` primitives. Framework-free; imported everywhere as `@repo/core/*`.
 - `apps/web` (`@repo/web`) — the TanStack Start app: routes, components, the presentation layer, per-runtime server entries and workers, `scripts/`, and all runtime configs (vite / wrangler / drizzle / Dockerfile).
@@ -22,7 +22,7 @@ pnpm monorepo. One lockfile at the root; packages resolve each other via tsconfi
 - `infra/gcp` — Terraform only; it is not an npm package and lives outside the workspace.
 - Root — shared tooling only: Biome, vitest orchestration configs, delegating scripts. `@types/*` are publicly hoisted (see `pnpm-workspace.yaml`) so `.d.ts` files inside the pnpm store can resolve `react` / `vitest` types.
 
-A future app (MCP server, CLI, …) is a new `apps/*` package that maps the same `@repo/core/*` tsconfig path and owns its DI wiring or reuses one from `packages/core/src/application/di/`.
+A future app (MCP server, CLI, …) is a new `apps/*` package that declares `"@repo/core": "workspace:*"` and owns its DI wiring or reuses one from `packages/core/src/application/di/`. No tsconfig `paths` mirror is needed.
 
 ## Development Commands
 

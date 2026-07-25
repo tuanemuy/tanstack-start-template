@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { Client } from "@libsql/client";
@@ -10,10 +10,7 @@ import { LibsqlIdempotencyStore } from "../repositories/idempotencyStore";
 import { LibsqlOutboxRepository } from "../repositories/outboxRepository";
 import { LibsqlUnitOfWorkProvider } from "../unitOfWork";
 
-const MIGRATION_PATH = path.resolve(
-  import.meta.dirname,
-  "../migrations/0000_initial.sql",
-);
+const MIGRATIONS_DIR = path.resolve(import.meta.dirname, "../migrations");
 
 /** Test container bundling request- and worker-side dependencies. */
 export type TestContainer = Readonly<{
@@ -48,10 +45,24 @@ export async function createTestContainer(): Promise<TestContainer> {
   await client.execute("PRAGMA foreign_keys = ON");
   await client.execute("PRAGMA busy_timeout = 5000");
 
-  const ddl = readFileSync(MIGRATION_PATH, "utf8");
-  // Strip drizzle's statement-breakpoint markers; libSQL's
-  // executeMultiple consumes a plain semicolon-delimited script.
-  await client.executeMultiple(ddl.replace(/--> statement-breakpoint/g, ""));
+  // drizzle names migrations with a random slug, so no file name can be
+  // pinned; apply every `.sql` in `NNNN_` prefix order.
+  const files = existsSync(MIGRATIONS_DIR)
+    ? readdirSync(MIGRATIONS_DIR)
+        .filter((name) => name.endsWith(".sql"))
+        .sort()
+    : [];
+  if (files.length === 0) {
+    throw new Error(
+      `No migrations in ${MIGRATIONS_DIR}. Run \`pnpm db:generate:node\` first.`,
+    );
+  }
+  for (const file of files) {
+    const ddl = readFileSync(path.join(MIGRATIONS_DIR, file), "utf8");
+    // Strip drizzle's statement-breakpoint markers; libSQL's
+    // executeMultiple consumes a plain semicolon-delimited script.
+    await client.executeMultiple(ddl.replace(/--> statement-breakpoint/g, ""));
+  }
 
   const db = getDatabase(client);
   return {

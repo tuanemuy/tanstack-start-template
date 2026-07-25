@@ -6,9 +6,6 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "paths": {
-      "@repo/core/*": ["./src/*"]
-    },
     "esModuleInterop": true,
     "verbatimModuleSyntax": true,
     "noEmit": true,

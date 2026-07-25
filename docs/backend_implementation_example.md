@@ -445,7 +445,7 @@ await pruneOutbox(container, { retentionMs: 7 * 86_400_000 }); // retain for 7 d
 | Layer | Error type | Location |
 |---|---|---|
 | Domain | `BusinessRuleError<FooErrorCode>` | `packages/core/src/domain/error.ts` |
-| Application | `NotFoundError`, `ConflictError`, `ValidationError`, `SystemError` | `packages/core/src/application/errors/index.ts` |
+| Application | `NotFoundError`, `ConflictError`, `ValidationError`, `SystemError` | `packages/core/src/application/errors.ts` |
 | Presentation | `AppServerError` | `apps/web/app/presentation/errorResponse.ts` |
 
 Every error class extends the abstract base `CodedError<TCode extends string>` in `packages/core/src/lib/error.ts`. The base class owns the `code: TCode` field, a default `retryable: false` getter, and the abstract method `toSerialized()`. The base's return type is the structural `SerializedErrorBase & { kind: string }`, and each subclass narrows it via override to its own `kind`-tagged variant.

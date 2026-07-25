@@ -74,6 +74,7 @@ The default scripts target the Node runtime.
 ```bash
 pnpm install
 cp apps/web/.env.example apps/web/.env   # edit DATABASE_URL / APP_URL / PORT if needed
+pnpm db:generate           # generate SQL from the Drizzle schema
 pnpm db:migrate            # creates apps/web/data/app.db and applies SQL migrations
 pnpm dev                   # vite dev server on http://localhost:3000
 ```
@@ -124,11 +125,12 @@ pnpm typecheck && pnpm lint:fix && pnpm format
 
 ## Database migrations
 
-Migration SQL is the canonical artefact and is shared across the reference runtimes.
+The template ships no migrations — `schema.ts` is the artefact, and the SQL is yours to generate once the schema is yours. Commit what you generate from then on.
 
 ```bash
-pnpm db:generate                       # generate SQL from the Drizzle schema
+pnpm db:generate                       # generate libSQL SQL (alias of db:generate:node)
 pnpm db:migrate                        # apply to local libSQL via Drizzle's programmatic migrator
+pnpm db:generate:cf                    # generate D1 SQL
 pnpm db:migrate:cf                     # wrangler d1 migrations apply (local D1)
 ```
 

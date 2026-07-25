@@ -22,6 +22,7 @@ This is the default runtime: `pnpm dev` / `pnpm build` / `pnpm start` all alias 
 ```bash
 pnpm install
 cp apps/web/.env.example apps/web/.env
+pnpm db:generate           # generate SQL from the Drizzle schema
 pnpm db:migrate            # creates apps/web/data/ and applies migrations
 pnpm dev                   # http://localhost:3000
 ```
@@ -130,9 +131,9 @@ Concurrent kicks are collapsed: the periodic fallback and request-path kicks sha
 The canonical schema lives at `packages/core/src/adapters/d1/schema.ts`; `packages/core/src/adapters/libsql/schema.ts` re-exports it so both runtimes share an identical type-level surface.
 
 ```bash
-pnpm db:generate           # alias of db:generate:cf
-pnpm db:generate:cf        # drizzle-kit generate → packages/core/src/adapters/d1/migrations/
-pnpm db:generate:node      # drizzle-kit generate → packages/core/src/adapters/libsql/migrations/ (mirror)
+pnpm db:generate           # alias of db:generate:node
+pnpm db:generate:node      # drizzle-kit generate → packages/core/src/adapters/libsql/migrations/
+pnpm db:generate:cf        # drizzle-kit generate → packages/core/src/adapters/d1/migrations/ (mirror)
 pnpm db:migrate            # alias of db:migrate:node
 pnpm db:migrate:node       # tsx apps/web/scripts/migrate.node.ts — applies libSQL migrations
 ```

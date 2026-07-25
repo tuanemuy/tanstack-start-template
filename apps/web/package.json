@@ -51,7 +51,7 @@
     "db:migrate:cf": "wrangler d1 migrations apply tanstack-start-template-d1 --local",
     "db:migrate:aws": "tsx scripts/migrate.aws.ts",
     "db:migrate:gcp": "tsx scripts/migrate.gcp.ts",
-    "db:generate": "pnpm db:generate:cf",
+    "db:generate": "pnpm db:generate:node",
     "db:generate:cf": "drizzle-kit generate --config=./drizzle.config.ts",
     "db:generate:node": "drizzle-kit generate --config=./drizzle.libsql.config.ts",
     "db:apply:local": "wrangler d1 migrations apply tanstack-start-template-d1 --local",

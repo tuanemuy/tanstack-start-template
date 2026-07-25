@@ -9,8 +9,7 @@
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
     "paths": {
-      "@/*": ["./app/*"],
-      "@repo/core/*": ["../../packages/core/src/*"]
+      "@/*": ["./app/*"]
     },
     "esModuleInterop": true,
     "verbatimModuleSyntax": true,
