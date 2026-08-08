@@ -1,0 +1,23 @@
+# Reverse proxy from the Apache document root to the Node process.
+#
+# Rendered by `provision.sh` into `<docroot>/.htaccess` with __PORT__
+# substituted. `[P]` needs mod_proxy / mod_proxy_http, which shared
+# hosts running Apache generally have enabled.
+#
+# Note: `[P]` proxies HTTP only — WebSocket upgrades do not pass
+# through. The Node runtime does not use them, but a feature that does
+# would need a different host.
+
+# Apache must not serve a directory index before the rewrite runs.
+DirectoryIndex disabled
+
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteRule ^(.*)$ http://127.0.0.1:__PORT__/$1 [P,L,QSA]
+</IfModule>
+
+<IfModule mod_headers.c>
+  # The app builds absolute URLs from APP_URL, but upstream frameworks
+  # also read these to reconstruct the external origin.
+  RequestHeader set X-Forwarded-Proto "https"
+</IfModule>
