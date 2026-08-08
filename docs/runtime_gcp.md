@@ -125,7 +125,7 @@ pnpm db:generate        # drizzle-kit generate → packages/core/src/adapters/li
 pnpm db:migrate:gcp     # tsx apps/web/scripts/migrate.gcp.ts against DATABASE_URL/DATABASE_AUTH_TOKEN
 ```
 
-The migrator loads `apps/web/.env.gcp` unless the process environment already provides the variables. `__drizzle_migrations` is created in the Turso DB so reruns are idempotent. Run this from your dev machine or as a Cloud Build step before each release.
+The migrator reads `process.env` only; the `db:migrate:gcp` script injects `apps/web/.env.gcp` via `tsx --env-file-if-exists=.env.gcp` (variables already present in the environment win). `__drizzle_migrations` is created in the Turso DB so reruns are idempotent. Run this from your dev machine or as a Cloud Build step before each release.
 
 ## Secrets
 

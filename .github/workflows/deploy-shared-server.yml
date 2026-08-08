@@ -1,0 +1,106 @@
+# Deploy the Node runtime to a shared host over SSH.
+#
+# The build runs here, not on the target: shared hosting caps memory and
+# CPU per tenant, and `vite build` is the step most likely to be killed.
+# Only the bundle plus the files needed to install production
+# dependencies and run migrations are shipped.
+#
+# Prerequisites (once per site, see infra/shared-server/README.md):
+#   - `provision.sh <domain>` has been run on the server
+#   - the secrets and variables below are set on the repository
+name: Deploy (shared server)
+
+on:
+  push:
+    branches: [staging]
+  workflow_dispatch:
+
+concurrency:
+  # A shared host runs one process per environment against one SQLite
+  # file. Overlapping deploys would race on migrations and pm2 reloads.
+  group: deploy-shared-server-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: package.json
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm build:node
+
+      - name: Configure SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SHARED_SERVER_SSH_KEY }}
+          SSH_HOST: ${{ secrets.SHARED_SERVER_HOST }}
+          SSH_PORT: ${{ vars.SHARED_SERVER_PORT || '22' }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -p "$SSH_PORT" "$SSH_HOST" >> ~/.ssh/known_hosts
+
+      - name: Sync build output
+        env:
+          SSH_HOST: ${{ secrets.SHARED_SERVER_HOST }}
+          SSH_USER: ${{ secrets.SHARED_SERVER_USER }}
+          SSH_PORT: ${{ vars.SHARED_SERVER_PORT || '22' }}
+          REMOTE_PATH: ${{ vars.SHARED_SERVER_REMOTE_PATH }}
+        run: |
+          # `data/` and `.env` live only on the server — deleting either
+          # would wipe the staging database or its configuration.
+          rsync -az --delete \
+            --exclude 'node_modules/' \
+            --exclude 'data/' \
+            --exclude '.env' \
+            --exclude '.git/' \
+            -e "ssh -i ~/.ssh/id_deploy -p ${SSH_PORT}" \
+            ./ "${SSH_USER}@${SSH_HOST}:${REMOTE_PATH}/"
+
+      - name: Install, migrate, reload
+        env:
+          SSH_HOST: ${{ secrets.SHARED_SERVER_HOST }}
+          SSH_USER: ${{ secrets.SHARED_SERVER_USER }}
+          SSH_PORT: ${{ vars.SHARED_SERVER_PORT || '22' }}
+          REMOTE_PATH: ${{ vars.SHARED_SERVER_REMOTE_PATH }}
+          PM2_NAME: ${{ vars.SHARED_SERVER_PM2_NAME }}
+        run: |
+          ssh -i ~/.ssh/id_deploy -p "$SSH_PORT" "${SSH_USER}@${SSH_HOST}" bash -euo pipefail <<REMOTE
+          export PATH="\$HOME/.nodebrew/current/bin:\$PATH"
+          cd "${REMOTE_PATH}"
+
+          # --ignore-scripts: the @repo/web postinstall runs \`wrangler
+          # types\`, which the Node runtime neither needs nor can run here.
+          pnpm install --frozen-lockfile --ignore-scripts \
+            --filter @repo/web --filter @repo/core
+
+          pnpm --filter @repo/web db:migrate:node
+
+          cd apps/web
+          if pm2 describe "${PM2_NAME}" > /dev/null 2>&1; then
+            pm2 reload "${PM2_NAME}" --update-env
+          else
+            # Launchers read process.env only; the env file is injected
+            # here, at the invocation, via Node's --env-file-if-exists.
+            pm2 start scripts/listen.node.mjs --name "${PM2_NAME}" \
+              --node-args="--env-file-if-exists=.env"
+          fi
+          # Persist the process list so the cron-based \`pm2 resurrect\`
+          # can bring things back after a host reboot.
+          pm2 save
+          REMOTE
+
+      - name: Smoke check
+        env:
+          APP_URL: ${{ vars.SHARED_SERVER_APP_URL }}
+        run: curl --fail --silent --show-error --retry 5 --retry-delay 3 --retry-connrefused "$APP_URL" > /dev/null

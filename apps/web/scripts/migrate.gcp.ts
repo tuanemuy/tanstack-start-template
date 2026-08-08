@@ -10,11 +10,9 @@ import {
   createLibsqlClient,
   getDatabase,
 } from "@repo/core/adapters/libsql/client";
-import { config as loadEnv } from "dotenv";
 import { migrate } from "drizzle-orm/libsql/migrator";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
-loadEnv({ path: path.resolve(scriptDir, "../.env.gcp"), quiet: true });
 
 async function main(): Promise<void> {
   const url = process.env["DATABASE_URL"];

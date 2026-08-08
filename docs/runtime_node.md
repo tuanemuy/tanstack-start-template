@@ -37,12 +37,14 @@ pnpm start                 # tsx apps/web/scripts/listen.node.ts — boots @hono
 The flow:
 
 1. `vite build --config vite.config.node.ts` writes a fetch-handler bundle to `apps/web/dist/server/server.node.js`.
-2. `apps/web/scripts/listen.node.ts` loads `dotenv`, dynamically imports the bundle, calls its `boot()` to construct the libSQL client + DI container + worker runner, then registers the handler with `@hono/node-server`.
+2. `apps/web/scripts/listen.node.ts` dynamically imports the bundle, calls its `boot()` to construct the libSQL client + DI container + worker runner, then registers the handler with `@hono/node-server`.
 3. SIGTERM / SIGINT triggers the shutdown sequence described below.
 
 ## Environment variables
 
-`apps/web/scripts/listen.node.ts` and `apps/web/scripts/migrate.node.ts` both load `apps/web/.env` before importing the rest of the app. Copy `apps/web/.env.example` to that path and edit it; the schema is validated at boot in `packages/core/src/application/di/serverNode.ts`.
+The launchers and the migrator read `process.env` only — env injection happens at the invocation, uniformly across runtimes. The `start:node` / `start:node:prod` / `db:migrate:node` scripts pass `--env-file-if-exists=.env` (resolved against `apps/web`, the scripts' cwd), so copy `apps/web/.env.example` to `apps/web/.env` and edit it; variables already present in the environment win over the file. The schema is validated at boot in `packages/core/src/application/di/serverNode.ts`.
+
+For `pnpm dev` the vite dev server does not load `.env` files into `process.env`; export the variables in your shell (e.g. via direnv — see `.envrc.example`).
 
 | Variable                  | Required | Default                  | Purpose                                                                                              |
 | ------------------------- | -------- | ------------------------ | ---------------------------------------------------------------------------------------------------- |
