@@ -1,14 +1,13 @@
 // Loads the bundled server entry from `dist/server/server.node.js` and
 // serves its fetch handler via `@hono/node-server`. Kept separate from
 // `app/server.node.ts` so vite dev doesn't double-listen on a port.
+import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { serve } from "@hono/node-server";
-import { config as loadEnv } from "dotenv";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-loadEnv({ path: path.resolve(here, "../.env"), quiet: true });
 
 const candidates = [
   path.resolve(here, "../dist/server/server.node.js"),
@@ -27,26 +26,27 @@ type BundledServerModule = Readonly<{
   boot: () => Promise<BootedServer>;
 }>;
 
+// The candidate is picked by existence, not by whether it imports —
+// a bundle that exists but fails to load must surface its real error
+// instead of a misleading "could not locate".
 async function loadBundled(): Promise<BundledServerModule> {
-  for (const candidate of candidates) {
-    try {
-      const mod = (await import(pathToFileURL(candidate).toString())) as
-        | BundledServerModule
-        | { default?: BundledServerModule };
-      const resolved =
-        "boot" in mod
-          ? (mod as BundledServerModule)
-          : (mod.default as BundledServerModule | undefined);
-      if (resolved && typeof resolved.boot === "function") {
-        return resolved;
-      }
-    } catch {
-      // try next candidate
-    }
+  const found = candidates.find((candidate) => fs.existsSync(candidate));
+  if (found === undefined) {
+    throw new Error(
+      `[listen.node] could not locate the bundled server entry. Tried:\n  - ${candidates.join("\n  - ")}\nDid you run \`pnpm build:node\`?`,
+    );
   }
-  throw new Error(
-    `[listen.node] could not locate the bundled server entry. Tried:\n  - ${candidates.join("\n  - ")}\nDid you run \`pnpm build:node\`?`,
-  );
+  const mod = (await import(pathToFileURL(found).toString())) as
+    | BundledServerModule
+    | { default?: BundledServerModule };
+  const resolved =
+    "boot" in mod
+      ? (mod as BundledServerModule)
+      : (mod.default as BundledServerModule | undefined);
+  if (!resolved || typeof resolved.boot !== "function") {
+    throw new Error(`[listen.node] ${found} does not export boot()`);
+  }
+  return resolved;
 }
 
 async function main(): Promise<void> {

@@ -14,6 +14,7 @@
 // The launcher loads `dist/server/server.gcp.js` (the bundle vite
 // produces), picks the role from `WORKER_ROLE`, and serves the
 // resulting fetch handler via `@hono/node-server`.
+import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -27,21 +28,22 @@ const candidates = [
   path.resolve(process.cwd(), "dist/server/server.gcp.js"),
 ];
 
+// The candidate is picked by existence, not by whether it imports —
+// a bundle that exists but fails to load must surface its real error
+// instead of a misleading "could not locate".
 async function loadBundled() {
-  for (const candidate of candidates) {
-    try {
-      const mod = await import(pathToFileURL(candidate).toString());
-      const resolved = typeof mod.boot === "function" ? mod : mod.default;
-      if (resolved && typeof resolved.boot === "function") {
-        return resolved;
-      }
-    } catch {
-      // try next candidate
-    }
+  const found = candidates.find((candidate) => fs.existsSync(candidate));
+  if (found === undefined) {
+    throw new Error(
+      `[listen.gcp] could not locate the bundled server entry. Tried:\n  - ${candidates.join("\n  - ")}\nDid you run \`pnpm build:gcp\`?`,
+    );
   }
-  throw new Error(
-    `[listen.gcp] could not locate the bundled server entry. Tried:\n  - ${candidates.join("\n  - ")}\nDid you run \`pnpm build:gcp\`?`,
-  );
+  const mod = await import(pathToFileURL(found).toString());
+  const resolved = typeof mod.boot === "function" ? mod : mod.default;
+  if (!resolved || typeof resolved.boot !== "function") {
+    throw new Error(`[listen.gcp] ${found} does not export boot()`);
+  }
+  return resolved;
 }
 
 async function main() {

@@ -130,7 +130,7 @@ pnpm db:generate              # drizzle-kit generate (alias of db:generate:node)
 pnpm db:migrate:aws           # tsx apps/web/scripts/migrate.aws.ts — applies libSQL migrations to Turso
 ```
 
-The migrator reads `DATABASE_URL` / `DATABASE_AUTH_TOKEN` from `apps/web/.env.aws` (unless the process environment already provides them). Drizzle's `__drizzle_migrations` table tracks applied versions, so re-runs are idempotent. Run the migration from CI before each deploy that introduces schema changes.
+The migrator reads `process.env` only; the `db:migrate:aws` script injects `apps/web/.env.aws` via `tsx --env-file-if-exists=.env.aws` (variables already present in the environment win). Drizzle's `__drizzle_migrations` table tracks applied versions, so re-runs are idempotent. Run the migration from CI before each deploy that introduces schema changes.
 
 ## SQS event source mapping
 
