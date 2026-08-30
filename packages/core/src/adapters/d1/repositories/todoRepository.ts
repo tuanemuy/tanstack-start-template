@@ -18,7 +18,7 @@ import type { TodoRepository } from "@repo/core/domain/todo/ports/todoRepository
 import type { TodoId } from "@repo/core/domain/todo/valueObject";
 import { and, desc, eq, sql } from "drizzle-orm";
 import type { Database } from "../client";
-import type { PendingBatch } from "../pendingBatch";
+import type { OccProbe, PendingBatch } from "../pendingBatch";
 import { todos } from "../schema";
 import { mapDbError } from "./helpers";
 
@@ -173,6 +173,7 @@ export class D1TodoRepository implements TodoRepository {
           `Optimistic lock failure while saving todo ${todoId}: expected version ${expectedVersion}`,
         );
       },
+      this.occProbe(todo.id, expectedVersion as number),
     );
   }
 
@@ -192,6 +193,21 @@ export class D1TodoRepository implements TodoRepository {
           `Optimistic lock failure while deleting todo ${id}: expected version ${expectedVersion}`,
         );
       },
+      this.occProbe(id, expectedVersion as number),
     );
+  }
+
+  // Post-abort attribution only (see `PendingBatch`): re-checks whether
+  // the `id = ? AND version = ?` predicate of a buffered OCC write still
+  // matches after the batch rolled back.
+  private occProbe(id: TodoId, expectedVersion: number): OccProbe {
+    return async () => {
+      const rows = await this.db
+        .select({ id: todos.id })
+        .from(todos)
+        .where(and(eq(todos.id, id), eq(todos.version, expectedVersion)))
+        .limit(1);
+      return rows.length > 0;
+    };
   }
 }

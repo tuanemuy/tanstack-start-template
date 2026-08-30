@@ -5,6 +5,13 @@ import type { Database } from "./client";
 type SqliteBatchItem = BatchItem<"sqlite">;
 
 /**
+ * Re-evaluates an OCC write's predicate against the current database.
+ * Returns `true` while the predicate still matches a row (the write
+ * would succeed if re-run), `false` once it matches nothing.
+ */
+export type OccProbe = () => Promise<boolean>;
+
+/**
  * Buffer that collects Drizzle query expressions to flush atomically via
  * `db.batch()` at the end of a unit of work.
  *
@@ -40,15 +47,31 @@ type SqliteBatchItem = BatchItem<"sqlite">;
  *    valid" covers both cases, and the deferred-batch model has no
  *    cheaper way to distinguish them without a read-after-write.
  *
- * Why the guard handlers are FIFO-ordered: a batch can carry multiple
- * OCC writes (e.g. saving two aggregates in one usecase), but D1 stops
- * at the first failure. The guard at index `i` is the one that fired,
- * so handlers and writes share the same insertion order and the head
- * handler is the right one to throw on `flush()` failure.
+ * Attribution across multiple OCC writes: a batch can carry several
+ * (e.g. saving two aggregates in one usecase), D1 stops at the first
+ * failing guard, and the driver error does not say which statement
+ * fired. The batch has rolled back by then, so the culprit is
+ * re-derived by re-evaluating each OCC predicate (`probe`) in
+ * insertion order against the restored database: writes ahead of the
+ * culprit matched a row at execution time and still do after rollback,
+ * while the culprit matched zero rows and still does. The first probe
+ * reporting "no match" identifies the guard that fired.
+ *
+ * Two caveats, both strictly no worse than naive head-handler
+ * attribution: a concurrent writer mutating rows between the abort and
+ * the probes can shift attribution (the blamed row would still
+ * conflict on retry, so the error stays truthful), and two OCC writes
+ * targeting the same row in one batch can self-invalidate in a way the
+ * probes cannot see (repositories persist each aggregate once per UoW,
+ * so this shape does not occur). If every probe still matches or a
+ * probe read fails, attribution falls back to the head handler.
  */
 export class PendingBatch {
   private readonly items: SqliteBatchItem[] = [];
-  private readonly conflictHandlers: Array<() => never> = [];
+  private readonly occWrites: Array<{
+    readonly probe: OccProbe;
+    readonly onConflict: () => never;
+  }> = [];
 
   constructor(private readonly db: Database) {}
 
@@ -58,16 +81,23 @@ export class PendingBatch {
 
   /**
    * Append an OCC-guarded write. `onConflict` runs only if the batch
-   * aborts due to this write's `_occ_guard` CHECK violation.
+   * aborts due to this write's `_occ_guard` CHECK violation. `probe`
+   * must re-evaluate the write's OCC predicate (typically
+   * `id = ? AND version = ?`) and report whether it still matches a
+   * row — it runs only on the post-abort attribution path.
    */
-  addOcc(write: SqliteBatchItem, onConflict: () => never): void {
+  addOcc(
+    write: SqliteBatchItem,
+    onConflict: () => never,
+    probe: OccProbe,
+  ): void {
     this.items.push(write);
     this.items.push(
       this.db.run(
         sql`INSERT INTO _occ_guard (n) SELECT changes() WHERE changes() = 0`,
       ),
     );
-    this.conflictHandlers.push(onConflict);
+    this.occWrites.push({ probe, onConflict });
   }
 
   isEmpty(): boolean {
@@ -87,12 +117,21 @@ export class PendingBatch {
   }
 
   /**
-   * The handler registered for the *first* OCC write in the batch.
-   * Used by the UoW when it observes an `_occ_guard` violation: D1
-   * stops at the first failing statement, so the head handler is the
-   * one to surface.
+   * The handler for the OCC write whose guard aborted the batch,
+   * identified by probing each write's predicate in insertion order
+   * (see the class doc). Falls back to the head handler when probing
+   * is inconclusive; `undefined` only when no OCC write was buffered.
    */
-  firstConflictHandler(): (() => never) | undefined {
-    return this.conflictHandlers[0];
+  async resolveConflictHandler(): Promise<(() => never) | undefined> {
+    for (const { probe, onConflict } of this.occWrites) {
+      let matches: boolean;
+      try {
+        matches = await probe();
+      } catch {
+        break;
+      }
+      if (!matches) return onConflict;
+    }
+    return this.occWrites[0]?.onConflict;
   }
 }

@@ -107,6 +107,61 @@ describe("LibsqlUnitOfWorkProvider (integration)", () => {
     expect(outboxRows).toHaveLength(0);
   });
 
+  // Parity with the D1 adapter's attribution test: with two OCC writes
+  // in one UoW, the surfaced ConflictError must name the write that
+  // actually conflicted, regardless of its position in the batch.
+  it("attributes an OCC failure to the write that actually conflicted", async () => {
+    const c = await openContainer();
+    const { entity: a } = Todo.create(
+      { id: nextTodoId(), title: "occ-a" },
+      NOW,
+    );
+    const { entity: b } = Todo.create(
+      { id: nextTodoId(), title: "occ-b" },
+      NOW,
+    );
+    await c.unitOfWorkProvider.run(async ({ todoRepository }) => {
+      await todoRepository.insert(a);
+      await todoRepository.insert(b);
+    });
+
+    const foundA = await c.unitOfWorkProvider.run(async ({ todoRepository }) =>
+      todoRepository.findById(a.id),
+    );
+    const foundB = await c.unitOfWorkProvider.run(async ({ todoRepository }) =>
+      todoRepository.findById(b.id),
+    );
+    if (
+      !foundA ||
+      !foundB ||
+      !Todo.isActive(foundA.entity) ||
+      !Todo.isActive(foundB.entity)
+    ) {
+      return;
+    }
+
+    // Advance B out-of-band so B's token goes stale while A's stays fresh.
+    const { entity: bBumped } = Todo.complete(foundB.entity, NOW);
+    await c.unitOfWorkProvider.run(async ({ todoRepository }) => {
+      await todoRepository.save(bBumped, foundB.expectedVersion);
+    });
+
+    const { entity: aBumped } = Todo.complete(foundA.entity, NOW);
+    let caught: unknown;
+    try {
+      await c.unitOfWorkProvider.run(async ({ todoRepository }) => {
+        await todoRepository.save(aBumped, foundA.expectedVersion);
+        await todoRepository.save(bBumped, foundB.expectedVersion);
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(isConflictError(caught)).toBe(true);
+    expect((caught as Error).message).toContain(b.id);
+    expect((caught as Error).message).not.toContain(a.id);
+  });
+
   it("returns the callback's value on successful commit", async () => {
     const c = await openContainer();
     const { entity: todo } = Todo.create(

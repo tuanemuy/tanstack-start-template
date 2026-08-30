@@ -106,6 +106,118 @@ describe("D1UnitOfWorkProvider (integration)", () => {
     expect(outboxRows).toHaveLength(0);
   });
 
+  it("attributes an OCC failure to the write that actually conflicted", async () => {
+    const container = createTestContainer();
+    const { entity: a } = Todo.create(
+      { id: nextTodoId(), title: "occ-a" },
+      NOW,
+    );
+    const { entity: b } = Todo.create(
+      { id: nextTodoId(), title: "occ-b" },
+      NOW,
+    );
+    await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
+      await todoRepository.insert(a);
+      await todoRepository.insert(b);
+    });
+
+    const foundA = await container.unitOfWorkProvider.run(
+      async ({ todoRepository }) => todoRepository.findById(a.id),
+    );
+    const foundB = await container.unitOfWorkProvider.run(
+      async ({ todoRepository }) => todoRepository.findById(b.id),
+    );
+    if (
+      !foundA ||
+      !foundB ||
+      !Todo.isActive(foundA.entity) ||
+      !Todo.isActive(foundB.entity)
+    ) {
+      return;
+    }
+
+    // Advance B out-of-band so B's token goes stale while A's stays fresh.
+    const { entity: bBumped } = Todo.complete(foundB.entity, NOW);
+    await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
+      await todoRepository.save(bBumped, foundB.expectedVersion);
+    });
+
+    // One UoW, two OCC writes: A (fresh token, would succeed) first, B
+    // (stale token) second. The guard that fires is B's, so the surfaced
+    // ConflictError must name B — head-handler attribution would name A.
+    const { entity: aBumped } = Todo.complete(foundA.entity, NOW);
+    let caught: unknown;
+    try {
+      await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
+        await todoRepository.save(aBumped, foundA.expectedVersion);
+        await todoRepository.save(bBumped, foundB.expectedVersion);
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(isConflictError(caught)).toBe(true);
+    expect((caught as Error).message).toContain(b.id);
+    expect((caught as Error).message).not.toContain(a.id);
+
+    // The whole batch rolled back: A's fresh-token save must not stick.
+    const afterA = await container.unitOfWorkProvider.run(
+      async ({ todoRepository }) => todoRepository.findById(a.id),
+    );
+    expect(afterA?.entity.status).toBe("active");
+  });
+
+  it("attributes an OCC failure to a stale first write ahead of a fresh second", async () => {
+    const container = createTestContainer();
+    const { entity: a } = Todo.create(
+      { id: nextTodoId(), title: "occ-c" },
+      NOW,
+    );
+    const { entity: b } = Todo.create(
+      { id: nextTodoId(), title: "occ-d" },
+      NOW,
+    );
+    await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
+      await todoRepository.insert(a);
+      await todoRepository.insert(b);
+    });
+
+    const foundA = await container.unitOfWorkProvider.run(
+      async ({ todoRepository }) => todoRepository.findById(a.id),
+    );
+    const foundB = await container.unitOfWorkProvider.run(
+      async ({ todoRepository }) => todoRepository.findById(b.id),
+    );
+    if (
+      !foundA ||
+      !foundB ||
+      !Todo.isActive(foundA.entity) ||
+      !Todo.isActive(foundB.entity)
+    ) {
+      return;
+    }
+
+    const { entity: aBumped } = Todo.complete(foundA.entity, NOW);
+    await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
+      await todoRepository.save(aBumped, foundA.expectedVersion);
+    });
+
+    const { entity: bBumped } = Todo.complete(foundB.entity, NOW);
+    let caught: unknown;
+    try {
+      await container.unitOfWorkProvider.run(async ({ todoRepository }) => {
+        await todoRepository.save(aBumped, foundA.expectedVersion);
+        await todoRepository.save(bBumped, foundB.expectedVersion);
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(isConflictError(caught)).toBe(true);
+    expect((caught as Error).message).toContain(a.id);
+    expect((caught as Error).message).not.toContain(b.id);
+  });
+
   it("returns the callback's value on successful commit", async () => {
     const container = createTestContainer();
     const { entity: todo } = Todo.create(
