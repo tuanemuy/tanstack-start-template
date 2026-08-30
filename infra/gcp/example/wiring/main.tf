@@ -39,9 +39,11 @@ resource "google_cloud_run_v2_service_iam_member" "relay_invoker_scheduler" {
   member   = "serviceAccount:${local.base.sa_scheduler_email}"
 }
 
-# scheduler -> app /prune (daily cron).
-resource "google_cloud_run_v2_service_iam_member" "app_invoker_scheduler" {
-  name     = local.services.app_name
+# scheduler -> pruner (daily cron). The pruner deliberately has no
+# `allUsers` binding — this is the only invoker, so IAM actually gates
+# the endpoint (routing prune through the public app service would not).
+resource "google_cloud_run_v2_service_iam_member" "pruner_invoker_scheduler" {
+  name     = local.services.pruner_name
   location = var.region
   role     = "roles/run.invoker"
   member   = "serviceAccount:${local.base.sa_scheduler_email}"
@@ -144,14 +146,14 @@ resource "google_cloud_scheduler_job" "prune_tick" {
 
   http_target {
     http_method = "POST"
-    uri         = "${local.services.app_url}/prune"
+    uri         = "${local.services.pruner_url}/"
     body        = base64encode("{}")
     headers = {
       "Content-Type" = "application/json"
     }
     oidc_token {
       service_account_email = local.base.sa_scheduler_email
-      audience              = local.services.app_url
+      audience              = local.services.pruner_url
     }
   }
 }

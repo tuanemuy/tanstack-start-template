@@ -1,4 +1,4 @@
-// Cloud Run entry. One bundle, four roles — `boot()` dispatches on
+// Cloud Run entry. One bundle, five roles — `boot()` dispatches on
 // `WORKER_ROLE`. See `docs/runtime_gcp.md` for the role table.
 import { AsyncLocalStorage } from "node:async_hooks";
 import process from "node:process";
@@ -22,7 +22,7 @@ import { ConsoleLogger } from "@repo/core/application/ports/logger";
 import { GoogleAuth } from "google-auth-library";
 import { fetch as consumerFetch } from "@/worker/gcp/consumer";
 import { fetch as dlqFetch } from "@/worker/gcp/dlq";
-import { fetch as pruneFetch } from "@/worker/gcp/pruneEndpoint";
+import { fetch as prunerFetch } from "@/worker/gcp/pruner";
 import { fetch as relayFetch } from "@/worker/gcp/relay";
 
 const ALS_SYMBOL: unique symbol = Symbol.for(
@@ -44,12 +44,13 @@ installContainerStore({ getStore: () => storage.getStore() });
 
 export type AppEnv = GcpServerEnv;
 
-export type WorkerRole = "app" | "relay" | "consumer" | "dlq";
+export type WorkerRole = "app" | "relay" | "consumer" | "pruner" | "dlq";
 
 const workerRoles: ReadonlySet<WorkerRole> = new Set([
   "app",
   "relay",
   "consumer",
+  "pruner",
   "dlq",
 ]);
 
@@ -111,13 +112,12 @@ async function bootAppRole(): Promise<GcpServerBoot> {
     (m) => m.default,
   );
 
+  // Pruning is NOT routed here: the app service carries an `allUsers`
+  // invoker, so any path it serves is effectively public regardless of
+  // which service accounts also hold `roles/run.invoker`. The pruner is
+  // its own Cloud Run service (WORKER_ROLE=pruner) with no public
+  // binding, gated by IAM exactly like the relay.
   const fetch = async (request: Request): Promise<Response> => {
-    // `/prune` short-circuits the TanStack entry; auth is enforced by
-    // Cloud Run IAM (scheduler SA holds `roles/run.invoker`).
-    const url = new URL(request.url);
-    if (url.pathname === "/prune") {
-      return pruneFetch(request);
-    }
     const container = createGcpRequestContainer(config);
     const entry = await entryPromise;
     return storage.run(container, async () => entry.fetch(request));
@@ -148,7 +148,9 @@ function bootWorkerRole(role: Exclude<WorkerRole, "app">): GcpServerBoot {
       ? relayFetch
       : role === "consumer"
         ? consumerFetch
-        : dlqFetch;
+        : role === "pruner"
+          ? prunerFetch
+          : dlqFetch;
   const port = Number.parseInt(process.env["PORT"] ?? "8080", 10);
   const hostname = process.env["HOSTNAME"] ?? "0.0.0.0";
   return { role, fetch, port, hostname, shutdown: async () => {} };

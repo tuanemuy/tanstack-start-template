@@ -33,8 +33,8 @@ Scheduler jobs without an intra-stack dependency cycle — see
 - Push subscription on `events` → `consumer` service (with dead-letter
   policy)
 - Push subscription on `events-dlq` → `dlq` service
-- Cloud Scheduler jobs: 5-min relay safety net + daily pruner against
-  the `app` service's `/prune` endpoint
+- Cloud Scheduler jobs: 5-min relay safety net + daily tick against the
+  dedicated `pruner` service (scheduler SA is its only invoker)
 - Secret Manager secret `database-auth-token`
 - Service accounts + IAM bindings for service-to-service invocation
 

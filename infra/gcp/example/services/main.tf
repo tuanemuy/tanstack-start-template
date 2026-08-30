@@ -60,9 +60,10 @@ resource "google_cloud_run_v2_service" "app" {
 # The relay service intentionally omits `RELAY_URL` for itself. The
 # saturation self-chain in `runRelayTick` is a performance optimisation;
 # without it the 5-minute Scheduler tick remains the safety net and a
-# backlog drains more slowly but correctly. Avoiding self-reference
-# removes the Terraform cycle the previous flat layout worked around
-# with `null_resource` + `gcloud run services update`.
+# backlog drains more slowly but correctly. A service cannot reference
+# its own URL in Terraform without a dependency cycle, so injecting
+# `RELAY_URL` here would require post-deploy patching
+# (`null_resource` + `gcloud run services update`).
 resource "google_cloud_run_v2_service" "relay" {
   name     = "${local.prefix}-relay"
   location = var.region
@@ -103,6 +104,39 @@ resource "google_cloud_run_v2_service" "consumer" {
       }
       dynamic "env" {
         for_each = merge(local.shared_env, { WORKER_ROLE = "consumer" })
+        content {
+          name  = env.key
+          value = env.value
+        }
+      }
+    }
+  }
+}
+
+# Pruning runs as its own service, NOT as a route on `app`: the app
+# service holds an `allUsers` invoker, so any endpoint it serves is
+# public no matter which service accounts are also granted
+# `roles/run.invoker`. A dedicated service with no public binding lets
+# Cloud Run IAM actually gate the daily Scheduler tick.
+resource "google_cloud_run_v2_service" "pruner" {
+  name     = "${local.prefix}-pruner"
+  location = var.region
+  template {
+    service_account = data.terraform_remote_state.base.outputs.sa_pruner_email
+    containers {
+      image = var.image
+      ports {
+        container_port = 8080
+      }
+      dynamic "env" {
+        for_each = merge(local.shared_env, { WORKER_ROLE = "pruner" })
+        content {
+          name  = env.key
+          value = env.value
+        }
+      }
+      dynamic "env" {
+        for_each = local.outbox_env
         content {
           name  = env.key
           value = env.value

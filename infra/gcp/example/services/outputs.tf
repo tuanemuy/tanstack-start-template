@@ -28,6 +28,16 @@ output "consumer_name" {
   value       = google_cloud_run_v2_service.consumer.name
 }
 
+output "pruner_url" {
+  description = "Internal URL of the pruner Cloud Run service."
+  value       = google_cloud_run_v2_service.pruner.uri
+}
+
+output "pruner_name" {
+  description = "Cloud Run service name for the pruner role."
+  value       = google_cloud_run_v2_service.pruner.name
+}
+
 output "dlq_url" {
   description = "Internal URL of the dlq Cloud Run service."
   value       = google_cloud_run_v2_service.dlq.uri

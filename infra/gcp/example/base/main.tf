@@ -33,6 +33,11 @@ resource "google_service_account" "consumer" {
   display_name = "Cloud Run: consumer service"
 }
 
+resource "google_service_account" "pruner" {
+  account_id   = "${local.prefix}-pruner"
+  display_name = "Cloud Run: pruner service"
+}
+
 resource "google_service_account" "dlq" {
   account_id   = "${local.prefix}-dlq"
   display_name = "Cloud Run: dlq service"
@@ -53,6 +58,7 @@ locals {
     google_service_account.app.email,
     google_service_account.relay.email,
     google_service_account.consumer.email,
+    google_service_account.pruner.email,
     google_service_account.dlq.email,
   ])
 }
