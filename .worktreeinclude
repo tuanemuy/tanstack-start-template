@@ -1,0 +1,13 @@
+# Claude Code が新しい worktree にコピーする gitignore 済みファイル
+# https://code.claude.com/docs/en/worktrees
+#
+# .gitignore と同じ記法。gitignore されているファイルだけがコピー対象なので、
+# 追跡済みの .env.example などが複製されることはない。
+
+.env
+.env.*
+.envrc
+.dev.vars
+**/.env
+**/.env.*
+**/.dev.vars
