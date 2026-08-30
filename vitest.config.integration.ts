@@ -22,10 +22,17 @@ export default defineConfig({
   },
   plugins: [
     cloudflareTest({
+      // Worker module loaded into the same isolate as the tests; the
+      // DO-runtime suite needs it because Durable Object classes bound
+      // below must be exported from `main`.
+      main: "./apps/web/app/durable-objects/todoState.ts",
       miniflare: {
         compatibilityDate: "2026-05-01",
         compatibilityFlags: ["nodejs_compat"],
         d1Databases: ["DB"],
+        durableObjects: {
+          TODO_STATE: { className: "TodoStateObject", useSQLite: true },
+        },
         queueProducers: {
           EVENTS_QUEUE: "tanstack-start-template-events",
           // Registered so `createMessageBatch("…-events-dlq", …)` is
@@ -64,6 +71,7 @@ export default defineConfig({
   test: {
     include: [
       "apps/web/app/worker/cloudflare/**/*.integration.test.ts",
+      "apps/web/app/worker/cloudflare-do/**/*.integration.test.ts",
       "packages/core/src/adapters/d1/**/*.integration.test.ts",
       "packages/core/src/application/**/*.integration.test.ts",
     ],
