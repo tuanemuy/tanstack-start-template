@@ -48,18 +48,19 @@ For the deeper rationale, see [`CLAUDE.md`](CLAUDE.md), [`docs/backend_implement
 
 ## Reference runtimes
 
-The template ships **four reference runtime wirings** as worked examples of how the adapter and entry-point layers can be swapped while the inward layers stay intact:
+The template ships **five reference runtime wirings** as worked examples of how the adapter and entry-point layers can be swapped while the inward layers stay intact:
 
 - **Node.js + libSQL** — single-process, no Docker or cloud account required. The data file lives at `apps/web/data/app.db`. This is the default for `pnpm dev` / `pnpm build` / `pnpm start`.
 - **Cloudflare Workers + D1 + Queues** — multi-worker, edge-distributed, managed queues. Reached via the `:cf` script suffix.
+- **Cloudflare Workers + Durable Objects + Queues** — a SQLite-backed DO owns the aggregate and a DO-local outbox relayed from its Alarm; no relay/pruner Workers, no cron, no D1. Reached via the `:do` script suffix.
 - **AWS Lambda + Turso + SQS** — Lambda entries and CDK infrastructure. Reached via the `:aws` script suffix.
-- **GCP Cloud Run + Turso + Pub/Sub** — one container image serving four roles, with Terraform examples. Reached via the `:gcp` script suffix.
+- **GCP Cloud Run + Turso + Pub/Sub** — one container image serving five roles, with Terraform examples. Reached via the `:gcp` script suffix.
 
 **Pick one and delete the others** when you start a real project. Or, if you genuinely need multiple targets, keep them. The template does not assume you maintain a multi-runtime deployment.
 
 To target a different runtime (Bun, Fly Machines, etc.), add a new adapter group under `packages/core/src/adapters/{provider}/` and a paired entry point — the inward layers stay put.
 
-Per-runtime operational guidance: [`docs/runtime_node.md`](docs/runtime_node.md) / [`docs/runtime_cloudflare.md`](docs/runtime_cloudflare.md) / [`docs/runtime_aws.md`](docs/runtime_aws.md) / [`docs/runtime_gcp.md`](docs/runtime_gcp.md).
+Per-runtime operational guidance: [`docs/runtime_node.md`](docs/runtime_node.md) / [`docs/runtime_cloudflare.md`](docs/runtime_cloudflare.md) / [`docs/runtime_cloudflare_do.md`](docs/runtime_cloudflare_do.md) / [`docs/runtime_aws.md`](docs/runtime_aws.md) / [`docs/runtime_gcp.md`](docs/runtime_gcp.md).
 
 ## Requirements
 

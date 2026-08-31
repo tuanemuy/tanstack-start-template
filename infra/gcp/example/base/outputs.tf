@@ -13,6 +13,11 @@ output "sa_consumer_email" {
   value       = google_service_account.consumer.email
 }
 
+output "sa_pruner_email" {
+  description = "Pruner Cloud Run runtime service account email."
+  value       = google_service_account.pruner.email
+}
+
 output "sa_dlq_email" {
   description = "DLQ Cloud Run runtime service account email."
   value       = google_service_account.dlq.email

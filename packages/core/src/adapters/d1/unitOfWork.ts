@@ -104,7 +104,7 @@ export class D1UnitOfWorkProvider implements UnitOfWorkProvider {
         await this.db.batch(pending.build());
       } catch (error) {
         if (isOccGuardViolation(error)) {
-          const handler = pending.firstConflictHandler();
+          const handler = await pending.resolveConflictHandler();
           // Defensive: a guard violation without a registered handler
           // would mean the batch carried an `_occ_guard` statement
           // without an `addOcc` registration — i.e. the buffer was

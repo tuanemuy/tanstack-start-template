@@ -1,0 +1,93 @@
+# LOCAL DEV config for the Durable-Object-based Cloudflare runtime
+# (`pnpm dev:do` / `pnpm build:do` auto-discover it via vite.config.do.ts).
+# As with wrangler.toml, resource names lack a stage suffix — copy this
+# into stage-suffixed variants before deploying anywhere shared.
+#
+# Topology: TWO Worker roles instead of five. The todo-state DO owns
+# aggregate + outbox + processed_events in its own SQLite; its alarm IS
+# the relay and the pruner, so there is no relay Worker, no safety-net
+# cron, no pruner Worker, and no D1 database (the DO schema
+# self-applies in the class constructor — no migration step either).
+name = "tanstack-start-template-do"
+main = "app/server.cloudflare-do.ts"
+compatibility_date = "2026-05-01"
+compatibility_flags = ["nodejs_compat"]
+
+[assets]
+directory = "./dist/client"
+binding = "ASSETS"
+
+[vars]
+APP_URL = "http://localhost:8787"
+# Alarm relay tuning, read inside the DO by `readRelayTuning` /
+# `readPruneTuning`. Same knobs and defaults as the sibling-Worker
+# topology — the drain policy is the shared `processOutboxEvents`.
+OUTBOX_BATCH_SIZE = "100"
+OUTBOX_LEASE_MS = "300000"   # crash-recovery window for an alarm that died mid-claim
+OUTBOX_MAX_ATTEMPTS = "2"    # multiplied by [env.consumer] max_retries — keep low
+OUTBOX_RETENTION_MS = "604800000"   # 7 days
+
+[[durable_objects.bindings]]
+name = "TODO_STATE"
+class_name = "TodoStateObject"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["TodoStateObject"]
+
+# The DO's alarm publishes through its host Worker's env, so the queue
+# producer binding lives here on the app Worker.
+[[queues.producers]]
+binding = "EVENTS_QUEUE"
+queue = "tanstack-start-template-do-events"
+
+
+# === Consumer ===========================================================
+[env.consumer]
+name = "tanstack-start-template-do-consumer"
+main = "app/worker/cloudflare-do/consumer.ts"
+compatibility_date = "2026-05-01"
+compatibility_flags = ["nodejs_compat"]
+
+[env.consumer.vars]
+APP_URL = "http://localhost:8787"
+
+# Idempotency stamps go back into the DO via RPC — `script_name` points
+# at the app Worker that implements the class.
+[[env.consumer.durable_objects.bindings]]
+name = "TODO_STATE"
+class_name = "TodoStateObject"
+script_name = "tanstack-start-template-do"
+
+[[env.consumer.queues.consumers]]
+queue = "tanstack-start-template-do-events"
+max_batch_size = 25
+max_batch_timeout = 30 # seconds
+# Total delivery budget: relay's `OUTBOX_MAX_ATTEMPTS` (publish-side
+# retries before quarantine) × `1 + max_retries` here — keep both small
+# and adjust together.
+max_retries = 3
+dead_letter_queue = "tanstack-start-template-do-events-dlq"
+
+
+# === DLQ ================================================================
+# No further dead-letter target — a re-failure here would loop.
+[env.dlq]
+name = "tanstack-start-template-do-dlq"
+main = "app/worker/cloudflare-do/dlq.ts"
+compatibility_date = "2026-05-01"
+compatibility_flags = ["nodejs_compat"]
+
+[env.dlq.vars]
+APP_URL = "http://localhost:8787"
+
+[[env.dlq.durable_objects.bindings]]
+name = "TODO_STATE"
+class_name = "TodoStateObject"
+script_name = "tanstack-start-template-do"
+
+[[env.dlq.queues.consumers]]
+queue = "tanstack-start-template-do-events-dlq"
+max_batch_size = 25
+max_batch_timeout = 30 # seconds
+max_retries = 1

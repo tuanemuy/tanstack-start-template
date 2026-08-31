@@ -8,7 +8,7 @@ export const fetch = async (request: Request): Promise<Response> => {
     const result = await runPruneTick();
     return Response.json(result);
   } catch (cause) {
-    console.error("[worker.gcp.prune] tick threw", cause);
+    console.error("[worker.gcp.pruner] tick threw", cause);
     return new Response("prune tick failed", { status: 500 });
   }
 };

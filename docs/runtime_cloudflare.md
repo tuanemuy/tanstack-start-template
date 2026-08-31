@@ -2,7 +2,7 @@
 
 Multi-Worker, edge-distributed runtime. The main app runs in the `app` Worker; outbox publish, queue consumption, daily pruning, and DLQ surfacing each ship as a sibling Worker driven by Service Bindings, Queues, and Cron Triggers.
 
-See [`runtime_node.md`](./runtime_node.md) for the standalone runtime that runs the same code on a single Node process.
+See [`runtime_node.md`](./runtime_node.md) for the standalone runtime that runs the same code on a single Node process, and [`runtime_cloudflare_do.md`](./runtime_cloudflare_do.md) for the Durable-Object variant that replaces D1 and the relay/pruner Workers with a DO-local outbox relayed from the DO's Alarm.
 
 ## Table of contents
 

@@ -70,7 +70,7 @@ For local container runs, pass `--env-file=apps/web/.env.gcp` to `docker run` (o
 
 ## Build and image
 
-The same image runs all four Cloud Run services:
+The same image runs all five Cloud Run services:
 
 ```bash
 pnpm build:gcp                            # vite build → apps/web/dist/server/server.gcp.js
@@ -83,12 +83,13 @@ Cloud Run runs `node apps/web/scripts/listen.gcp.mjs` as `CMD`. The launcher imp
 
 | Role       | Triggered by                                                | Endpoint            |
 | ---------- | ----------------------------------------------------------- | ------------------- |
-| `app`      | Public HTTPS                                                | `*` (TanStack Start) + `POST /prune` |
+| `app`      | Public HTTPS                                                | `*` (TanStack Start) |
 | `relay`    | Cloud Scheduler + authenticated POST from `app` / self      | `POST /`            |
 | `consumer` | Pub/Sub push subscription (events topic)                    | `POST /`            |
+| `pruner`   | Cloud Scheduler (daily)                                     | `POST /`            |
 | `dlq`      | Pub/Sub push subscription (events-dlq topic)                | `POST /` (always 204) |
 
-The `/prune` endpoint lives on the `app` service rather than a dedicated `pruner` Cloud Run service to keep the infrastructure footprint smaller. Cloud Scheduler invokes it daily with an OIDC token; Cloud Run IAM (`roles/run.invoker` on the scheduler SA) gates the call.
+The pruner is a dedicated Cloud Run service, not a route on `app`. The app service carries an `allUsers` invoker, so any path it serves is public — granting the scheduler SA `roles/run.invoker` on top of that would not restrict anything. A separate service whose only invoker is the scheduler SA is the smallest layout under which Cloud Run IAM actually gates the daily tick.
 
 ## Relay trigger model
 
@@ -147,7 +148,7 @@ For the Pub/Sub emulator, run `gcloud beta emulators pubsub start --host-port=0.
 
 ## Infrastructure (Terraform)
 
-`infra/gcp/example/` contains a **reference** Terraform layout — read its README before applying. It is split into three sibling root modules (`base/`, `services/`, `wiring/`) applied in order; the split exists so that Cloud Run URLs flow into Pub/Sub subscriptions and Scheduler jobs without an intra-stack reference cycle. Between them they create the four Cloud Run services, both Pub/Sub topics with subscriptions, the Cloud Scheduler jobs, Secret Manager entry, and the service-to-service IAM bindings.
+`infra/gcp/example/` contains a **reference** Terraform layout — read its README before applying. It is split into three sibling root modules (`base/`, `services/`, `wiring/`) applied in order; the split exists so that Cloud Run URLs flow into Pub/Sub subscriptions and Scheduler jobs without an intra-stack reference cycle. Between them they create the five Cloud Run services, both Pub/Sub topics with subscriptions, the Cloud Scheduler jobs, Secret Manager entry, and the service-to-service IAM bindings.
 
 It does **not** create:
 - The container image (build + push separately)
