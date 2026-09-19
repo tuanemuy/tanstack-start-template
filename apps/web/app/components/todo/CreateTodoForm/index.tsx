@@ -1,9 +1,9 @@
 "use client";
 
 import type { TodoView } from "@repo/core/application/todo/view";
-import { useRouter } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useActionState, useId, useState } from "react";
+import { useReconcile } from "@/components/ui/Deferred";
 import { displayError } from "@/presentation/errorDisplay";
 import {
   extractSerializedError,
@@ -23,7 +23,7 @@ type Props = {
 };
 
 export function CreateTodoForm({ onOptimisticAdd }: Props) {
-  const router = useRouter();
+  const reconcile = useReconcile();
   const createTodo = useServerFn(createTodoFn);
   const [title, setTitle] = useState("");
   const titleId = useId();
@@ -34,7 +34,7 @@ export function CreateTodoForm({ onOptimisticAdd }: Props) {
     async (_prev, formData) => {
       const value = String(formData.get("title") ?? "");
       try {
-        // Placeholder row shown until `router.invalidate()` replaces it with
+        // Placeholder row shown until `reconcile()` replaces it with
         // the server-assigned record; the temp id only has to be unique within
         // the optimistic list, never persisted.
         const now = new Date().toISOString();
@@ -47,7 +47,7 @@ export function CreateTodoForm({ onOptimisticAdd }: Props) {
         });
         await createTodo({ data: { title: value } });
         setTitle("");
-        await router.invalidate();
+        await reconcile();
         return { error: null };
       } catch (error) {
         return { error: extractSerializedError(error) };

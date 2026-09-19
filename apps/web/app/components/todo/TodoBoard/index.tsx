@@ -1,9 +1,9 @@
 "use client";
 
 import type { TodoView } from "@repo/core/application/todo/view";
-import { useRouter } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useOptimistic, useState, useTransition } from "react";
+import { useReconcile } from "@/components/ui/Deferred";
 import { displayError } from "@/presentation/errorDisplay";
 import {
   extractSerializedError,
@@ -29,9 +29,9 @@ import { deleteTodoFn } from "./action";
  * (`completed` toggle, inline rename) stay in `TodoItem` — they don't change
  * membership and the leaf survives them.
  *
- * Each mutation calls `router.invalidate()` once it resolves; the loader
- * re-renders with fresh data and the optimistic list re-bases onto it. A
- * failed mutation reverts automatically.
+ * Each mutation awaits `useReconcile()` once it resolves; the loader re-renders
+ * with fresh data and the optimistic list gives way to it in the same commit.
+ * A failed mutation reverts automatically.
  *
  * Loading is split by phase: the initial/streaming load is owned by
  * `TodoListSkeleton` (the route's `<Suspense>` fallback), which this component
@@ -60,7 +60,7 @@ type Props = {
 };
 
 export function TodoBoard({ todos, count }: Props) {
-  const router = useRouter();
+  const reconcile = useReconcile();
   const remove = useServerFn(deleteTodoFn);
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<SerializedError | null>(null);
@@ -74,7 +74,7 @@ export function TodoBoard({ todos, count }: Props) {
       applyOptimistic({ type: "remove", id });
       try {
         await remove({ data: { id } });
-        await router.invalidate();
+        await reconcile();
         setError(null);
       } catch (e) {
         setError(extractSerializedError(e));

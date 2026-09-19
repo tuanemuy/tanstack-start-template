@@ -73,14 +73,14 @@ export const renderTodoList = createServerFn({ method: "GET" })
     return { TodoList: renderServerComponent(<TodoList pagination={data} />) };
   });
 
-// route — forward the inner promise, resolve it under <Suspense>
+// route — forward the inner promise, resolve it under <Deferred>
 export const Route = createFileRoute("/todo/")({
   // MANDATORY for the streaming variant. The loaderData holds an unresolved
   // promise; under `staleTime: 0` a revisit re-runs the loader, produces a fresh
-  // promise, and the Suspense boundary re-suspends — so the cached list flashes
+  // promise, and the remounted boundary suspends on it — so the cached list flashes
   // back to the skeleton on every back-navigation / in-app link. Caching the
   // settled promise (Infinity in prod) keeps the resolved list on screen; mutation
-  // freshness comes from the explicit `router.invalidate()`, not from re-fetching.
+  // freshness comes from the explicit `useReconcile()`, not from re-fetching.
   staleTime: import.meta.env.DEV ? 0 : Number.POSITIVE_INFINITY,
   loader: async ({ deps }) => {
     const { TodoList } = await renderTodoList({ data: deps });
@@ -91,19 +91,15 @@ export const Route = createFileRoute("/todo/")({
 
 function TodoPage() {
   const { TodoList } = Route.useLoaderData();
-  return (
-    <Suspense fallback={<TodoListSkeleton />}>
-      <Deferred promise={TodoList} />
-    </Suspense>
-  );
-}
-
-// apps/web/app/components/ui/Deferred — generic, reusable client resolver
-("use client");
-export function Deferred<T extends ReactNode>({ promise }: { promise: Usable<T> }) {
-  return use(promise);
+  return <Deferred promise={TodoList} fallback={<TodoListSkeleton />} />;
 }
 ```
+
+`apps/web/app/components/ui/Deferred` is the generic client resolver. It owns three rules that are easy to get wrong by hand, so routes should not re-implement it with a bare `<Suspense>` + `use()`:
+
+- **A new promise is adopted inside a transition, never rendered directly.** Every reconcile yields a fresh, unresolved promise. Fed straight to `use()` it re-suspends the boundary: the skeleton flashes and the client islands inside remount, discarding their optimistic state.
+- **Mutations reconcile through `useReconcile()`, not a bare `router.invalidate()`.** `invalidate()` can resolve before the router has handed React the new promise. The mutation's transition then ends first, `useOptimistic` reverts to stale data, and the fresh data lands in a later commit — the change blinks off and on. `useReconcile()` resolves only once the new promise has been adopted; that adoption happens in a transition while the mutation is still pending, so React commits the optimistic revert and the fresh payload together.
+- **Only the fallback → content reveal is wrapped in `<ViewTransition>`** (`update="none"` on the content). `useOptimistic` commits are urgent, so React never animates them, and a transition around mutating content only holds the reconciling commit back until the animation ends.
 
 The skeleton (`apps/web/app/components/ui/Skeleton` for the generic block, `apps/web/app/components/todo/TodoListSkeleton` shaped to `TodoBoard`'s DOM) carries one `role="status"` announcement; the individual bars are `aria-hidden` and respect `prefers-reduced-motion` via `motion-reduce:animate-none`.
 
@@ -255,7 +251,7 @@ A loader-owned RSC list can reflect within-element state (checkboxes, etc.) imme
 - In-item operations (toggle / inline rename) have the leaf call the server function itself. Since membership doesn't change and the leaf survives, the item-local `useOptimistic` and error display can also live in the leaf.
 - Operations that change membership (add / remove) have the owner (the island) call the server function. In particular, **delete must be called by the owner**: with optimistic deletion the leaf unmounts before the request settles, so the error UI placed in the leaf would be discarded. Add is dispatched from the form's action (the form lives outside the list and survives the round trip).
 
-Every operation calls `router.invalidate()` once it settles, and the optimistic list is re-based onto the refetched latest value (it reverts automatically on failure). Example: `apps/web/app/components/todo/TodoBoard`.
+Every operation awaits `useReconcile()` (from `components/ui/Deferred`) once it settles, and the optimistic list gives way to the refetched value in the same commit (it reverts automatically on failure). Example: `apps/web/app/components/todo/TodoBoard`.
 
 **When to choose**: when you want to reflect additions/removals to a list within the page immediately. Keeping it loader-owned forces add/remove to always wait on a server round trip, making it feel sluggish.
 
@@ -556,9 +552,9 @@ export const createTodoFn = createServerFn({ method: "POST" })
 // apps/web/app/components/todo/CreateTodoForm/index.tsx
 "use client";
 
-import { useRouter } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useActionState, useState } from "react";
+import { useReconcile } from "@/components/ui/Deferred";
 import { displayError } from "@/presentation/errorDisplay";
 import {
   extractSerializedError,
@@ -571,7 +567,7 @@ type FormState = { error: SerializedError | null };
 const initialState: FormState = { error: null };
 
 export function CreateTodoForm() {
-  const router = useRouter();
+  const reconcile = useReconcile();
   const createTodo = useServerFn(createTodoFn);
   const [title, setTitle] = useState("");
 
@@ -581,7 +577,7 @@ export function CreateTodoForm() {
       if (value.length === 0) return { error: null };
       try {
         await createTodo({ data: { title: value } });
-        await router.invalidate();
+        await reconcile();
         setTitle("");
         return { error: null };
       } catch (error) {
@@ -635,10 +631,10 @@ For **immediate actions outside a form**, such as a checkbox toggle or delete bu
 // apps/web/app/components/todo/TodoItem.tsx
 "use client";
 
-import { useRouter } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useOptimistic, useState, useTransition } from "react";
 import type { TodoView } from "@repo/core/application/todo/view";
+import { useReconcile } from "@/components/ui/Deferred";
 import { displayError } from "@/presentation/errorDisplay";
 import {
   extractSerializedError,
@@ -652,7 +648,7 @@ function todoErrorMessage(error: SerializedError): string {
 }
 
 export function TodoItem({ todo }: { todo: TodoView }) {
-  const router = useRouter();
+  const reconcile = useReconcile();
   const changeStatus = useServerFn(changeTodoStatusFn);
   const remove = useServerFn(deleteTodoFn);
 
@@ -670,7 +666,7 @@ export function TodoItem({ todo }: { todo: TodoView }) {
         await changeStatus({
           data: { id: todo.id, status: checked ? "completed" : "active" },
         });
-        await router.invalidate();
+        await reconcile();
         setError(null);
       } catch (e) {
         setError(extractSerializedError(e));
@@ -682,7 +678,7 @@ export function TodoItem({ todo }: { todo: TodoView }) {
     startTransition(async () => {
       try {
         await remove({ data: { id: todo.id } });
-        await router.invalidate();
+        await reconcile();
         setError(null);
       } catch (e) {
         setError(extractSerializedError(e));
@@ -729,9 +725,9 @@ try {
 
 - `useServerFn(fn)` auto-detects `isRedirect` and converts it into a router.navigate. This avoids falling through the client's try/catch when the usecase does `throw redirect({ to: "/login" })`.
 - A `useActionState` action may be async. State updates both before and after `await` enter the same transition. Passing it to `<form action={formAction}>` lets it progressively enhance even on a client where JS has not yet arrived.
-- When you want to update a loader-owned RSC on success, explicitly do `await router.invalidate()` inside the action / transition. Since the generic hook was abandoned, "when to invalidate" is the caller's responsibility.
+- When you want to update a loader-owned RSC on success, explicitly do `await reconcile()` (`useReconcile()`) inside the action / transition — it is `router.invalidate()` plus waiting for the fresh promise to reach React, and falls back to a plain `router.invalidate()` outside a `Deferred`. Since the generic hook was abandoned, "when to invalidate" is the caller's responsibility.
 - When you want to display `fieldErrors` **on a per-field basis**, just branch on `state.error?.kind === "validation"`. This form suffices without separately introducing Conform + `parseWithZod`. Since validation is consolidated on the server-side Zod, it arrives in the same `ValidationError` envelope no matter which entry point (server function / route loader / test) calls it.
-- An item-local `useOptimistic` only works on **state that the item owns**. `TodoItem`'s `completed` toggle and `title` inline edit are both item-owned, so they are complete within the leaf with `useOptimistic` + server function (editing closes the editor immediately and optimistically displays the new title, and reverts automatically if the rename throws). On the other hand, operations that **change the list's membership**, such as add/remove, are parent state changes, so item-local cannot reach them. Carve the list out into a client island, hold the entire list array with `useOptimistic` seeded by the server value, and **have the owner call the server function** (the "Held by the client" section above / `apps/web/app/components/todo/TodoBoard`). Add optimistically prepends, remove filters, and `router.invalidate()` re-bases onto the settled value. Delete cannot be placed in the leaf because optimistic deletion unmounts the leaf before settlement, erasing the error UI along with it.
+- An item-local `useOptimistic` only works on **state that the item owns**. `TodoItem`'s `completed` toggle and `title` inline edit are both item-owned, so they are complete within the leaf with `useOptimistic` + server function (editing closes the editor immediately and optimistically displays the new title, and reverts automatically if the rename throws). On the other hand, operations that **change the list's membership**, such as add/remove, are parent state changes, so item-local cannot reach them. Carve the list out into a client island, hold the entire list array with `useOptimistic` seeded by the server value, and **have the owner call the server function** (the "Held by the client" section above / `apps/web/app/components/todo/TodoBoard`). Add optimistically prepends, remove filters, and `reconcile()` swaps in the settled value. Delete cannot be placed in the leaf because optimistic deletion unmounts the leaf before settlement, erasing the error UI along with it.
 
 ## Client validation with Conform
 
