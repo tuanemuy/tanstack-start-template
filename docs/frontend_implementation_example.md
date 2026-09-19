@@ -272,6 +272,10 @@ The template standard is to access usecase invocation on the server **via the he
 
 Both run `getContainer()` and the **dynamic import** of the usecase module (see the JSDoc in `serverAction.ts` for the reason) in parallel.
 
+### Server functions called only from client components
+
+No registration step is needed: `apps/web/vite/serverFnDiscovery.ts` (wired into every `vite.config.*.ts`) handles it. In RSC mode the production server-fn manifest is frozen while the `rsc` environment builds, before the build has seen modules reachable only through a `"use client"` component — so a server function imported solely from a client component would be missing in production and fail with `Server function info not found`, while dev (which resolves ids lazily) keeps working ([TanStack/router#7943](https://github.com/TanStack/router/issues/7943)). The plugin feeds every `createServerFn` module to the compiler in time, and a second plugin fails the build if the client bundle still references an id the manifest lacks. Remove both once the upstream issue is fixed.
+
 ### Declare the server function itself **inline** at the call site
 
 A server function (mutation / GET loader bridge) must **always have the chain from `createServerFn(...)` through `.handler(...)` written directly at the call site**. Pre-applying common middleware in a separate module and exporting it is **NG**.
