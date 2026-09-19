@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "typecheck": "tsgo --noEmit",
+    "typecheck": "tsc --noEmit",
     "build:web": "pnpm --filter @repo/web build:aws",
     "synth": "pnpm build:web && cdk synth",
     "diff": "pnpm build:web && cdk diff",
@@ -20,6 +20,6 @@
     "aws-cdk": "^2.180.0",
     "@types/node": "^25.7.0",
     "tsx": "^4.21.0",
-    "typescript": "^6.0.3"
+    "typescript": "^7.0.2"
   }
 }

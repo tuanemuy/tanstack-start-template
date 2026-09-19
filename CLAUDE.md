@@ -30,7 +30,7 @@ Run from the repo root — root scripts delegate to `@repo/web` where relevant:
 
 - `pnpm dev` / `pnpm build` / `pnpm start`
 - `pnpm lint` / `pnpm lint:fix` / `pnpm format` / `pnpm format:check` (Biome, whole repo)
-- `pnpm typecheck` (root `tsgo` for the vitest configs + `pnpm -r typecheck` across packages)
+- `pnpm typecheck` (root `tsc` for the vitest configs + `pnpm -r typecheck` across packages)
 - `pnpm test` / `pnpm test:unit` / `pnpm test:integration` (vitest runs at the root, spanning `apps/web` and `packages/core`)
 - Web-only scripts not delegated at the root: `pnpm --filter @repo/web <script>` (or run inside `apps/web`)
 
