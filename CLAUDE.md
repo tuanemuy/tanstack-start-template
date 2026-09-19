@@ -18,9 +18,9 @@ pnpm monorepo. One lockfile at the root; packages resolve each other via package
 - `packages/core` (`@repo/core`) — domain / application / adapters + shared `lib/` primitives. Framework-free; imported everywhere as `@repo/core/*`.
 - `apps/web` (`@repo/web`) — the TanStack Start app: routes, components, the presentation layer, per-runtime server entries and workers, `scripts/`, and all runtime configs (vite / wrangler / drizzle / Dockerfile).
 - `infra/aws` (`@repo/infra-aws`) — CDK stack.
-- `infra/cloudflare/pulumi` (`@repo/infra-cloudflare`) — Pulumi resources and Wrangler-config rendering.
+- `infra/cloudflare/pulumi` (`@repo/infra-cloudflare`) — Pulumi resources and Wrangler-config rendering. Pinned to TypeScript 6 on purpose: `@pulumi/pulumi` peers on `typescript <7` because its Node runtime uses the compiler's programmatic API, which TypeScript 7.0 does not ship. Do not bump it with the rest of the workspace until Pulumi widens that range.
 - `infra/gcp` — Terraform only; it is not an npm package and lives outside the workspace.
-- Root — shared tooling only: Biome, vitest orchestration configs, delegating scripts. `@types/*` are publicly hoisted (see `pnpm-workspace.yaml`) so `.d.ts` files inside the pnpm store can resolve `react` / `vitest` types.
+- Root — shared tooling only: Biome, TypeScript, vitest orchestration configs, delegating scripts. `apps/web` and `packages/core` declare no `typescript` of their own — their `tsc` is the root's (pnpm puts the workspace root's `node_modules/.bin` on every package script's `PATH`), so there is one compiler version to bump; only the `infra/*` packages pin their own. `@types/*` are publicly hoisted (see `pnpm-workspace.yaml`) so `.d.ts` files inside the pnpm store can resolve `react` / `vitest` types.
 
 A future app (MCP server, CLI, …) is a new `apps/*` package that declares `"@repo/core": "workspace:*"` and owns its DI wiring or reuses one from `packages/core/src/application/di/`. No tsconfig `paths` mirror is needed.
 
