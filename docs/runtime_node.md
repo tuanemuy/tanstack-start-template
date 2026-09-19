@@ -36,8 +36,8 @@ pnpm start                 # tsx apps/web/scripts/listen.node.ts — boots @hono
 
 The flow:
 
-1. `vite build --config vite.config.node.ts` writes a fetch-handler bundle to `apps/web/dist/server/server.node.js`.
-2. `apps/web/scripts/listen.node.ts` dynamically imports the bundle, calls its `boot()` to construct the libSQL client + DI container + worker runner, then registers the handler with `@hono/node-server`.
+1. `vite build --config vite.config.node.ts` writes a fetch-handler bundle to `apps/web/dist/server/server.node.js` and the client build to `apps/web/dist/client`.
+2. `apps/web/scripts/listen.node.ts` dynamically imports the bundle, calls its `boot()` to construct the libSQL client + DI container + worker runner, then registers the handler with `@hono/node-server`. The handler is wrapped by `apps/web/scripts/staticAssets.mjs`, which serves `dist/client` ahead of it: the bundle itself serves no files, and a plain Node process has no asset layer in front of it (the ASSETS binding on Cloudflare, CloudFront + S3 on AWS). Files under `/assets/` are content-hashed by Vite and sent as `immutable`; put a CDN or reverse proxy in front if you want them off the app process.
 3. SIGTERM / SIGINT triggers the shutdown sequence described below.
 
 ## Environment variables

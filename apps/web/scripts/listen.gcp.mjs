@@ -19,6 +19,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { serve } from "@hono/node-server";
+import { withStaticAssets } from "./staticAssets.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -43,16 +44,21 @@ async function loadBundled() {
   if (!resolved || typeof resolved.boot !== "function") {
     throw new Error(`[listen.gcp] ${found} does not export boot()`);
   }
-  return resolved;
+  return { entry: found, module: resolved };
 }
 
 async function main() {
-  const { boot } = await loadBundled();
-  const booted = await boot();
+  const { entry, module } = await loadBundled();
+  const booted = await module.boot();
 
   const server = serve(
     {
-      fetch: booted.fetch,
+      // Only the public `app` role renders pages; the worker roles are
+      // IAM-gated endpoints with no client build to serve.
+      fetch:
+        booted.role === "app"
+          ? withStaticAssets(entry, booted.fetch)
+          : booted.fetch,
       port: booted.port,
       hostname: booted.hostname,
     },

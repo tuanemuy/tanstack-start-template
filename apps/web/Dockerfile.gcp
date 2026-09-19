@@ -41,9 +41,9 @@ COPY apps/web/package.json apps/web/
 COPY packages/core/package.json packages/core/
 RUN pnpm install --frozen-lockfile --ignore-scripts --prod --filter @repo/web --filter @repo/core
 
-# Copy the built server bundle and the plain-JS launcher.
+# Copy the built server + client bundles and the plain-JS launcher.
 COPY --from=build /repo/apps/web/dist ./apps/web/dist
-COPY apps/web/scripts/listen.gcp.mjs ./apps/web/scripts/listen.gcp.mjs
+COPY apps/web/scripts/listen.gcp.mjs apps/web/scripts/staticAssets.mjs ./apps/web/scripts/
 
 WORKDIR /repo/apps/web
 EXPOSE 8080
