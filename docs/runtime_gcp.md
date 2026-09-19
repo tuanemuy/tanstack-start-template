@@ -77,7 +77,7 @@ pnpm build:gcp                            # vite build → apps/web/dist/server/
 docker build -f apps/web/Dockerfile.gcp -t ... .   # multi-stage; runtime layer keeps only prod deps
 ```
 
-Cloud Run runs `node apps/web/scripts/listen.gcp.mjs` as `CMD`. The launcher imports the bundled `apps/web/dist/server/server.gcp.js` `boot()`, which inspects `WORKER_ROLE` and returns the appropriate fetch handler. The launcher is plain ESM JavaScript so the runtime image needs neither `tsx` nor `dotenv`.
+Cloud Run runs `node apps/web/scripts/listen.gcp.mjs` as `CMD`. The launcher imports the bundled `apps/web/dist/server/server.gcp.js` `boot()`, which inspects `WORKER_ROLE` and returns the appropriate fetch handler. The launcher is plain ESM JavaScript so the runtime image needs neither `tsx` nor `dotenv`. For the `app` role it wraps the handler with `apps/web/scripts/staticAssets.mjs` so `dist/client` is served from the same container (the bundle serves no files itself); the worker roles are IAM-gated endpoints and skip it.
 
 ## Roles and dispatch
 

@@ -6,6 +6,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { serve } from "@hono/node-server";
+import { withStaticAssets } from "./staticAssets.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -29,7 +30,9 @@ type BundledServerModule = Readonly<{
 // The candidate is picked by existence, not by whether it imports —
 // a bundle that exists but fails to load must surface its real error
 // instead of a misleading "could not locate".
-async function loadBundled(): Promise<BundledServerModule> {
+async function loadBundled(): Promise<
+  Readonly<{ entry: string; module: BundledServerModule }>
+> {
   const found = candidates.find((candidate) => fs.existsSync(candidate));
   if (found === undefined) {
     throw new Error(
@@ -46,16 +49,16 @@ async function loadBundled(): Promise<BundledServerModule> {
   if (!resolved || typeof resolved.boot !== "function") {
     throw new Error(`[listen.node] ${found} does not export boot()`);
   }
-  return resolved;
+  return { entry: found, module: resolved };
 }
 
 async function main(): Promise<void> {
-  const { boot } = await loadBundled();
-  const booted = await boot();
+  const { entry, module } = await loadBundled();
+  const booted = await module.boot();
 
   const server = serve(
     {
-      fetch: booted.fetch,
+      fetch: withStaticAssets(entry, booted.fetch),
       port: booted.port,
       hostname: booted.hostname,
     },
