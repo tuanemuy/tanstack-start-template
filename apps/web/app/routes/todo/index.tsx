@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Suspense } from "react";
+import { Suspense, useDeferredValue, ViewTransition } from "react";
 import { TodoListSkeleton } from "@/components/todo/TodoListSkeleton";
 import { Deferred } from "@/components/ui/Deferred";
 import { sanitizeRouteError } from "@/presentation/errorDisplay";
@@ -40,9 +40,25 @@ export const Route = createFileRoute("/todo/")({
 
 function TodoPage() {
   const { TodoList } = Route.useLoaderData();
+  // `router.invalidate()` makes the loader hand back a fresh, still-unresolved
+  // promise. Fed straight to `use()`, it re-suspends on every mutation: the
+  // skeleton flashes and `TodoBoard` remounts, dropping its optimistic state.
+  // Deferring keeps the resolved list on screen until the new payload lands.
+  const deferredTodoList = useDeferredValue(TodoList);
   return (
-    <Suspense fallback={<TodoListSkeleton />}>
-      <Deferred promise={TodoList} />
+    <Suspense
+      fallback={
+        <ViewTransition>
+          <TodoListSkeleton />
+        </ViewTransition>
+      }
+    >
+      {/* `update="none"`: animate only the skeleton → list reveal. Left on, every
+          mutation would cross-fade the whole list and hold the next commit back
+          until the animation ends. */}
+      <ViewTransition update="none">
+        <Deferred promise={deferredTodoList} />
+      </ViewTransition>
     </Suspense>
   );
 }

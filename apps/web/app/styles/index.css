@@ -1,3 +1,19 @@
 @import "tailwindcss";
 @import "./tokens.css";
 @import "./theme.css";
+
+/* The browser's default 250ms cross-fade makes the skeleton → content reveal
+   feel slower than the load it follows. */
+::view-transition-group(*),
+::view-transition-old(*),
+::view-transition-new(*) {
+  animation-duration: 150ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+}
