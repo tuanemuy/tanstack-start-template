@@ -16,7 +16,7 @@ The goal is to give you a worked example of:
 - **Hexagonal architecture + DDD** — Enforces a one-way dependency flow `domain → application → adapters → presentation`. Side effects are confined to the boundary via port / adapter separation.
 - **Drizzle ORM + SQLite dialect** — Schema, migrations, and repositories share a single Drizzle definition. Adapter classes translate driver-specific errors into the shared error contracts.
 - **Outbox pattern** — Domain events are persisted in the same transaction as aggregate writes, then a relay publishes them to consumers. At-least-once delivery, no ordering guarantees, idempotency is the subscriber's responsibility.
-- **TypeScript / Biome / Vitest / fast-check** — Type checking with `tsgo`, lint and format via Biome, two-tier Vitest setup (unit / integration).
+- **TypeScript / Biome / Vitest / fast-check** — Type checking with `tsc` (TypeScript 7, native compiler), lint and format via Biome, two-tier Vitest setup (unit / integration).
 - **Structured error serialization** — Each layer carries its own `kind`-tagged serialized form; presentation composes the union structurally. HTTP status mapping lives only in presentation.
 
 ## Directory layout
@@ -107,7 +107,7 @@ pnpm start                       # alias of pnpm start:node
 pnpm start:node                  # @hono/node-server
 pnpm start:cf                    # wrangler dev (top-level Worker)
 
-pnpm typecheck                   # tsgo (@typescript/native-preview)
+pnpm typecheck                   # tsc (TypeScript 7 native compiler)
 pnpm lint                        # Biome lint
 pnpm lint:fix                    # Biome check --write
 pnpm format                      # Biome format --write
