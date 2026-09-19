@@ -13,6 +13,7 @@ import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import viteReact from "@vitejs/plugin-react";
 import rsc from "@vitejs/plugin-rsc";
 import { defineConfig } from "vite";
+import { serverFnDiscovery } from "./vite/serverFnDiscovery.ts";
 
 // `@libsql/client` is here for the same reason as the gRPC packages:
 // inlining it strands the `require("@libsql/<platform>")` native lookup
@@ -53,6 +54,7 @@ export default defineConfig({
       rsc: { enabled: true },
     }),
     rsc(),
+    serverFnDiscovery({ srcDirectory: "app" }),
     viteReact(),
   ],
   server: {

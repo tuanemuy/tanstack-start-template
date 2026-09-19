@@ -12,12 +12,6 @@ import { errorResponseMiddleware } from "@/presentation/errorResponseMiddleware"
 import { buildHead } from "@/presentation/head";
 import appCss from "../styles/index.css?url";
 
-// Server fns only reachable from `"use client"` components miss the
-// rsc manifest (frozen before the client build phase). Pull their
-// provider modules into a server-rendered route to register them.
-import "@/components/todo/CreateTodoForm/action";
-import "@/components/todo/TodoItem/action";
-
 export const loadAppContext = createServerFn({ method: "GET" })
   .middleware([errorResponseMiddleware])
   .handler(async () => {

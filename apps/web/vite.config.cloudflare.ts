@@ -4,6 +4,7 @@ import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import viteReact from "@vitejs/plugin-react";
 import rsc from "@vitejs/plugin-rsc";
 import { defineConfig } from "vite";
+import { serverFnDiscovery } from "./vite/serverFnDiscovery.ts";
 
 export default defineConfig({
   resolve: {
@@ -24,6 +25,7 @@ export default defineConfig({
       rsc: { enabled: true },
     }),
     rsc(),
+    serverFnDiscovery({ srcDirectory: "app" }),
     viteReact(),
   ],
   server: {
