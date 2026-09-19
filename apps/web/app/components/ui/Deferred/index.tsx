@@ -1,29 +1,15 @@
 "use client";
 
-import { useRouter } from "@tanstack/react-router";
 import {
-  createContext,
   type ReactNode,
   Suspense,
   startTransition,
   type Usable,
   use,
-  useCallback,
-  useContext,
-  useEffect,
-  useRef,
+  useLayoutEffect,
   useState,
   ViewTransition,
 } from "react";
-
-type Reconcile = () => Promise<void>;
-
-const ReconcileContext = createContext<Reconcile | null>(null);
-
-// Upper bound on waiting for the router to hand React the re-run loader's
-// promise. It only trips if a loader breaks the contract below by returning
-// the same promise again; giving up costs a one-frame blink, never a hang.
-const DELIVERY_TIMEOUT_MS = 1000;
 
 function Resolved<T extends ReactNode>({ promise }: { promise: Usable<T> }) {
   return use(promise);
@@ -35,12 +21,21 @@ function Resolved<T extends ReactNode>({ promise }: { promise: Usable<T> }) {
  *
  * The route loader forwards the `renderServerComponent(...)` promise WITHOUT
  * awaiting it, so navigation settles immediately and the fragment streams in
- * under `fallback`. The loader must return a new promise on every run.
+ * under `fallback`.
  *
- * A new `promise` is adopted inside a transition, never rendered directly:
- * `router.invalidate()` yields a fresh unresolved promise, and handing that
- * straight to `use()` would re-suspend the boundary — the fallback flashes and
- * the client islands inside remount, losing their optimistic state.
+ * A new `promise` is adopted inside a transition, never rendered directly.
+ * Reconciling a mutation re-runs the loader, which yields a fresh unresolved
+ * promise; handing that straight to `use()` would re-suspend the boundary —
+ * the fallback flashes and the client islands inside remount, losing their
+ * optimistic state. Adopted in a transition, the resolved content stays up
+ * until the new payload is ready.
+ *
+ * That adoption is also what lets an optimistic update settle in one commit.
+ * It is scheduled while the mutation that awaits `useReconcile()` is still
+ * pending, so React entangles it with that mutation's transition and commits
+ * the optimistic revert together with the fresh payload. `useDeferredValue`
+ * cannot replace it: a deferred render is not entangled, so the revert would
+ * commit first and show the stale content for a frame.
  *
  * Only the fallback → content reveal is animated. `useOptimistic` commits are
  * urgent, so React never runs a view transition for them, and one around the
@@ -56,65 +51,22 @@ export function Deferred<T extends ReactNode>({
   promise: Usable<T>;
   fallback: ReactNode;
 }): ReactNode {
-  const router = useRouter();
   // Lazy initializer / updater forms: `Usable` admits `Context`, which is
   // callable, so a bare value would be read as an initializer or updater.
   const [shown, setShown] = useState<Usable<T>>(() => promise);
-  const waiters = useRef(new Set<() => void>());
 
-  const releaseWaiters = useCallback(() => {
-    for (const release of waiters.current) release();
-    waiters.current.clear();
-  }, []);
-
-  useEffect(() => {
+  // A layout effect, not a passive one: the router resolves `invalidate()` from
+  // a layout effect of an ancestor, and layout effects run child-first, so this
+  // is scheduled before the awaiting mutation can resume and end its transition.
+  useLayoutEffect(() => {
     startTransition(() => setShown(() => promise));
-    releaseWaiters();
-  }, [promise, releaseWaiters]);
-
-  useEffect(() => releaseWaiters, [releaseWaiters]);
-
-  const reconcile = useCallback<Reconcile>(async () => {
-    const delivered = new Promise<void>((resolve) => {
-      waiters.current.add(resolve);
-      setTimeout(resolve, DELIVERY_TIMEOUT_MS);
-    });
-    await router.invalidate();
-    await delivered;
-  }, [router]);
+  }, [promise]);
 
   return (
-    <ReconcileContext value={reconcile}>
-      <Suspense fallback={<ViewTransition>{fallback}</ViewTransition>}>
-        <ViewTransition update="none">
-          <Resolved promise={shown} />
-        </ViewTransition>
-      </Suspense>
-    </ReconcileContext>
+    <Suspense fallback={<ViewTransition>{fallback}</ViewTransition>}>
+      <ViewTransition update="none">
+        <Resolved promise={shown} />
+      </ViewTransition>
+    </Suspense>
   );
-}
-
-/**
- * Returns the function a mutation awaits, inside its transition, to reconcile
- * with the server after the server function resolves.
- *
- * `await router.invalidate()` alone is not enough under a `Deferred`: it can
- * resolve before the router has handed React the new promise. The mutation's
- * transition then ends first, `useOptimistic` reverts to the stale data, and
- * the fresh data arrives in a later commit — the change blinks off and on.
- * This waits until the new promise has been adopted, which happens in a
- * transition while the mutation is still pending, so React folds the
- * optimistic revert and the fresh payload into a single commit.
- *
- * Outside a `Deferred` there is nothing to wait for, so it falls back to
- * `router.invalidate()`.
- */
-export function useReconcile(): Reconcile {
-  const router = useRouter();
-  const reconcile = useContext(ReconcileContext);
-  const invalidate = useCallback<Reconcile>(
-    () => router.invalidate(),
-    [router],
-  );
-  return reconcile ?? invalidate;
 }
