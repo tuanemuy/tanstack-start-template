@@ -1,7 +1,6 @@
 "use client";
 
 import type { TodoView } from "@repo/core/application/todo/view";
-import { useRouter } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useId, useOptimistic, useState, useTransition } from "react";
 import { displayError } from "@/presentation/errorDisplay";
@@ -9,6 +8,7 @@ import {
   extractSerializedError,
   type SerializedError,
 } from "@/presentation/errorResponse";
+import { useReconcile } from "@/presentation/reconcile";
 import { TODO_TITLE_MAX_LENGTH } from "../schema";
 import { changeTodoStatusFn, renameTodoFn } from "./action";
 
@@ -27,7 +27,7 @@ function todoErrorMessage(error: SerializedError): string {
 }
 
 export function TodoItem({ todo, onDelete }: Props) {
-  const router = useRouter();
+  const reconcile = useReconcile();
   const changeStatus = useServerFn(changeTodoStatusFn);
   const rename = useServerFn(renameTodoFn);
 
@@ -56,7 +56,7 @@ export function TodoItem({ todo, onDelete }: Props) {
         await changeStatus({
           data: { id: todo.id, status: checked ? "completed" : "active" },
         });
-        await router.invalidate();
+        await reconcile();
         setError(null);
       } catch (e) {
         setError(extractSerializedError(e));
@@ -88,7 +88,7 @@ export function TodoItem({ todo, onDelete }: Props) {
       setOptimisticTitle(trimmed);
       try {
         await rename({ data: { id: todo.id, title: trimmed } });
-        await router.invalidate();
+        await reconcile();
         setError(null);
       } catch (e) {
         setError(extractSerializedError(e));
