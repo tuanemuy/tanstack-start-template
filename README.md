@@ -44,7 +44,7 @@ docs/                 # implementation pattern examples + runtime guides
 spec/                 # entry point for the /spec workflow
 ```
 
-For the deeper rationale, see [`CLAUDE.md`](CLAUDE.md), [`docs/backend_implementation_example.md`](docs/backend_implementation_example.md), and [`docs/frontend_implementation_example.md`](docs/frontend_implementation_example.md).
+For the deeper rationale, see [`AGENTS.md`](AGENTS.md), [`docs/backend_implementation_example.md`](docs/backend_implementation_example.md), and [`docs/frontend_implementation_example.md`](docs/frontend_implementation_example.md).
 
 ## Reference runtimes
 

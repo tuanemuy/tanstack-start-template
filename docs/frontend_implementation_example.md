@@ -308,7 +308,7 @@ The fact that `serverData` **does not take a schema** is a deliberate design cho
 | Forwarding from a parent server fn | parent fn's `inputValidator(schema)` | `serverData` (receives the value trusting the type) |
 | Direct POST from the client | `serverAction`'s `inputValidator(schema)` | `serverAction` |
 
-> **Convention**: `serverData` is **for internal calls only**. Any place that handles external input (URL / form / fetch) must **always finish transport validation with either `validateSearch` or `serverAction` before** passing arguments to a loader via `serverData`. Do not run Zod again right before the usecase (the VO factory re-validates the same constraints, so it would be a duplicate and would diverge from CLAUDE.md's "validate at the boundaries").
+> **Convention**: `serverData` is **for internal calls only**. Any place that handles external input (URL / form / fetch) must **always finish transport validation with either `validateSearch` or `serverAction` before** passing arguments to a loader via `serverData`. Do not run Zod again right before the usecase (the VO factory re-validates the same constraints, so it would be a duplicate and would diverge from AGENTS.md's "validate at the boundaries").
 
 Example: `apps/web/app/routes/todo/index.tsx` normalizes the URL into the Pagination type with `validateSearch: paginationSearchSchema.parse`, then `renderTodoList` (a server fn) re-validates the transport with `inputValidator(paginationSchema)` → passes a typed value to the server component `TodoList`, and `loadTodos(pagination)` (wrapped with `serverData`) **merely trusts** that type. Of the three stages, validation is confined to **the first two transport boundaries**, and the internal `serverData` is a noop.
 
@@ -473,7 +473,7 @@ The usecase **trusts the static type of the input and focuses on applying domain
 Why not run Zod in the usecase:
 
 - The VO factory re-validates the same constraints, so it would be a duplicate.
-- Placing validation in the usecase mixes Zod / domain modules into the application layer, creating friction with CLAUDE.md's dependency direction (application → domain).
+- Placing validation in the usecase mixes Zod / domain modules into the application layer, creating friction with AGENTS.md's dependency direction (application → domain).
 - Shape checking is the transport's responsibility. Once it arrives as a type, the usecase may trust it.
 
 Because `createServerFn`'s `inputValidator` runs on both client and server, the schema statically imported from it **must not pull in `@repo/core/domain/*` or `@repo/core/application/*` at all**. Keep the schema presentation-independent in `apps/web/app/components/${domain}/schema.ts`.
