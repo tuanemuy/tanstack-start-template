@@ -2,7 +2,7 @@
 
 The Todo domain implementation is the canonical example. When adding a new domain, just follow the same structure.
 
-> For principles and abstract concepts, see `CLAUDE.md`. This document is a collection of copy-and-adapt patterns for "how to actually write the code".
+> For principles and abstract concepts, see `AGENTS.md`. This document is a collection of copy-and-adapt patterns for "how to actually write the code".
 
 ## File Layout
 
@@ -416,7 +416,7 @@ await processOutboxEvents(container, async (event) => {
 
 ### Delivery contract (pitfalls the consumer implementation must guard against)
 
-As stated in the CLAUDE.md key concepts, the Outbox operates with **at-least-once delivery / no ordering**. Write the consumer on that premise. The "why" of the principle is in CLAUDE.md; here we expand on "what the implementation must guard against".
+As stated in the AGENTS.md key concepts, the Outbox operates with **at-least-once delivery / no ordering**. Write the consumer on that premise. The "why" of the principle is in AGENTS.md; here we expand on "what the implementation must guard against".
 
 - **At-least-once (the same event arrives two or more times)** — the relay worker operates in the order "dispatch succeeds → update the outbox row's `processed_at`". If dispatch goes through but the process dies just before the update, the same event is re-dispatched in the next round. Write the consumer so that **processing the same event N times produces the same result**, either via `event.id`-based dedupe (a processed-id table / unique index) or a natural-key upsert. Code that assumes "trigger a side effect exactly once" (the "fire-and-forget" of external sends, billing, notifications) will duplicate the moment at-most-once breaks.
   - The `IdempotencyStore` port bundled with the template (the `processed_events` table + D1 `INSERT OR IGNORE` to claim) is the minimal implementation of a "processed-id table". `handleQueue` calls `markProcessed(event.id)` before running the handler, and if `alreadyProcessed: true` it skips the handler and acks. Follow the same pattern when writing new consumers.
