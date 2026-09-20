@@ -355,7 +355,7 @@ Consolidate the path that reads request-side env into `readRequestServerConfig()
 
 The test-only `TestContainer = RequestContainer & WorkerContainer & { db }` flattens the fields of both scopes into a single fat shape — a convenience type for co-locating usecase invocation and worker-pipeline verification within a test. Production code never holds this intersection directly; it always receives either `RequestContainer` or `WorkerContainer`.
 
-Transient lock contention such as `SQLITE_BUSY` is retried internally by `DrizzleSqliteUnitOfWorkProvider` (a driver-level concern, so the application layer doesn't touch it).
+Lock contention such as `SQLITE_BUSY` is an adapter concern: the UoW flushes through a single `db.batch()`, so writes within one process never contend, and nothing is retried at the application layer (see `docs/runtime_node.md` for the libSQL details).
 
 ## Adapter Layer
 

@@ -16,7 +16,7 @@ Tests are classified along two axes: **layer × purpose**. By separating a fast 
 
 - **Targets**: the Drizzle SQLite adapter implementation, adapter × application integration, concurrent / OCC (optimistic concurrency control) scenarios, and outbox poll / dispatch behavior.
 - **Dependencies**: real SQLite through two pools. Cloudflare tests use an in-memory Miniflare D1 binding; Node tests create isolated temporary libSQL databases and close each client during teardown.
-- **Aim**: realistically verify transaction rollback, the adapter's built-in `SQLITE_BUSY` retry, `OptimisticLockFailure`, and the outbox's `claimPending` / `finalize`.
+- **Aim**: realistically verify batch rollback, write contention (`SQLITE_BUSY`), `OptimisticLockFailure`, and the outbox's `claimPending` / `finalize`.
 - **Speed**: roughly 10× unit. Day to day you run `pnpm test:unit`, and run `pnpm test:integration` when you touch an adapter or before a PR.
 - **Naming**: `**/__tests__/<target>.integration.test.ts` (e.g. `todo.integration.test.ts`, `todoRepository.integration.test.ts`, `outboxRepository.integration.test.ts`).
 
@@ -37,7 +37,7 @@ Currently the following two are the only fakes kept under `packages/core/src/app
 
 Fakes for repositories, the UoW, and the Clock are intentionally not kept.
 
-- Even if you fake repositories / the UoW in-memory, you can't reproduce the essential adapter-derived behaviors like transactions, `SQLITE_BUSY` retry, or `OptimisticLockFailure`. Logic tests for application services are better done at the integration layer (real SQLite), where they cover actual harm.
+- Even if you fake repositories / the UoW in-memory, you can't reproduce the essential adapter-derived behaviors like atomic batches, write contention (`SQLITE_BUSY`), or `OptimisticLockFailure`. Logic tests for application services are better done at the integration layer (real SQLite), where they cover actual harm.
 - `Clock` is just a `() => Date`, so it's enough to construct a constant like `new Date(0)` within a test and pass it to the usecase / domain. There's no need to fake it as a port object.
 
 ## Real DB test (integration) policy
@@ -57,8 +57,7 @@ Fakes for repositories, the UoW, and the Clock are intentionally not kept.
 ## Timeout / flakiness
 
 - The configs currently use Vitest's default timeouts. Unit tests finish in a few hundred milliseconds; if an integration test needs a longer ceiling, set it in the runtime-specific integration config rather than slowing the unit suite.
-- If the backoff of the adapter's built-in transient retry stacks up, a single test can consume several seconds. When you sense flakiness, before fixing the clock with per-test `test.extend` / `vi.useFakeTimers`, first check the adapter's retry settings.
-- When a test with no retries (a simple CRUD success path, etc.) times out, a `SQLITE_BUSY` is often lurking. Check whether it reproduces on the integration side.
+- No adapter retries. On libSQL, a write that waits on a lock held by another connection blocks the event loop for `busy_timeout` (5 s by default) before it fails with `SQLITE_BUSY`; a test that exercises that path passes a short `busyTimeoutMs` to `createTestContainer`.
 
 ## Commands
 
