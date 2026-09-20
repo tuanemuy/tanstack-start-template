@@ -8,9 +8,9 @@ Tests are classified along two axes: **layer × purpose**. By separating a fast 
 
 - **Targets**: domain-layer + application-layer logic (the pure parts).
 - **Dependencies**: the only fakes kept on hand are the two under `packages/core/src/application/__tests__/fakes/`: `FakeIdGenerator` (a deterministic UUIDv7 stream) and `FakeLogger` (a recording Logger). `Clock` can simply be passed to the usecase as a freestanding `now: Date`, and repository-style fakes are intentionally absent (the judgment being that imitating transaction / OCC with an in-memory fake is no substitute for integration). We don't aim to exhaustively cover application-layer logic with fakes; behavior verification is pushed onto integration tests.
-- **Aim**: invariants of the domain layer (value object / entity / events decoding), error-code branching, and the behavior of application-layer helpers like `retry()`.
+- **Aim**: invariants of the domain layer (value object / entity / events decoding), error-code branching, and the behavior of application-layer helpers like `pruneOutbox()`.
 - **Speed**: a few to a dozen-or-so milliseconds. Vitest's `--exclude '**/*.integration.test.ts'` skips integration.
-- **Naming**: `**/__tests__/<target>.test.ts` (e.g. `entity.test.ts`, `events.test.ts`, `retry.test.ts`).
+- **Naming**: `**/__tests__/<target>.test.ts` (e.g. `entity.test.ts`, `eventDecoders.test.ts`, `outboxPrune.test.ts`).
 
 ### Integration (`pnpm test:integration`)
 
