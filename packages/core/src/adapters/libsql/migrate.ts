@@ -4,8 +4,8 @@ import { migrate } from "drizzle-orm/libsql/migrator";
 
 /**
  * Applies the drizzle migrations in `migrationsFolder`. Drizzle's migrator
- * wants the full handle, which `Database` deliberately is not — so the
- * handle is built here and never leaves this function.
+ * takes the full handle, which `Database` is not, so the handle is built
+ * here and never leaves this function.
  */
 export function migrateDatabase(
   client: Client,

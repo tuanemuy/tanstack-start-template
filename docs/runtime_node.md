@@ -112,7 +112,7 @@ SQLite admits one writer at a time, and the web handler shares the file with all
 - Every atomic write is a single `db.batch()` — the unit of work's commit and the outbox `finalize` — and every other write is a single statement. The embedded driver runs a batch (`BEGIN` … `COMMIT`) as one synchronous call on the client's only connection, so no other write can start in the middle of it.
 - The `Database` type omits Drizzle's `transaction`. An interactive transaction stays open across `await`s, so a second writer would find the lock taken; `busy_timeout` cannot help, because the synchronous wait blocks the very event loop the lock holder needs in order to commit. The driver also hands its connection over to each interactive transaction and opens a fresh one without the PRAGMAs.
 
-`busy_timeout` therefore only matters against another process. When that wait runs out the write fails with `SystemError("DATABASE_ERROR")`, and `openDatabase` reopens the connection and re-applies the PRAGMAs before the error surfaces: with libsql 0.5, a connection that has returned `SQLITE_BUSY` fails every later `COMMIT` with `cannot commit transaction - SQL statements in progress`.
+When the `busy_timeout` wait on another process runs out, the write fails with `SystemError("DATABASE_ERROR")`. With libsql 0.5, a connection that has returned `SQLITE_BUSY` fails every later `COMMIT` with `cannot commit transaction - SQL statements in progress`, so `openDatabase` reopens the connection and re-applies the PRAGMAs before the error surfaces.
 
 ## Worker runner (relay / consumer / pruner)
 

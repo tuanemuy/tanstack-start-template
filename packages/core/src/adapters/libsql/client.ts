@@ -13,14 +13,16 @@ import { drizzle, type LibSQLDatabase } from "drizzle-orm/libsql";
 import * as schema from "./schema";
 
 /**
- * Drizzle handle without `transaction`. On a local file the driver hands
- * its connection over to each interactive transaction and lazily opens a
- * fresh one that carries none of the PRAGMAs, and a transaction held
- * across `await`s contends with every other write in the process — the
- * binding is synchronous, so the waiter blocks the event loop the holder
- * needs to commit. Atomic writes go through `db.batch()` instead: it runs
- * `BEGIN` … `COMMIT` in one synchronous call on the client's single
- * connection, so writes within a process never interleave.
+ * Drizzle handle without `transaction`. Atomic writes go through
+ * `db.batch()`: on a local file it runs `BEGIN` … `COMMIT` as one
+ * synchronous call on the client's single connection, so writes within a
+ * process never interleave.
+ *
+ * An interactive transaction breaks that in two ways. It stays open
+ * across `await`s while the binding is synchronous, so a second writer
+ * blocks the event loop the lock holder needs to commit. And the driver
+ * hands its connection over to each transaction, then lazily opens a
+ * fresh one that carries none of the PRAGMAs.
  */
 export type Database = Omit<LibSQLDatabase<typeof schema>, "transaction">;
 
@@ -60,9 +62,8 @@ export function createLibsqlClient(options: CreateLibsqlClientOptions): Client {
  * writes within the process never contend — see {@link Database}.
  * Pass `wal: false` for `:memory:` test databases.
  *
- * `foreign_keys` and `busy_timeout` are per-connection. Long-running
- * processes should go through {@link openDatabase}, which re-applies
- * them when the connection is reopened.
+ * `foreign_keys` and `busy_timeout` are per-connection.
+ * {@link openDatabase} re-applies them when the connection is reopened.
  */
 export async function applyPragmas(
   client: Client,
