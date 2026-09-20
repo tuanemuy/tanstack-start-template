@@ -1,3 +1,4 @@
+import type { Client } from "@libsql/client";
 import { isSystemError } from "@repo/core/application/errors";
 import { EventId } from "@repo/core/domain/common/event";
 import { Todo } from "@repo/core/domain/todo/entity";
@@ -100,17 +101,36 @@ describe("libSQL write contention (integration)", () => {
     expect(await c.db.select().from(schema.todos)).toHaveLength(15);
   });
 
+  it("refuses an interactive transaction at runtime too", async () => {
+    container = await createTestContainer();
+    // `Database` exposes neither `transaction` nor `$client`.
+    const { $client } = container.db as unknown as { $client: Client };
+    await expect($client.transaction("write")).rejects.toThrow(/db\.batch\(\)/);
+  });
+
   it("recovers once a lock held by another connection is released", async () => {
     container = await createTestContainer({ busyTimeoutMs: 50 });
     const c = container;
     // Stands in for another process (a migration, the sqlite3 CLI).
     const rival = createLibsqlClient({ url: c.url });
+    const held = await rival.transaction("write");
     try {
-      const held = await rival.transaction("write");
-      const blocked = await insertOne(c, "blocked").catch(
+      let settled = false;
+      const blocked = insertOne(c, "blocked").then(
+        () => null,
         (error: unknown) => error,
       );
-      expect(isSystemError(blocked)).toBe(true);
+      void blocked.then(() => {
+        settled = true;
+      });
+      // Whatever runs in between must never see the reopened connection
+      // without its PRAGMAs.
+      const seen = new Set<unknown>();
+      while (!settled) {
+        seen.add(await busyTimeout(c));
+      }
+      expect(isSystemError(await blocked)).toBe(true);
+      expect([...seen]).toEqual([50]);
       await held.commit();
 
       await insertOne(c, "after-release-1");
@@ -118,6 +138,7 @@ describe("libSQL write contention (integration)", () => {
       expect(await c.db.select().from(schema.todos)).toHaveLength(2);
       expect(await busyTimeout(c)).toBe(50);
     } finally {
+      held.close();
       rival.close();
     }
   });

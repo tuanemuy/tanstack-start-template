@@ -135,7 +135,10 @@ describe("LibsqlUnitOfWorkProvider (integration)", () => {
   // Parity with the D1 adapter's attribution test: with two OCC writes
   // in one UoW, the surfaced ConflictError must name the write that
   // actually conflicted, regardless of its position in the batch.
-  it("attributes an OCC failure to the write that actually conflicted", async () => {
+  it.each([
+    "first",
+    "last",
+  ] as const)("attributes an OCC failure to the write that actually conflicted (%s in the batch)", async (position) => {
     const c = await openContainer();
     const { entity: a } = Todo.create(
       { id: nextTodoId(), title: "occ-a" },
@@ -175,8 +178,15 @@ describe("LibsqlUnitOfWorkProvider (integration)", () => {
     let caught: unknown;
     try {
       await c.unitOfWorkProvider.run(async ({ todoRepository }) => {
-        await todoRepository.save(aBumped, foundA.expectedVersion);
-        await todoRepository.save(bBumped, foundB.expectedVersion);
+        const fresh = () =>
+          todoRepository.save(aBumped, foundA.expectedVersion);
+        const stale = () =>
+          todoRepository.save(bBumped, foundB.expectedVersion);
+        for (const save of position === "first"
+          ? [stale, fresh]
+          : [fresh, stale]) {
+          await save();
+        }
       });
     } catch (error) {
       caught = error;

@@ -69,13 +69,17 @@ export async function applyPragmas(
   client: Client,
   options: PragmaOptions = {},
 ): Promise<void> {
-  const wal = options.wal ?? true;
-  const busyTimeoutMs = options.busyTimeoutMs ?? 5000;
-  if (wal) {
-    await client.execute("PRAGMA journal_mode = WAL");
+  for (const statement of pragmaStatements(options)) {
+    await client.execute(statement);
   }
-  await client.execute("PRAGMA foreign_keys = ON");
-  await client.execute(`PRAGMA busy_timeout = ${busyTimeoutMs}`);
+}
+
+function pragmaStatements(options: PragmaOptions): string[] {
+  return [
+    ...((options.wal ?? true) ? ["PRAGMA journal_mode = WAL"] : []),
+    "PRAGMA foreign_keys = ON",
+    `PRAGMA busy_timeout = ${options.busyTimeoutMs ?? 5000}`,
+  ];
 }
 
 /**
@@ -148,8 +152,12 @@ class BusyReopeningClient implements Client {
     return this.reopenOnBusy(() => this.inner.migrate(stmts));
   }
 
-  transaction(mode?: TransactionMode): Promise<Transaction> {
-    return this.reopenOnBusy(() => this.inner.transaction(mode));
+  // Unreachable through `Database`; refuses a caller that casts its way
+  // to the client.
+  async transaction(): Promise<Transaction> {
+    throw new Error(
+      "Interactive transactions are disabled on a local libSQL file: use db.batch()",
+    );
   }
 
   executeMultiple(sql: string): Promise<void> {
@@ -164,9 +172,16 @@ class BusyReopeningClient implements Client {
     this.inner.close();
   }
 
+  // The driver runs each call synchronously up to the promise it returns,
+  // so issuing them back to back leaves no turn in which another operation
+  // finds the fresh connection without its PRAGMAs.
   async reconnect(): Promise<void> {
-    await this.inner.reconnect();
-    await applyPragmas(this.inner, this.pragmas);
+    await Promise.all([
+      this.inner.reconnect(),
+      ...pragmaStatements(this.pragmas).map((statement) =>
+        this.inner.execute(statement),
+      ),
+    ]);
   }
 
   private async reopenOnBusy<T>(op: () => Promise<T>): Promise<T> {
@@ -174,7 +189,9 @@ class BusyReopeningClient implements Client {
       return await op();
     } catch (error) {
       if (isBusy(error)) {
-        await this.reconnect();
+        // A failed reopen must not replace the `SQLITE_BUSY` the caller
+        // has to see; the next operation reports a connection still broken.
+        await this.reconnect().catch(() => {});
       }
       throw error;
     }
