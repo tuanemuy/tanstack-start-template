@@ -21,14 +21,14 @@ import {
   sql,
 } from "drizzle-orm";
 import type { Database } from "../client";
-import type { PendingBatch } from "../pendingBatch";
+import type { PendingBatch, SqliteBatchItem } from "../pendingBatch";
 import { outboxEvents } from "../schema";
 import { mapDbError } from "./helpers";
 
 /**
  * libSQL `OutboxRepository`. UoW mode (`save`) requires a `PendingBatch`;
  * worker mode (`claimPending` / `finalize` / `pruneProcessed`) runs each
- * call as its own atomic statement or interactive transaction.
+ * call as its own atomic statement or batch.
  */
 export class LibsqlOutboxRepository implements OutboxRepository {
   constructor(
@@ -54,7 +54,7 @@ export class LibsqlOutboxRepository implements OutboxRepository {
       occurredAt: event.occurredAt,
       createdAt: now,
     }));
-    this.pending.add((tx) => tx.insert(outboxEvents).values(rows));
+    this.pending.add(this.db.insert(outboxEvents).values(rows));
   }
 
   async claimPending(args: ClaimPendingArgs): Promise<readonly OutboxEntry[]> {
@@ -129,11 +129,12 @@ export class LibsqlOutboxRepository implements OutboxRepository {
     const { processed, failures, now } = args;
     if (processed.length === 0 && failures.length === 0) return;
     await mapDbError("Failed to finalize outbox events", async () => {
-      // Interactive transaction so a crash mid-call cannot leave
-      // failures recorded without their matching successes.
-      await this.db.transaction(async (tx) => {
-        if (processed.length > 0) {
-          await tx
+      // One batch so a crash mid-call cannot leave failures recorded
+      // without their matching successes.
+      const items: SqliteBatchItem[] = [];
+      if (processed.length > 0) {
+        items.push(
+          this.db
             .update(outboxEvents)
             .set({ processedAt: now, claimedAt: null, claimedBy: null })
             .where(
@@ -141,10 +142,12 @@ export class LibsqlOutboxRepository implements OutboxRepository {
                 inArray(outboxEvents.id, processed),
                 isNull(outboxEvents.processedAt),
               ),
-            );
-        }
-        for (const failure of failures) {
-          await tx
+            ),
+        );
+      }
+      for (const failure of failures) {
+        items.push(
+          this.db
             .update(outboxEvents)
             .set({
               attempts: sql`${outboxEvents.attempts} + 1`,
@@ -160,9 +163,10 @@ export class LibsqlOutboxRepository implements OutboxRepository {
                 isNull(outboxEvents.processedAt),
                 isNull(outboxEvents.failedAt),
               ),
-            );
-        }
-      });
+            ),
+        );
+      }
+      await this.db.batch(items as [SqliteBatchItem, ...SqliteBatchItem[]]);
     });
   }
 

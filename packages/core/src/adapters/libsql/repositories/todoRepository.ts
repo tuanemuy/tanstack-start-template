@@ -26,7 +26,7 @@ type TodoRow = typeof todos.$inferSelect;
 
 /**
  * libSQL `TodoRepository`. Reads run immediately; writes register
- * closures on the `PendingBatch` for the surrounding UoW to flush.
+ * statements on the `PendingBatch` for the surrounding UoW to flush.
  * OCC is enforced via the `ExpectedVersion<Todo>` token returned from
  * `findById` — this file is the only legitimate construction site.
  */
@@ -110,8 +110,8 @@ export class LibsqlTodoRepository implements TodoRepository {
   }
 
   async insert(todo: Todo): Promise<void> {
-    this.pending.add((tx) =>
-      tx.insert(todos).values({
+    this.pending.add(
+      this.db.insert(todos).values({
         id: todo.id,
         title: todo.title,
         status: todo.status,
@@ -128,21 +128,20 @@ export class LibsqlTodoRepository implements TodoRepository {
   ): Promise<void> {
     const todoId = todo.id;
     this.pending.addOcc(
-      (tx) =>
-        tx
-          .update(todos)
-          .set({
-            title: todo.title,
-            status: todo.status,
-            version: todo.version,
-            updatedAt: todo.updatedAt,
-          })
-          .where(
-            and(
-              eq(todos.id, todo.id),
-              eq(todos.version, expectedVersion as number),
-            ),
+      this.db
+        .update(todos)
+        .set({
+          title: todo.title,
+          status: todo.status,
+          version: todo.version,
+          updatedAt: todo.updatedAt,
+        })
+        .where(
+          and(
+            eq(todos.id, todo.id),
+            eq(todos.version, expectedVersion as number),
           ),
+        ),
       () => {
         throw new ConflictError(
           "OPTIMISTIC_LOCK_FAILURE",
@@ -157,12 +156,11 @@ export class LibsqlTodoRepository implements TodoRepository {
     expectedVersion: ExpectedVersion<Todo>,
   ): Promise<void> {
     this.pending.addOcc(
-      (tx) =>
-        tx
-          .delete(todos)
-          .where(
-            and(eq(todos.id, id), eq(todos.version, expectedVersion as number)),
-          ),
+      this.db
+        .delete(todos)
+        .where(
+          and(eq(todos.id, id), eq(todos.version, expectedVersion as number)),
+        ),
       () => {
         throw new ConflictError(
           "OPTIMISTIC_LOCK_FAILURE",

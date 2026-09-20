@@ -3,9 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import {
-  applyPragmas,
   createLibsqlClient,
-  getDatabase,
+  openDatabase,
 } from "@repo/core/adapters/libsql/client";
 import { installContainerStore } from "@repo/core/application/di/containerStore";
 import {
@@ -71,8 +70,7 @@ export async function boot(): Promise<NodeServerBoot> {
       : {}),
   });
   const isMemory = env.DATABASE_URL === ":memory:";
-  await applyPragmas(client, isMemory ? { wal: false } : {});
-  const db = getDatabase(client);
+  const db = await openDatabase(client, isMemory ? { wal: false } : {});
 
   const workerContainer = createNodeWorkerContainer(db);
 

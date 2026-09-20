@@ -3,11 +3,8 @@
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import {
-  createLibsqlClient,
-  getDatabase,
-} from "@repo/core/adapters/libsql/client";
-import { migrate } from "drizzle-orm/libsql/migrator";
+import { createLibsqlClient } from "@repo/core/adapters/libsql/client";
+import { migrateDatabase } from "@repo/core/adapters/libsql/migrate";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 
@@ -22,7 +19,6 @@ async function main(): Promise<void> {
     url,
     ...(authToken !== undefined && authToken !== "" ? { authToken } : {}),
   });
-  const db = getDatabase(client);
 
   const migrationsFolder = path.resolve(
     scriptDir,
@@ -32,7 +28,7 @@ async function main(): Promise<void> {
   console.log(
     `[migrate.aws] applying migrations from ${migrationsFolder} to ${url}`,
   );
-  await migrate(db, { migrationsFolder });
+  await migrateDatabase(client, migrationsFolder);
   console.log("[migrate.aws] done");
 
   client.close();

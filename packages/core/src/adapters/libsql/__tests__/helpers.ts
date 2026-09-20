@@ -5,8 +5,13 @@ import type { Client } from "@libsql/client";
 import { SystemClock } from "@repo/core/application/ports/clock";
 import { UuidV7Generator } from "@repo/core/application/ports/idGenerator";
 import { ConsoleLogger } from "@repo/core/application/ports/logger";
-import { migrate } from "drizzle-orm/libsql/migrator";
-import { createLibsqlClient, type Database, getDatabase } from "../client";
+import {
+  createLibsqlClient,
+  type Database,
+  openDatabase,
+  type PragmaOptions,
+} from "../client";
+import { migrateDatabase } from "../migrate";
 import { LibsqlIdempotencyStore } from "../repositories/idempotencyStore";
 import { LibsqlOutboxRepository } from "../repositories/outboxRepository";
 import { LibsqlUnitOfWorkProvider } from "../unitOfWork";
@@ -20,6 +25,8 @@ export type TestContainer = Readonly<{
   idempotencyStore: LibsqlIdempotencyStore;
   db: Database;
   client: Client;
+  /** `file:` URL of the backing temp file, for opening a rival connection. */
+  url: string;
   clock: typeof SystemClock;
   idGenerator: typeof UuidV7Generator;
   logger: typeof ConsoleLogger;
@@ -30,21 +37,21 @@ export type TestContainer = Readonly<{
  * Builds an isolated libSQL DB backed by a per-test temp file, applies
  * the drizzle migrations, and wires a full container.
  *
- * Temp file (not `:memory:`): libSQL's sqlite3 backend reopens its
- * connection on `client.transaction()`, and a fresh `:memory:`
- * connection cannot see the schema of the previous one.
+ * Temp file (not `:memory:`): contention tests open a second connection
+ * to the same database, which a private `:memory:` database cannot offer.
  *
  * Caller must invoke `close()` (typically in `afterEach`).
  */
-export async function createTestContainer(): Promise<TestContainer> {
+export async function createTestContainer(
+  pragmas: PragmaOptions = {},
+): Promise<TestContainer> {
   const dbPath = path.join(
     os.tmpdir(),
     `libsql-test-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.db`,
   );
-  const client = createLibsqlClient({ url: `file:${dbPath}` });
-  await client.execute("PRAGMA journal_mode = WAL");
-  await client.execute("PRAGMA foreign_keys = ON");
-  await client.execute("PRAGMA busy_timeout = 5000");
+  const url = `file:${dbPath}`;
+  const client = createLibsqlClient({ url });
+  const db = await openDatabase(client, pragmas);
 
   if (!existsSync(path.join(MIGRATIONS_DIR, "meta/_journal.json"))) {
     throw new Error(
@@ -52,8 +59,7 @@ export async function createTestContainer(): Promise<TestContainer> {
     );
   }
 
-  const db = getDatabase(client);
-  await migrate(db, { migrationsFolder: MIGRATIONS_DIR });
+  await migrateDatabase(client, MIGRATIONS_DIR);
   return {
     unitOfWorkProvider: new LibsqlUnitOfWorkProvider(
       db,
@@ -68,6 +74,7 @@ export async function createTestContainer(): Promise<TestContainer> {
     idempotencyStore: new LibsqlIdempotencyStore(db, SystemClock),
     db,
     client,
+    url,
     clock: SystemClock,
     idGenerator: UuidV7Generator,
     logger: ConsoleLogger,

@@ -1,69 +1,52 @@
 import { sql } from "drizzle-orm";
+import type { BatchItem } from "drizzle-orm/batch";
 import type { Database } from "./client";
 
-/**
- * Common surface of the libSQL Drizzle handle and a `LibSQLTransaction`,
- * so repositories type their executor against either at flush time.
- */
-export type TxExecutor = Pick<
-  Database,
-  "select" | "insert" | "update" | "delete" | "run"
->;
+export type SqliteBatchItem = BatchItem<"sqlite">;
 
 /**
- * Buffered statement. `occ` carries the conflict handler that fires
- * when the following `occ-guard` CHECK aborts the transaction.
- */
-export type PendingStatement =
-  | {
-      readonly kind: "write";
-      readonly run: (executor: TxExecutor) => Promise<unknown>;
-    }
-  | {
-      readonly kind: "occ";
-      readonly run: (executor: TxExecutor) => Promise<unknown>;
-      readonly onConflict: () => never;
-    }
-  | {
-      readonly kind: "occ-guard";
-      readonly run: (executor: TxExecutor) => Promise<unknown>;
-    };
-
-/**
- * Buffer of pending writes flushed atomically inside one libSQL
- * interactive transaction. SQLite treats `UPDATE ... WHERE version = ?`
- * matching zero rows as success, so each OCC write appends an extra
- * `_occ_guard` insert that fails the CHECK when `changes() = 0`,
- * aborting the transaction and surfacing the registered conflict handler.
+ * Buffer of pending writes flushed atomically through one `db.batch()`.
+ * SQLite treats `UPDATE ... WHERE version = ?` matching zero rows as
+ * success, so each OCC write appends an extra `_occ_guard` insert that
+ * fails the CHECK when `changes() = 0`, aborting the batch. The driver
+ * reports the index of the failing statement, which identifies the guard
+ * — and therefore the conflict handler — exactly.
  */
 export class PendingBatch {
-  private readonly statements: PendingStatement[] = [];
+  private readonly items: SqliteBatchItem[] = [];
+  private readonly conflictHandlers = new Map<number, () => never>();
 
-  add(write: (executor: TxExecutor) => Promise<unknown>): void {
-    this.statements.push({ kind: "write", run: write });
+  constructor(private readonly db: Database) {}
+
+  add(item: SqliteBatchItem): void {
+    this.items.push(item);
   }
 
   /** Append an OCC-guarded write. `onConflict` fires iff this write matched zero rows. */
-  addOcc(
-    write: (executor: TxExecutor) => Promise<unknown>,
-    onConflict: () => never,
-  ): void {
-    this.statements.push({ kind: "occ", run: write, onConflict });
-    this.statements.push({
-      kind: "occ-guard",
-      run: (executor) =>
-        executor.run(
-          sql`INSERT INTO _occ_guard (n) SELECT changes() WHERE changes() = 0`,
-        ),
-    });
+  addOcc(write: SqliteBatchItem, onConflict: () => never): void {
+    this.items.push(write);
+    this.conflictHandlers.set(this.items.length, onConflict);
+    this.items.push(
+      this.db.run(
+        sql`INSERT INTO _occ_guard (n) SELECT changes() WHERE changes() = 0`,
+      ),
+    );
   }
 
   isEmpty(): boolean {
-    return this.statements.length === 0;
+    return this.items.length === 0;
   }
 
   /** Buffered statements in insertion order. Check `isEmpty()` first. */
-  build(): readonly PendingStatement[] {
-    return this.statements;
+  build(): [SqliteBatchItem, ...SqliteBatchItem[]] {
+    if (this.items.length === 0) {
+      throw new Error("PendingBatch.build called on an empty buffer");
+    }
+    return this.items as [SqliteBatchItem, ...SqliteBatchItem[]];
+  }
+
+  /** Handler of the OCC write whose guard sits at `statementIndex`. */
+  conflictHandlerAt(statementIndex: number): (() => never) | undefined {
+    return this.conflictHandlers.get(statementIndex);
   }
 }

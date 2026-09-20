@@ -1,8 +1,28 @@
-import { type Client, createClient } from "@libsql/client";
+import {
+  type Client,
+  createClient,
+  type InArgs,
+  type InStatement,
+  LibsqlError,
+  type Replicated,
+  type ResultSet,
+  type Transaction,
+  type TransactionMode,
+} from "@libsql/client";
 import { drizzle, type LibSQLDatabase } from "drizzle-orm/libsql";
 import * as schema from "./schema";
 
-export type Database = LibSQLDatabase<typeof schema>;
+/**
+ * Drizzle handle without `transaction`. On a local file the driver hands
+ * its connection over to each interactive transaction and lazily opens a
+ * fresh one that carries none of the PRAGMAs, and a transaction held
+ * across `await`s contends with every other write in the process — the
+ * binding is synchronous, so the waiter blocks the event loop the holder
+ * needs to commit. Atomic writes go through `db.batch()` instead: it runs
+ * `BEGIN` … `COMMIT` in one synchronous call on the client's single
+ * connection, so writes within a process never interleave.
+ */
+export type Database = Omit<LibSQLDatabase<typeof schema>, "transaction">;
 
 export type CreateLibsqlClientOptions = Readonly<{
   url: string;
@@ -10,10 +30,15 @@ export type CreateLibsqlClientOptions = Readonly<{
   encryptionKey?: string;
 }>;
 
+export type PragmaOptions = Readonly<{
+  wal?: boolean;
+  busyTimeoutMs?: number;
+}>;
+
 /**
  * Creates a libSQL client. URLs may be `file:`, `:memory:`, or any
- * remote form the driver supports. PRAGMAs are not applied here — call
- * {@link applyPragmas} after construction in production paths.
+ * remote form the driver supports. PRAGMAs are not applied here — open
+ * the handle with {@link openDatabase} in production paths.
  */
 export function createLibsqlClient(options: CreateLibsqlClientOptions): Client {
   return createClient({
@@ -29,20 +54,27 @@ export function createLibsqlClient(options: CreateLibsqlClientOptions): Client {
 
 /**
  * Apply production PRAGMAs: `WAL` (readers unblocked by single writer),
- * `foreign_keys=ON` (match D1 default), `busy_timeout=5000` (the only
- * buffer against transient contention — the UoW does not retry).
+ * `foreign_keys=ON` (match D1 default), `busy_timeout` (5000 ms unless
+ * overridden). `busy_timeout` only covers a lock held by another process
+ * (a migration, the `sqlite3` CLI), and the wait blocks the event loop;
+ * writes within the process never contend — see {@link Database}.
  * Pass `wal: false` for `:memory:` test databases.
+ *
+ * `foreign_keys` and `busy_timeout` are per-connection. Long-running
+ * processes should go through {@link openDatabase}, which re-applies
+ * them when the connection is reopened.
  */
 export async function applyPragmas(
   client: Client,
-  options: { wal?: boolean } = {},
+  options: PragmaOptions = {},
 ): Promise<void> {
   const wal = options.wal ?? true;
+  const busyTimeoutMs = options.busyTimeoutMs ?? 5000;
   if (wal) {
     await client.execute("PRAGMA journal_mode = WAL");
   }
   await client.execute("PRAGMA foreign_keys = ON");
-  await client.execute("PRAGMA busy_timeout = 5000");
+  await client.execute(`PRAGMA busy_timeout = ${busyTimeoutMs}`);
 }
 
 /**
@@ -50,5 +82,100 @@ export async function applyPragmas(
  * schema. Caller owns the client lifecycle (`client.close()` at shutdown).
  */
 export function getDatabase(client: Client): Database {
-  return drizzle(client, { schema });
+  return drizzle({ client, schema });
+}
+
+/**
+ * Applies the PRAGMAs and returns a Drizzle handle that keeps them for
+ * the life of the client. Caller owns the client lifecycle.
+ */
+export async function openDatabase(
+  client: Client,
+  pragmas: PragmaOptions = {},
+): Promise<Database> {
+  await applyPragmas(client, pragmas);
+  // A remote client has no local connection to reopen.
+  return getDatabase(
+    client.protocol === "file"
+      ? new BusyReopeningClient(client, pragmas)
+      : client,
+  );
+}
+
+function isBusy(error: unknown): boolean {
+  return error instanceof LibsqlError && error.code.startsWith("SQLITE_BUSY");
+}
+
+/**
+ * Once a statement fails with `SQLITE_BUSY`, every later `COMMIT` on the
+ * same connection fails with "cannot commit transaction - SQL statements
+ * in progress" (libsql 0.5). The connection never recovers on its own, so
+ * it is reopened — and its PRAGMAs re-applied — before the error surfaces.
+ */
+class BusyReopeningClient implements Client {
+  constructor(
+    private readonly inner: Client,
+    private readonly pragmas: PragmaOptions,
+  ) {}
+
+  get closed(): boolean {
+    return this.inner.closed;
+  }
+
+  get protocol(): string {
+    return this.inner.protocol;
+  }
+
+  execute(stmt: InStatement): Promise<ResultSet>;
+  execute(sql: string, args?: InArgs): Promise<ResultSet>;
+  execute(stmtOrSql: InStatement | string, args?: InArgs): Promise<ResultSet> {
+    return this.reopenOnBusy(() =>
+      typeof stmtOrSql === "string"
+        ? this.inner.execute(stmtOrSql, args)
+        : this.inner.execute(stmtOrSql),
+    );
+  }
+
+  batch(
+    stmts: Array<InStatement | [string, InArgs?]>,
+    mode?: TransactionMode,
+  ): Promise<ResultSet[]> {
+    return this.reopenOnBusy(() => this.inner.batch(stmts, mode));
+  }
+
+  migrate(stmts: InStatement[]): Promise<ResultSet[]> {
+    return this.reopenOnBusy(() => this.inner.migrate(stmts));
+  }
+
+  transaction(mode?: TransactionMode): Promise<Transaction> {
+    return this.reopenOnBusy(() => this.inner.transaction(mode));
+  }
+
+  executeMultiple(sql: string): Promise<void> {
+    return this.reopenOnBusy(() => this.inner.executeMultiple(sql));
+  }
+
+  sync(): Promise<Replicated> {
+    return this.inner.sync();
+  }
+
+  close(): void {
+    this.inner.close();
+  }
+
+  async reconnect(): Promise<void> {
+    await this.inner.reconnect();
+    await applyPragmas(this.inner, this.pragmas);
+  }
+
+  private async reopenOnBusy<T>(op: () => Promise<T>): Promise<T> {
+    try {
+      return await op();
+    } catch (error) {
+      if (isBusy(error)) {
+        await this.reconnect();
+      }
+      throw error;
+    }
+  }
 }

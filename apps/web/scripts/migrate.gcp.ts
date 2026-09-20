@@ -8,9 +8,8 @@ import { fileURLToPath } from "node:url";
 import {
   applyPragmas,
   createLibsqlClient,
-  getDatabase,
 } from "@repo/core/adapters/libsql/client";
-import { migrate } from "drizzle-orm/libsql/migrator";
+import { migrateDatabase } from "@repo/core/adapters/libsql/migrate";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 
@@ -38,8 +37,6 @@ async function main(): Promise<void> {
   // Remote libSQL ignores PRAGMAs, but the call is harmless.
   await applyPragmas(client, {});
 
-  const db = getDatabase(client);
-
   const migrationsFolder = path.resolve(
     scriptDir,
     "../../../packages/core/src/adapters/libsql/migrations",
@@ -48,7 +45,7 @@ async function main(): Promise<void> {
   console.log(
     `[migrate.gcp] applying migrations from ${migrationsFolder} to ${url}`,
   );
-  await migrate(db, { migrationsFolder });
+  await migrateDatabase(client, migrationsFolder);
   console.log("[migrate.gcp] done");
 
   client.close();

@@ -15,16 +15,17 @@ import {
 } from "@repo/core/domain/common/event";
 import type { Database } from "./client";
 import { PendingBatch } from "./pendingBatch";
-import { isOccGuardViolation, mapDbError } from "./repositories/helpers";
+import { mapDbError, occGuardViolationIndex } from "./repositories/helpers";
 import { LibsqlOutboxRepository } from "./repositories/outboxRepository";
 import { LibsqlTodoRepository } from "./repositories/todoRepository";
 
 /**
  * libSQL `UnitOfWorkProvider`. Reads run immediately against `db`;
- * writes accumulate on a `PendingBatch` and flush sequentially inside a
- * single interactive transaction. OCC failure surfaces via the
- * `_occ_guard` CHECK and is mapped to `ConflictError`. Read-your-write
- * within the same UoW is intentionally unsupported (matches the D1 adapter).
+ * writes accumulate on a `PendingBatch` and flush atomically through a
+ * single `db.batch()` — never an interactive transaction (see
+ * `Database`). OCC failure surfaces via the `_occ_guard` CHECK and is
+ * mapped to `ConflictError`. Read-your-write within the same UoW is
+ * intentionally unsupported (matches the D1 adapter).
  */
 export class LibsqlUnitOfWorkProvider implements UnitOfWorkProvider {
   constructor(
@@ -36,7 +37,7 @@ export class LibsqlUnitOfWorkProvider implements UnitOfWorkProvider {
   ) {}
 
   async run<T>(fn: (ctx: UnitOfWorkContext) => Promise<T>): Promise<T> {
-    const pending = new PendingBatch();
+    const pending = new PendingBatch(this.db);
     const collected: DomainEvent[] = [];
 
     const todoRepository = new LibsqlTodoRepository(
@@ -70,35 +71,23 @@ export class LibsqlUnitOfWorkProvider implements UnitOfWorkProvider {
     }
 
     if (pending.isEmpty()) {
-      // Pure-read UoW: skip the transaction.
+      // Pure-read UoW: nothing to flush.
       return result;
     }
 
-    const statements = pending.build();
-
     await mapDbError("Failed to commit unit of work", async () => {
-      // Track the most recent OCC write's handler so a CHECK violation
-      // on the following `occ-guard` is attributed to it. The mutable
-      // wrapper sidesteps TS narrowing inside the closure.
-      const handlerRef: { current: (() => never) | null } = { current: null };
       try {
-        await this.db.transaction(async (tx) => {
-          for (const stmt of statements) {
-            if (stmt.kind === "occ") {
-              handlerRef.current = stmt.onConflict;
-            }
-            await stmt.run(tx);
-          }
-        });
+        await this.db.batch(pending.build());
       } catch (error) {
-        if (isOccGuardViolation(error) && handlerRef.current !== null) {
-          handlerRef.current();
+        const guardIndex = occGuardViolationIndex(error);
+        if (guardIndex !== null) {
+          pending.conflictHandlerAt(guardIndex)?.();
         }
         throw error;
       }
     });
 
-    // Post-commit: kicking before the tx resolves would race the relay
+    // Post-commit: kicking before the batch resolves would race the relay
     // against rows that may roll back.
     if (collected.length > 0) {
       this.relayTrigger.kick();
