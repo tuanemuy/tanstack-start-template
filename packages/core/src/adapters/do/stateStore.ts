@@ -66,8 +66,8 @@ export function findTodoPage(
   };
 }
 
-// Thrown inside the transaction to abort it; caught by `applyCommit`
-// and returned as data. Never escapes this module.
+// Both are thrown inside the transaction to abort it; caught by
+// `applyCommit` and returned as data. Never escape this module.
 class OccConflict {
   constructor(
     readonly command: "save" | "delete",
@@ -76,12 +76,20 @@ class OccConflict {
   ) {}
 }
 
+class DuplicateInsert {
+  constructor(readonly todoId: string) {}
+}
+
 /**
  * Applies one unit of work's buffered writes plus its outbox events in
  * a single transaction. OCC is a per-statement conditional write —
  * `WHERE id = ? AND version = ? RETURNING 1` — so the check closes
  * over exactly one statement and a conflict names the exact command
- * that lost, with everything before it rolled back.
+ * that lost, with everything before it rolled back. An insert onto an
+ * existing id is reported the same way rather than left to throw: a
+ * thrown constraint error would cross RPC as a plain `Error` and reach
+ * the caller as a `SystemError`, where libSQL / D1 answer
+ * `ConflictError("UNIQUE_VIOLATION")`.
  */
 export function applyCommit(
   sql: SqlExec,
@@ -95,16 +103,22 @@ export function applyCommit(
         switch (command.kind) {
           case "insert": {
             const { row } = command;
-            sql.exec(
-              `INSERT INTO todos (id, title, status, version, created_at, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?)`,
-              row.id,
-              row.title,
-              row.status,
-              row.version,
-              row.createdAt.getTime(),
-              row.updatedAt.getTime(),
-            );
+            const inserted = sql
+              .exec(
+                `INSERT INTO todos (id, title, status, version, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT (id) DO NOTHING RETURNING 1 AS ok`,
+                row.id,
+                row.title,
+                row.status,
+                row.version,
+                row.createdAt.getTime(),
+                row.updatedAt.getTime(),
+              )
+              .toArray();
+            if (inserted.length === 0) {
+              throw new DuplicateInsert(row.id);
+            }
             break;
           }
           case "save": {
@@ -167,6 +181,9 @@ export function applyCommit(
         todoId: error.todoId,
         expectedVersion: error.expectedVersion,
       };
+    }
+    if (error instanceof DuplicateInsert) {
+      return { kind: "conflict", command: "insert", todoId: error.todoId };
     }
     throw error;
   }

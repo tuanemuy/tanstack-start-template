@@ -8,9 +8,9 @@ import {
  * Failure boundary for calls into the todo-state DO. Anything thrown
  * DO-side arrives here as a plain deserialized `Error` — Workers RPC
  * does not preserve class identity — so there is nothing finer-grained
- * to translate: expected outcomes (OCC conflicts) already travel as
- * data in the RPC result types, and whatever still throws is a storage
- * or transport failure.
+ * to translate: expected outcomes (OCC conflicts, duplicate inserts)
+ * already travel as data in the RPC result types, and whatever still
+ * throws is a storage or transport failure.
  */
 export async function mapDoError<T>(
   message: string,

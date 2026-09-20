@@ -147,6 +147,38 @@ describe("TodoStateObject (integration)", () => {
     });
   });
 
+  it("reports an insert onto an existing id as a unique violation and rolls the commit back", async () => {
+    const stub = freshStub();
+    const provider = createProvider(asClient(stub));
+    const id = nextTodoId();
+    const { entity: original } = Todo.create({ id, title: "do-first" }, NOW);
+    await provider.run(async ({ todoRepository }) => {
+      await todoRepository.insert(original);
+    });
+
+    const { entity: duplicate, eventDrafts } = Todo.create(
+      { id, title: "do-second" },
+      NOW,
+    );
+    await expect(
+      provider.run(async ({ todoRepository, collectEvents }) => {
+        await todoRepository.insert(duplicate);
+        collectEvents(eventDrafts);
+      }),
+    ).rejects.toMatchObject({ code: "UNIQUE_VIOLATION" });
+
+    const found = await provider.run(async ({ todoRepository }) =>
+      todoRepository.findById(original.id),
+    );
+    expect(found?.entity.title).toBe("do-first");
+    await runInDurableObject(stub, (_instance, state) => {
+      const outbox = state.storage.sql
+        .exec("SELECT id FROM outbox_events")
+        .toArray();
+      expect(outbox).toHaveLength(0);
+    });
+  });
+
   it("prunes processed rows past retention on the next alarm tick", async () => {
     const stub = freshStub();
     const client = asClient(stub);

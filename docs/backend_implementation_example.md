@@ -255,21 +255,31 @@ export async function createFoo({
   input,
 }: ServiceArgs<CreateFooInput>): Promise<CreateFooOutput> {
   const now = container.clock.now();
-  const id = container.idGenerator.next();
+  if (!container.idGenerator.validate(input.id)) {
+    throw new BusinessRuleError(FooErrorCode.InvalidId, "Invalid foo id");
+  }
 
   const { entity: foo, eventDrafts } = Foo.create(
-    { id, /* ...input fields... */ },
+    { id: input.id, /* ...input fields... */ },
     now,
   );
 
-  await container.unitOfWorkProvider.run(
+  const created = await container.unitOfWorkProvider.run(
     async ({ fooRepository, collectEvents }) => {
+      const found = await fooRepository.findById(foo.id);
+      if (found) {
+        if (!isReplayOf(found.entity, foo)) {
+          throw new ConflictError("FOO_ID_CONFLICT", `...`);
+        }
+        return found.entity;
+      }
       await fooRepository.insert(foo);
       collectEvents(eventDrafts);
+      return foo;
     },
   );
 
-  return { foo: toFooView(foo) };
+  return { foo: toFooView(created) };
 }
 ```
 
@@ -295,7 +305,9 @@ export async function deleteFoo({
 
 Key points:
 
-- resolve `now` / `id` at the top of the usecase. The `EventId` is minted **by the UoW inside `collectEvents`** via `idGenerator`, so the usecase doesn't have to care
+- **create is idempotent on a caller-chosen id.** The caller mints the id and resends the same one when a create fails, because a failure it observes (a lost response) may be a success server-side; a server-minted id would turn that retry into a second aggregate. A replay — same id, same content — writes nothing, collects no event, and returns the existing aggregate. The same id with different content is a `ConflictError`, since answering it with the existing aggregate would silently drop the new one. Two concurrent resends can both miss the lookup; the loser's `insert` fails as `ConflictError("UNIQUE_VIOLATION")` on every adapter and is not caught — the next resend takes the replay path. `packages/core/src/application/todo/createTodo.ts` is the reference
+- a caller-chosen id is checked with `container.idGenerator.validate`, the check adapters apply on rehydration: an id the generator would not mint would be stored as a row that can never be read back. The domain keeps treating the id as opaque
+- resolve `now` at the top of the usecase. The `EventId` is minted **by the UoW inside `collectEvents`** via `idGenerator`, so the usecase doesn't have to care
 - there are 4 VO-construction sites: the entity factory, the lookup-key construction at the top of a mutate/delete usecase (`FooId.create(input.id)`), adapter rehydration, and the event decoder
 - domain functions return identity-less drafts, and you just pass them straight through with `collectEvents(drafts)`. No explicit type arguments needed
 - ride the Outbox pattern with `collectEvents` (flushed in the same tx)

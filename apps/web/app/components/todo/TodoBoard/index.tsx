@@ -48,7 +48,11 @@ function applyAction(
 ): TodoView[] {
   switch (action.type) {
     case "add":
-      return [action.todo, ...current];
+      // A reconcile can land the server's record under a still-pending add,
+      // and both carry the same id.
+      return current.some((todo) => todo.id === action.todo.id)
+        ? current
+        : [action.todo, ...current];
     case "remove":
       return current.filter((todo) => todo.id !== action.id);
   }

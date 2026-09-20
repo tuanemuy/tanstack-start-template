@@ -485,6 +485,7 @@ import { z } from "zod";
 export const TODO_TITLE_MAX_LENGTH = 140;
 
 export const createTodoSchema = z.object({
+  id: z.string().min(1),
   title: z.string().trim().min(1).max(TODO_TITLE_MAX_LENGTH),
 });
 ```
@@ -557,7 +558,8 @@ export const createTodoFn = createServerFn({ method: "POST" })
 "use client";
 
 import { useServerFn } from "@tanstack/react-start";
-import { useActionState, useState } from "react";
+import { useActionState, useRef, useState } from "react";
+import { newId } from "@/presentation/newId";
 import { useReconcile } from "@/presentation/reconcile";
 import { displayError } from "@/presentation/errorDisplay";
 import {
@@ -574,13 +576,19 @@ export function CreateTodoForm() {
   const reconcile = useReconcile();
   const createTodo = useServerFn(createTodoFn);
   const [title, setTitle] = useState("");
+  const attempt = useRef<{ id: string; title: string } | null>(null);
 
   const [state, formAction, isPending] = useActionState<FormState, FormData>(
     async (_prev, formData) => {
       const value = String(formData.get("title") ?? "").trim();
       if (value.length === 0) return { error: null };
+      if (attempt.current?.title !== value) {
+        attempt.current = { id: newId(), title: value };
+      }
+      const { id } = attempt.current;
       try {
-        await createTodo({ data: { title: value } });
+        await createTodo({ data: { id, title: value } });
+        attempt.current = null;
         await reconcile();
         setTitle("");
         return { error: null };
@@ -626,6 +634,8 @@ export function CreateTodoForm() {
   );
 }
 ```
+
+The client mints the id (`newId()`, `apps/web/app/presentation/newId.ts` — the same generator the DI containers wire) and **keeps it across a failed attempt**. A failure the client observes may be a success server-side with only the response lost, so resubmitting the same title resends the same id and `createTodo` answers it as a replay instead of adding a second todo. Minting a fresh id per submit would make the server's idempotency unreachable. The id is dropped on success, when the title changes, and on `TODO_ID_CONFLICT` (that id can never succeed). In the real form the optimistic row carries this same id, so the row keeps its `key` when `reconcile()` brings the server's record and is not remounted.
 
 ### Inline actions use `useTransition` + `useOptimistic`
 

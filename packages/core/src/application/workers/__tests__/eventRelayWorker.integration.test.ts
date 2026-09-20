@@ -41,7 +41,7 @@ describe("processOutboxEvents", () => {
 
     const { todo: a } = await createTodo({
       container,
-      input: { title: "A" },
+      input: { id: container.idGenerator.next(), title: "A" },
     });
     await changeTodoStatus({
       container,
