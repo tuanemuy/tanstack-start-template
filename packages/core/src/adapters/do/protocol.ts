@@ -12,8 +12,9 @@ import type {
  * OCC conflicts and duplicate inserts — travel as values inside
  * `CommitResult`, never as thrown error classes: Workers RPC serializes
  * exceptions into plain `Error`s, so class identity (and any
- * `instanceof`-based handling) does not survive the wire. The request-side adapters rebuild the
- * typed application errors from these values.
+ * `instanceof`-based handling) does not survive the wire. The
+ * request-side adapters rebuild the typed application errors from
+ * these values.
  */
 
 /**
