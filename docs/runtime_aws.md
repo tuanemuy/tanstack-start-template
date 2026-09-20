@@ -103,7 +103,7 @@ aws secretsmanager create-secret \
 turso db show tanstack-start-template-staging --url
 ```
 
-**Match the Turso primary region to the Lambda region.** A cross-region hop on every write adds ~50 ms to each statement, which is multiplied by the per-statement RPC nature of libSQL remote.
+**Match the Turso primary region to the Lambda region.** A cross-region hop adds ~50 ms to every round trip: each read, and each UoW commit.
 
 ## Deployment
 
@@ -184,7 +184,7 @@ The consumer / DLQ Lambdas can run with a read-only Turso token if you prefer le
 ## Turso-specific notes
 
 - **Connection model**: libSQL remote is HTTP / WebSocket. There's no pooled-TCP cold start, so a freshly-thawed Lambda container does not pay a Postgres-style warmup penalty.
-- **Per-statement RPCs**: each statement inside `client.transaction("write", fn)` is one round trip. Keep UoW transactions small.
+- **Round trips**: a UoW commit is one round trip however many statements it carries, because the UoW flushes through a single `db.batch()`. Each read is its own round trip.
 - **Embedded replicas are not used**: Lambda's `/tmp` is instance-local and ephemeral, so the sync cost does not amortise. Run in pure remote mode.
 - **CAS lease**: the libSQL outbox lease + CAS sweep (same code path as the Node runtime) handles concurrent relay Lambdas correctly. `SELECT ... FOR UPDATE SKIP LOCKED` (Postgres) is intentionally unavailable.
 - **SQL parity**: the schema, migrations, and SQL queries are byte-identical to the Cloudflare D1 runtime — `adapters/d1/schema.ts` is the single source of truth and `adapters/libsql/schema.ts` re-exports it.
