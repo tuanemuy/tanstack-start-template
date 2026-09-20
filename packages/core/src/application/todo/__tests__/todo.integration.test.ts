@@ -1,6 +1,5 @@
 import * as schema from "@repo/core/adapters/d1/schema";
 import { Todo } from "@repo/core/domain/todo/entity";
-import { TodoErrorCode } from "@repo/core/domain/todo/errorCode";
 import { TodoId } from "@repo/core/domain/todo/valueObject";
 import { describe, expect, it } from "vitest";
 import { setupTestContainer } from "../../__tests__/helpers";
@@ -77,16 +76,6 @@ describe("createTodo integration", () => {
     expect(await container.db.select().from(schema.outboxEvents)).toHaveLength(
       1,
     );
-  });
-
-  it("rejects an id the container's generator would not mint", async () => {
-    const container = getContainer();
-
-    await expect(
-      createTodo({ container, input: { id: "not-a-uuid", title: "x" } }),
-    ).rejects.toMatchObject({ code: TodoErrorCode.InvalidId });
-
-    expect(await container.db.select().from(schema.todos)).toHaveLength(0);
   });
 });
 

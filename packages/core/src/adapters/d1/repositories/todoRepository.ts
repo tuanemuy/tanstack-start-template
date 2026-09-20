@@ -49,7 +49,7 @@ export class D1TodoRepository implements TodoRepository {
   ) {}
 
   private toTodo(row: TodoRow): Todo {
-    if (!this.idGenerator.validate(row.id)) {
+    if (this.idGenerator.parse(row.id) === null) {
       throw new SystemError(
         SystemErrorCode.DataIntegrityError,
         `Stored todo has malformed id: ${row.id}`,

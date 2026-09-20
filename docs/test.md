@@ -32,7 +32,7 @@ Tests are classified along two axes: **layer × purpose**. By separating a fast 
 
 Currently the following two are the only fakes kept under `packages/core/src/application/__tests__/fakes/`:
 
-- **`FakeIdGenerator`** — returns deterministic ids by embedding a counter into a UUIDv7 template. The output is shaped to pass the adapter-side rehydration validation (`IdGenerator.validate`), so it won't fail format checks even in round-trip tests through storage. The starting number can be fixed via `seed`, and the prefix is set to `f0...` so that generated ids sort after the test's outbox rows (they come after the test-fixed `01950000-...` series when sorting by `(createdAt, id)`).
+- **`FakeIdGenerator`** — returns deterministic ids by embedding a counter into a UUIDv7 template. The output is shaped to pass the adapter-side rehydration check (`IdGenerator.parse`), so it won't fail format checks even in round-trip tests through storage. The starting number can be fixed via `seed`, and the prefix is set to `f0...` so that generated ids sort after the test's outbox rows (they come after the test-fixed `01950000-...` series when sorting by `(createdAt, id)`).
 - **`FakeLogger`** — merely records each `info` / `warn` / `error` call into an `entries` array. Use `byLevel("error")` to extract them and assert on the observability behavior of the relay worker / usecase.
 
 Fakes for repositories, the UoW, and the Clock are intentionally not kept.

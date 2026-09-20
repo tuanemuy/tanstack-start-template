@@ -87,7 +87,7 @@ Key points:
 - the factory is the only creation path
 - invalid values throw `BusinessRuleError` (the Result type is not used)
 - **do not add `generate()`**. id generation goes through the `IdGenerator` port in the application layer
-- domain treats the id as an "opaque non-empty string". The format (UUIDv7 / ULID / KSUID, etc.) is the responsibility of the `IdGenerator` implementation, and the storage adapter re-validates it with `IdGenerator.validate(id)` at rehydration time. Putting generation and validation behind the same port means that when you swap the generator, the validator switches over in pair automatically, letting you swap the format without touching the VO
+- domain treats the id as an "opaque non-empty string". The format (UUIDv7 / ULID / KSUID, etc.) is the responsibility of the `IdGenerator` implementation, and the storage adapter re-checks it with `IdGenerator.parse(id)` at rehydration time. Putting generation and parsing behind the same port means that when you swap the generator, the format check switches over in pair automatically, letting you swap the format without touching the VO
 
 ### Entity
 
@@ -255,9 +255,6 @@ export async function createFoo({
   input,
 }: ServiceArgs<CreateFooInput>): Promise<CreateFooOutput> {
   const now = container.clock.now();
-  if (!container.idGenerator.validate(input.id)) {
-    throw new BusinessRuleError(FooErrorCode.InvalidId, "Invalid foo id");
-  }
 
   const { entity: foo, eventDrafts } = Foo.create(
     { id: input.id, /* ...input fields... */ },
@@ -306,7 +303,7 @@ export async function deleteFoo({
 Key points:
 
 - **create is idempotent on a caller-chosen id.** The caller mints the id and resends the same one when a create fails, because a failure it observes (a lost response) may be a success server-side; a server-minted id would turn that retry into a second aggregate. A replay — same id, same content — writes nothing, collects no event, and returns the existing aggregate. The same id with different content is a `ConflictError`, since answering it with the existing aggregate would silently drop the new one. Two concurrent resends can both miss the lookup; the loser's `insert` fails as `ConflictError("UNIQUE_VIOLATION")` on every adapter and is not caught — the next resend takes the replay path. `packages/core/src/application/todo/createTodo.ts` is the reference
-- a caller-chosen id is checked with `container.idGenerator.validate`, the check adapters apply on rehydration: an id the generator would not mint would be stored as a row that can never be read back. The domain keeps treating the id as opaque
+- a caller-chosen id is typed `GeneratedId` (`CreateFooInput.id`), the brand only `IdGenerator.next` / `parse` produce. `parse` is the check adapters apply on rehydration, so an id the generator would not mint — one that would be stored as a row that can never be read back — cannot reach the usecase, and the usecase has nothing to check at runtime. Each transport parses the raw string at its boundary with the generator its container wires and rejects a mismatch as its own input error (`parseGeneratedId` in `apps/web/app/presentation/validator.ts`). The domain keeps treating the id as opaque
 - resolve `now` at the top of the usecase. The `EventId` is minted **by the UoW inside `collectEvents`** via `idGenerator`, so the usecase doesn't have to care
 - there are 4 VO-construction sites: the entity factory, the lookup-key construction at the top of a mutate/delete usecase (`FooId.create(input.id)`), adapter rehydration, and the event decoder
 - domain functions return identity-less drafts, and you just pass them straight through with `collectEvents(drafts)`. No explicit type arguments needed

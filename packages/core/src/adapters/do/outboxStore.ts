@@ -90,7 +90,7 @@ export class DoSqliteOutboxRepository implements OutboxRepository {
       );
     }
     return rows.map((row) => {
-      if (!this.idGenerator.validate(row.id)) {
+      if (this.idGenerator.parse(row.id) === null) {
         throw new SystemError(
           SystemErrorCode.DataIntegrityError,
           `Stored outbox event has malformed id: ${row.id}`,

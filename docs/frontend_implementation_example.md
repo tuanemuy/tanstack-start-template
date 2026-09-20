@@ -535,7 +535,7 @@ import { createServerFn } from "@tanstack/react-start";
 
 import { errorResponseMiddleware } from "@/presentation/errorResponseMiddleware";
 import { loadServerDeps } from "@/presentation/serverAction";
-import { validateInput } from "@/presentation/validator";
+import { parseGeneratedId, validateInput } from "@/presentation/validator";
 import { createTodoSchema } from "../schema";
 
 export const createTodoFn = createServerFn({ method: "POST" })
@@ -545,9 +545,12 @@ export const createTodoFn = createServerFn({ method: "POST" })
     const { container, module } = await loadServerDeps(
       () => import("@repo/core/application/todo/createTodo"),
     );
-    return module.createTodo({ container, input: data });
+    const id = parseGeneratedId(container.idGenerator, "id", data.id);
+    return module.createTodo({ container, input: { id, title: data.title } });
   });
 ```
+
+The schema checks only that `id` is a non-empty string. Its format belongs to the `IdGenerator` the container wires, which exists server-side only, so the handler parses it once it holds the container. `parseGeneratedId` returns the `GeneratedId` brand `createTodo` requires and rejects anything else as a `validation` error on the `id` field — the same kind a schema failure produces.
 
 ### Form submission uses `useActionState`
 

@@ -1,12 +1,11 @@
-import { BusinessRuleError } from "@repo/core/domain/error";
 import { Todo } from "@repo/core/domain/todo/entity";
-import { TodoErrorCode } from "@repo/core/domain/todo/errorCode";
 import { ConflictError } from "../errors";
+import type { GeneratedId } from "../ports/idGenerator";
 import type { ServiceArgs } from "../types";
 import { type TodoView, toTodoView } from "./view";
 
 export type CreateTodoInput = {
-  id: string;
+  id: GeneratedId;
   title: string;
 };
 
@@ -30,9 +29,11 @@ export type CreateTodoOutput = {
  * - **Concurrent replays** can both miss the lookup; the loser's insert then
  *   fails on the primary key as `ConflictError("UNIQUE_VIOLATION")`. It is not
  *   caught here — resending the same id again takes the replay path.
- * - **Id format.** The id is checked with `IdGenerator.validate`, the same
- *   check adapters apply on rehydration, so a caller cannot store a row that
- *   can never be read back. Mint ids with the generator the container wires.
+ * - **Id format.** The id is a `GeneratedId`, which only `IdGenerator.next` /
+ *   `parse` produce — the check adapters apply on rehydration — so a caller
+ *   cannot store a row that can never be read back. A transport receiving the
+ *   id as a string parses it at its boundary with the generator the container
+ *   wires.
  *
  * Once todos have an owner, a replay must also match on it: an existing todo
  * owned by someone else is a conflict whatever its title.
@@ -42,9 +43,6 @@ export async function createTodo({
   input,
 }: ServiceArgs<CreateTodoInput>): Promise<CreateTodoOutput> {
   const now = container.clock.now();
-  if (!container.idGenerator.validate(input.id)) {
-    throw new BusinessRuleError(TodoErrorCode.InvalidId, "Invalid todo id");
-  }
   const { entity: todo, eventDrafts } = Todo.create(
     { id: input.id, title: input.title },
     now,

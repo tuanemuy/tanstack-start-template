@@ -1,5 +1,6 @@
 import type { WorkerContainer } from "@repo/core/application/di/types";
 import type { Clock } from "@repo/core/application/ports/clock";
+import type { GeneratedId } from "@repo/core/application/ports/idGenerator";
 import type { OutboxRepository } from "@repo/core/application/ports/outboxRepository";
 import { describe, expect, it, vi } from "vitest";
 import { FakeLogger } from "../../__tests__/fakes";
@@ -56,8 +57,8 @@ function makeContainer(overrides: Partial<WorkerContainer>): WorkerContainer {
     },
     clock: overrides.clock ?? { now: () => new Date(0) },
     idGenerator: {
-      next: () => "00000000-0000-7000-8000-000000000000",
-      validate: () => true,
+      next: () => "00000000-0000-7000-8000-000000000000" as GeneratedId,
+      parse: (raw) => raw as GeneratedId,
     },
     logger: overrides.logger ?? new FakeLogger(),
     ...overrides,
