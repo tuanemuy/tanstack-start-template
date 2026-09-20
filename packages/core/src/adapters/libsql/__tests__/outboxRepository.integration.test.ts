@@ -16,7 +16,7 @@ import { createTestContainer, type TestContainer } from "./helpers";
  * Integration tests for the libSQL outbox repository.
  *
  * The relay-side methods (`claimPending`, `finalize`, `pruneProcessed`)
- * execute as their own atomic statements (or `db.transaction()` blocks),
+ * execute as their own atomic statements (or `db.batch()` calls),
  * so they are tested directly against `container.outboxRepository`.
  *
  * `save` is buffered and only legal inside a UoW. To keep these tests
@@ -47,7 +47,7 @@ async function manualSave(
   events: readonly DomainEvent[],
   now: Date,
 ): Promise<void> {
-  const pending = new PendingBatch();
+  const pending = new PendingBatch(container.db);
   const repo = new LibsqlOutboxRepository(
     container.db,
     container.idGenerator,
@@ -56,13 +56,9 @@ async function manualSave(
   );
   await repo.save(events);
   if (pending.isEmpty()) return;
-  // Flush manually through an interactive transaction so the manual save
-  // mirrors what `LibsqlUnitOfWorkProvider` does on commit.
-  await container.db.transaction(async (tx) => {
-    for (const stmt of pending.build()) {
-      await stmt.run(tx);
-    }
-  });
+  // Flush manually so the save mirrors what `LibsqlUnitOfWorkProvider`
+  // does on commit.
+  await container.db.batch(pending.build());
 }
 
 describe("LibsqlOutboxRepository.save (integration)", () => {

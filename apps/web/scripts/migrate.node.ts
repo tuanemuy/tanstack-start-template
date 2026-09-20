@@ -5,9 +5,8 @@ import { fileURLToPath } from "node:url";
 import {
   applyPragmas,
   createLibsqlClient,
-  getDatabase,
 } from "@repo/core/adapters/libsql/client";
-import { migrate } from "drizzle-orm/libsql/migrator";
+import { migrateDatabase } from "@repo/core/adapters/libsql/migrate";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 
@@ -34,8 +33,6 @@ async function main(): Promise<void> {
   const isMemory = url === ":memory:";
   await applyPragmas(client, isMemory ? { wal: false } : {});
 
-  const db = getDatabase(client);
-
   // Resolve relative to this file so cwd doesn't affect the lookup.
   const migrationsFolder = path.resolve(
     scriptDir,
@@ -45,7 +42,7 @@ async function main(): Promise<void> {
   console.log(
     `[migrate.node] applying migrations from ${migrationsFolder} to ${url}`,
   );
-  await migrate(db, { migrationsFolder });
+  await migrateDatabase(client, migrationsFolder);
   console.log("[migrate.node] done");
 
   client.close();

@@ -6,9 +6,8 @@ import { SecretManagerServiceClient } from "@google-cloud/secret-manager";
 import { CloudRunRelayTrigger } from "@repo/core/adapters/gcp/cloudRunRelayTrigger";
 import { loadSecretsIntoEnv } from "@repo/core/adapters/gcp/secretsLoader";
 import {
-  applyPragmas,
   createLibsqlClient,
-  getDatabase,
+  openDatabase,
 } from "@repo/core/adapters/libsql/client";
 import { installContainerStore } from "@repo/core/application/di/containerStore";
 import {
@@ -92,8 +91,7 @@ async function bootAppRole(): Promise<GcpServerBoot> {
       : {}),
   });
   const isMemory = env.DATABASE_URL === ":memory:";
-  await applyPragmas(client, isMemory ? { wal: false } : {});
-  const db = getDatabase(client);
+  const db = await openDatabase(client, isMemory ? { wal: false } : {});
 
   const config = readGcpRequestServerConfig(env, {
     db,

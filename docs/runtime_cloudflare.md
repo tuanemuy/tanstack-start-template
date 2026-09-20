@@ -160,7 +160,7 @@ The SQLite schema and SQL are shared verbatim across runtimes — both adapters 
 
 | Concern                     | D1                                                      | libSQL                                                          |
 | --------------------------- | ------------------------------------------------------- | --------------------------------------------------------------- |
-| Transactional UoW           | `db.batch(stmts)` — pre-collected `PendingBatch`        | `client.transaction("write", fn)` — interactive transaction     |
+| Transactional UoW           | `db.batch(stmts)` — pre-collected `PendingBatch`        | `db.batch(stmts)` — pre-collected `PendingBatch`                |
 | Error mapping               | Driver errors are parsed from message strings           | `LibsqlError.code` is a structured enum — more robust matching  |
 | Relay trigger               | `ServiceBindingRelayTrigger` (cross-Worker `fetch`)     | `InProcessRelayTrigger` (`setImmediate` in the same process)    |
 | Queue                       | Cloudflare Queues, durable, cross-region                | `InMemoryQueueDispatcher`, in-process only                      |
@@ -168,4 +168,4 @@ The SQLite schema and SQL are shared verbatim across runtimes — both adapters 
 | OCC `CHECK` constraints     | Shared — works identically                              | Shared — works identically                                      |
 | `RETURNING` clauses         | Supported                                               | Supported (fuller coverage than D1, but kept to the shared subset) |
 
-D1 cannot run an interactive transaction inside a Worker invocation: the only atomic primitive is `db.batch`, which is why the UoW pre-collects statements into a `PendingBatch`. libSQL exposes an interactive `transaction("write", fn)` API, so its UoW executes the same statements eagerly. Both produce the same observable semantics — including OCC failures, FK enforcement, and the at-least-once outbox dispatch — at the application layer.
+D1 cannot run an interactive transaction inside a Worker invocation: the only atomic primitive is `db.batch`, which is why the UoW pre-collects statements into a `PendingBatch`. libSQL offers an interactive transaction, and its UoW flushes through `db.batch` all the same: on a local file an interactive transaction contends with every other write in the process (`docs/runtime_node.md`), and on Turso it holds the write lock across round trips. Both produce the same observable semantics — including OCC failures, FK enforcement, and the at-least-once outbox dispatch — at the application layer.

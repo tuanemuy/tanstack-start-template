@@ -6,10 +6,9 @@ import { CloudRunRelayTrigger } from "@repo/core/adapters/gcp/cloudRunRelayTrigg
 import { createPubsubQueueDispatcher } from "@repo/core/adapters/gcp/pubsubQueueDispatcher";
 import { loadSecretsIntoEnv } from "@repo/core/adapters/gcp/secretsLoader";
 import {
-  applyPragmas,
   createLibsqlClient,
   type Database,
-  getDatabase,
+  openDatabase,
 } from "@repo/core/adapters/libsql/client";
 import {
   createGcpWorkerContainer,
@@ -64,8 +63,7 @@ async function bootWorker(): Promise<WorkerBoot> {
       : {}),
   });
   const isMemory = env.DATABASE_URL === ":memory:";
-  await applyPragmas(client, isMemory ? { wal: false } : {});
-  const db = getDatabase(client);
+  const db = await openDatabase(client, isMemory ? { wal: false } : {});
   const container = createGcpWorkerContainer(db);
   return { env, client, db, container };
 }

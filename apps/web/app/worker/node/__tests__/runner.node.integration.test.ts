@@ -39,7 +39,7 @@ async function seedOutboxRow(
   event: DomainEvent,
   now: Date,
 ): Promise<void> {
-  const pending = new PendingBatch();
+  const pending = new PendingBatch(container.db);
   const repo = new LibsqlOutboxRepository(
     container.db,
     container.idGenerator,
@@ -47,11 +47,7 @@ async function seedOutboxRow(
     pending,
   );
   await repo.save([event]);
-  await container.db.transaction(async (tx) => {
-    for (const stmt of pending.build()) {
-      await stmt.run(tx);
-    }
-  });
+  await container.db.batch(pending.build());
 }
 
 describe("createNodeWorkerRunner (integration)", () => {

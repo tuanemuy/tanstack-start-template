@@ -97,13 +97,22 @@ The `*-wal` / `*-shm` sidecar files do **not** need to be copied; SQLite reconst
 
 ## SQLite PRAGMAs applied at boot
 
-`packages/core/src/adapters/libsql/client.ts#applyPragmas` runs three statements after the client is constructed (unless `wal: false` is passed for `:memory:` / read-only test databases):
+`packages/core/src/adapters/libsql/client.ts#openDatabase` runs three statements (`applyPragmas`) after the client is constructed (`journal_mode` is skipped when `wal: false` is passed for `:memory:` / read-only test databases):
 
 | PRAGMA                  | Why                                                                                                                                                                                                       |
 | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `journal_mode = WAL`    | Readers do not block the single writer. Matches the throughput model the deferred-batch UoW assumes.                                                                                                      |
 | `foreign_keys = ON`     | SQLite ships with FK enforcement off; D1 has it on by default. Without this PRAGMA the libSQL adapter would silently diverge for any future FK relation.                                                  |
-| `busy_timeout = 5000`   | Gives a 5-second wait before a contended write surfaces as `SQLITE_BUSY`. The UoW does not retry on `SQLITE_BUSY`, so this buffer is the only protection against transient contention from cron sweeps.   |
+| `busy_timeout = 5000`   | Gives a 5-second wait before a write contended by **another process** (`migrate.node.ts`, the `sqlite3` CLI) surfaces as `SQLITE_BUSY`. The binding is synchronous, so the wait blocks the event loop. It plays no part inside the process — see below. |
+
+### Write contention
+
+SQLite admits one writer at a time, and the web handler shares the file with all four worker roles. Writes inside the process never contend, by construction rather than by waiting:
+
+- Every atomic write is a single `db.batch()` — the unit of work's commit and the outbox `finalize` — and every other write is a single statement. The embedded driver runs a batch (`BEGIN` … `COMMIT`) as one synchronous call on the client's only connection, so no other write can start in the middle of it.
+- The `Database` type omits Drizzle's `transaction`. An interactive transaction stays open across `await`s, so a second writer would find the lock taken; `busy_timeout` cannot help, because the synchronous wait blocks the very event loop the lock holder needs in order to commit. The driver also hands its connection over to each interactive transaction and opens a fresh one without the PRAGMAs.
+
+When the `busy_timeout` wait on another process runs out, the write fails with `SystemError("DATABASE_ERROR")`. With libsql 0.5, a connection that has returned `SQLITE_BUSY` fails every later `COMMIT` with `cannot commit transaction - SQL statements in progress`, so `openDatabase` reopens the connection and re-applies the PRAGMAs before the error surfaces.
 
 ## Worker runner (relay / consumer / pruner)
 

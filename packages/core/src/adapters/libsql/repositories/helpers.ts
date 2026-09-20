@@ -1,4 +1,4 @@
-import { LibsqlError } from "@libsql/client";
+import { LibsqlBatchError, LibsqlError } from "@libsql/client";
 import {
   ApplicationError,
   ConflictError,
@@ -30,16 +30,17 @@ function findSqliteCode(error: unknown): string | null {
 }
 
 /**
- * Detects the `_occ_guard` CHECK violation that signals an OCC failure.
- * Matches the constraint name so unrelated CHECKs fall through to a
- * generic `CONSTRAINT_VIOLATION`.
+ * Batch index of the `_occ_guard` statement whose CHECK aborted the
+ * batch, or `null` for any other error. Matches the constraint name so
+ * unrelated CHECKs fall through to a generic `CONSTRAINT_VIOLATION`.
  */
-export function isOccGuardViolation(error: unknown): boolean {
+export function occGuardViolationIndex(error: unknown): number | null {
   const libsql = findLibsqlError(error);
-  if (libsql === null) return false;
-  const code = libsql.extendedCode ?? libsql.code ?? "";
-  if (!code.startsWith("SQLITE_CONSTRAINT")) return false;
-  return libsql.message.includes(OCC_GUARD_CHECK_NAME);
+  if (!(libsql instanceof LibsqlBatchError)) return null;
+  const code = libsql.extendedCode ?? libsql.code;
+  if (!code.startsWith("SQLITE_CONSTRAINT")) return null;
+  if (!libsql.message.includes(OCC_GUARD_CHECK_NAME)) return null;
+  return libsql.statementIndex;
 }
 
 function constraintViolationCode(sqliteCode: string): string {
