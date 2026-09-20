@@ -49,7 +49,7 @@ export class D1TodoRepository implements TodoRepository {
   ) {}
 
   private toTodo(row: TodoRow): Todo {
-    if (!this.idGenerator.validate(row.id)) {
+    if (this.idGenerator.parse(row.id) === null) {
       throw new SystemError(
         SystemErrorCode.DataIntegrityError,
         `Stored todo has malformed id: ${row.id}`,
@@ -127,9 +127,9 @@ export class D1TodoRepository implements TodoRepository {
     });
   }
 
-  // First-time persistence. Buffered like `save`; conflicts on the
-  // primary key (rare — `Todo.create` mints a fresh id) surface as a
-  // `SystemError` through `mapDbError` at flush time.
+  // First-time persistence. Buffered like `save`; an id that already
+  // exists surfaces as `ConflictError("UNIQUE_VIOLATION")` through
+  // `mapDbError` at flush time.
   async insert(todo: Todo): Promise<void> {
     this.pending.add(
       this.db.insert(todos).values({

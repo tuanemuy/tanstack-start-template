@@ -2,12 +2,13 @@
 
 import type { TodoView } from "@repo/core/application/todo/view";
 import { useServerFn } from "@tanstack/react-start";
-import { useActionState, useId, useState } from "react";
+import { useActionState, useId, useRef, useState } from "react";
 import { displayError } from "@/presentation/errorDisplay";
 import {
   extractSerializedError,
   type SerializedError,
 } from "@/presentation/errorResponse";
+import { newId } from "@/presentation/newId";
 import { useReconcile } from "@/presentation/reconcile";
 import { TODO_TITLE_MAX_LENGTH } from "../schema";
 import { createTodoFn } from "./action";
@@ -29,28 +30,46 @@ export function CreateTodoForm({ onOptimisticAdd }: Props) {
   const titleId = useId();
   const titleErrorId = useId();
   const summaryErrorId = useId();
+  // The create whose outcome is not yet known to be final. A failed attempt may
+  // have committed server-side with only its response lost, so resubmitting the
+  // same title resends the same id and `createTodo` answers it as a replay
+  // instead of adding a second todo.
+  const attempt = useRef<{ id: string; title: string } | null>(null);
 
   const [state, formAction, isPending] = useActionState<FormState, FormData>(
     async (_prev, formData) => {
       const value = String(formData.get("title") ?? "");
+      const trimmed = value.trim();
+      if (attempt.current?.title !== trimmed) {
+        attempt.current = { id: newId(), title: trimmed };
+      }
+      const { id } = attempt.current;
       try {
-        // Placeholder row shown until `reconcile()` replaces it with
-        // the server-assigned record; the temp id only has to be unique within
-        // the optimistic list, never persisted.
+        // Shown until `reconcile()` brings the server's record. Both carry the
+        // same id, so the row keeps its `key` and is not remounted.
         const now = new Date().toISOString();
         onOptimisticAdd({
-          id: `optimistic-${crypto.randomUUID()}`,
-          title: value.trim(),
+          id,
+          title: trimmed,
           status: "active",
           createdAt: now,
           updatedAt: now,
         });
-        await createTodo({ data: { title: value } });
+        await createTodo({ data: { id, title: value } });
+        attempt.current = null;
         setTitle("");
         await reconcile();
         return { error: null };
       } catch (error) {
-        return { error: extractSerializedError(error) };
+        const serialized = extractSerializedError(error);
+        // The id belongs to a different todo; resending it can never succeed.
+        if (
+          serialized.kind === "conflict" &&
+          serialized.code === "TODO_ID_CONFLICT"
+        ) {
+          attempt.current = null;
+        }
+        return { error: serialized };
       }
     },
     initialState,

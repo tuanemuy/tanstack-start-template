@@ -17,7 +17,7 @@ describe("createTodo integration", () => {
 
     const { todo } = await createTodo({
       container,
-      input: { title: "atomic" },
+      input: { id: container.idGenerator.next(), title: "atomic" },
     });
 
     const rows = await container.db.select().from(schema.todos);
@@ -29,6 +29,54 @@ describe("createTodo integration", () => {
     expect(outbox[0]?.eventType).toBe("todo.created");
     expect(outbox[0]?.processedAt).toBeNull();
   });
+
+  it("answers a resend of the same id and title as a replay: one todo, one event", async () => {
+    const container = getContainer();
+    const input = { id: container.idGenerator.next(), title: "replayed" };
+
+    const first = await createTodo({ container, input });
+    const second = await createTodo({ container, input });
+
+    expect(second.todo).toEqual(first.todo);
+    expect(await container.db.select().from(schema.todos)).toHaveLength(1);
+    expect(await container.db.select().from(schema.outboxEvents)).toHaveLength(
+      1,
+    );
+  });
+
+  it("rejects an id already used by a todo with a different title", async () => {
+    const container = getContainer();
+    const id = container.idGenerator.next();
+    await createTodo({ container, input: { id, title: "original" } });
+
+    await expect(
+      createTodo({ container, input: { id, title: "another" } }),
+    ).rejects.toMatchObject({ code: "TODO_ID_CONFLICT" });
+
+    const rows = await container.db.select().from(schema.todos);
+    expect(rows.map((row) => row.title)).toEqual(["original"]);
+  });
+
+  it("concurrent resends leave one todo and one event; a loser fails as a conflict", async () => {
+    const container = getContainer();
+    const input = { id: container.idGenerator.next(), title: "raced" };
+
+    const results = await Promise.allSettled([
+      createTodo({ container, input }),
+      createTodo({ container, input }),
+    ]);
+
+    expect(results.some((r) => r.status === "fulfilled")).toBe(true);
+    for (const result of results) {
+      if (result.status === "rejected") {
+        expect(isConflictError(result.reason)).toBe(true);
+      }
+    }
+    expect(await container.db.select().from(schema.todos)).toHaveLength(1);
+    expect(await container.db.select().from(schema.outboxEvents)).toHaveLength(
+      1,
+    );
+  });
 });
 
 describe("concurrent deleteTodo", () => {
@@ -38,7 +86,7 @@ describe("concurrent deleteTodo", () => {
     const container = getContainer();
     const { todo } = await createTodo({
       container,
-      input: { title: "race" },
+      input: { id: container.idGenerator.next(), title: "race" },
     });
 
     const results = await Promise.allSettled([
@@ -82,7 +130,7 @@ describe("concurrent changeTodoStatus", () => {
     const container = getContainer();
     const { todo } = await createTodo({
       container,
-      input: { title: "race-status" },
+      input: { id: container.idGenerator.next(), title: "race-status" },
     });
 
     const results = await Promise.allSettled([
@@ -111,7 +159,7 @@ describe("concurrent changeTodoStatus", () => {
     const container = getContainer();
     const { todo: created } = await createTodo({
       container,
-      input: { title: "stale-read" },
+      input: { id: container.idGenerator.next(), title: "stale-read" },
     });
 
     const staleId = TodoId.create(created.id);
@@ -214,7 +262,10 @@ describe("listTodos", () => {
   it("does not produce outbox events (readonly operation)", async () => {
     const container = getContainer();
 
-    await createTodo({ container, input: { title: "seed" } });
+    await createTodo({
+      container,
+      input: { id: container.idGenerator.next(), title: "seed" },
+    });
 
     const beforeRows = await container.db.select().from(schema.outboxEvents);
     const beforeCount = beforeRows.length;

@@ -107,6 +107,31 @@ describe("LibsqlUnitOfWorkProvider (integration)", () => {
     expect(outboxRows).toHaveLength(0);
   });
 
+  it("reports an insert onto an existing id as a unique violation and rolls the commit back", async () => {
+    const c = await openContainer();
+    const id = nextTodoId();
+    const { entity: original } = Todo.create({ id, title: "first" }, NOW);
+    await c.unitOfWorkProvider.run(async ({ todoRepository }) => {
+      await todoRepository.insert(original);
+    });
+
+    const { entity: duplicate, eventDrafts } = Todo.create(
+      { id, title: "second" },
+      NOW,
+    );
+    await expect(
+      c.unitOfWorkProvider.run(async ({ todoRepository, collectEvents }) => {
+        await todoRepository.insert(duplicate);
+        collectEvents(eventDrafts);
+      }),
+    ).rejects.toMatchObject({ code: "UNIQUE_VIOLATION" });
+
+    const todoRows = await c.db.select().from(schema.todos);
+    expect(todoRows.map((row) => row.title)).toEqual(["first"]);
+    const outboxRows = await c.db.select().from(schema.outboxEvents);
+    expect(outboxRows).toHaveLength(0);
+  });
+
   // Parity with the D1 adapter's attribution test: with two OCC writes
   // in one UoW, the surfaced ConflictError must name the write that
   // actually conflicted, regardless of its position in the batch.

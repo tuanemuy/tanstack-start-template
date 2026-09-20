@@ -308,7 +308,7 @@ The fact that `serverData` **does not take a schema** is a deliberate design cho
 | Forwarding from a parent server fn | parent fn's `inputValidator(schema)` | `serverData` (receives the value trusting the type) |
 | Direct POST from the client | `serverAction`'s `inputValidator(schema)` | `serverAction` |
 
-> **Convention**: `serverData` is **for internal calls only**. Any place that handles external input (URL / form / fetch) must **always finish transport validation with either `validateSearch` or `serverAction` before** passing arguments to a loader via `serverData`. Do not run Zod again right before the usecase (the VO factory re-validates the same constraints, so it would be a duplicate and would diverge from CLAUDE.md's "validate at the boundaries").
+> **Convention**: `serverData` is **for internal calls only**. Any place that handles external input (URL / form / fetch) must **always finish transport validation with either `validateSearch` or `serverAction` before** passing arguments to a loader via `serverData`. Do not run Zod again right before the usecase (the VO factory re-validates the same constraints, so it would be a duplicate and would diverge from AGENTS.md's "validate at the boundaries").
 
 Example: `apps/web/app/routes/todo/index.tsx` normalizes the URL into the Pagination type with `validateSearch: paginationSearchSchema.parse`, then `renderTodoList` (a server fn) re-validates the transport with `inputValidator(paginationSchema)` → passes a typed value to the server component `TodoList`, and `loadTodos(pagination)` (wrapped with `serverData`) **merely trusts** that type. Of the three stages, validation is confined to **the first two transport boundaries**, and the internal `serverData` is a noop.
 
@@ -473,7 +473,7 @@ The usecase **trusts the static type of the input and focuses on applying domain
 Why not run Zod in the usecase:
 
 - The VO factory re-validates the same constraints, so it would be a duplicate.
-- Placing validation in the usecase mixes Zod / domain modules into the application layer, creating friction with CLAUDE.md's dependency direction (application → domain).
+- Placing validation in the usecase mixes Zod / domain modules into the application layer, creating friction with AGENTS.md's dependency direction (application → domain).
 - Shape checking is the transport's responsibility. Once it arrives as a type, the usecase may trust it.
 
 Because `createServerFn`'s `inputValidator` runs on both client and server, the schema statically imported from it **must not pull in `@repo/core/domain/*` or `@repo/core/application/*` at all**. Keep the schema presentation-independent in `apps/web/app/components/${domain}/schema.ts`.
@@ -485,6 +485,7 @@ import { z } from "zod";
 export const TODO_TITLE_MAX_LENGTH = 140;
 
 export const createTodoSchema = z.object({
+  id: z.string().min(1),
   title: z.string().trim().min(1).max(TODO_TITLE_MAX_LENGTH),
 });
 ```
@@ -534,7 +535,7 @@ import { createServerFn } from "@tanstack/react-start";
 
 import { errorResponseMiddleware } from "@/presentation/errorResponseMiddleware";
 import { loadServerDeps } from "@/presentation/serverAction";
-import { validateInput } from "@/presentation/validator";
+import { parseGeneratedId, validateInput } from "@/presentation/validator";
 import { createTodoSchema } from "../schema";
 
 export const createTodoFn = createServerFn({ method: "POST" })
@@ -544,9 +545,12 @@ export const createTodoFn = createServerFn({ method: "POST" })
     const { container, module } = await loadServerDeps(
       () => import("@repo/core/application/todo/createTodo"),
     );
-    return module.createTodo({ container, input: data });
+    const id = parseGeneratedId(container.idGenerator, "id", data.id);
+    return module.createTodo({ container, input: { id, title: data.title } });
   });
 ```
+
+The schema checks only that `id` is a non-empty string. Its format belongs to the `IdGenerator` the container wires, which exists server-side only, so the handler parses it once it holds the container. `parseGeneratedId` returns the `GeneratedId` brand `createTodo` requires and rejects anything else as a `validation` error on the `id` field — the same kind a schema failure produces.
 
 ### Form submission uses `useActionState`
 
@@ -557,7 +561,8 @@ export const createTodoFn = createServerFn({ method: "POST" })
 "use client";
 
 import { useServerFn } from "@tanstack/react-start";
-import { useActionState, useState } from "react";
+import { useActionState, useRef, useState } from "react";
+import { newId } from "@/presentation/newId";
 import { useReconcile } from "@/presentation/reconcile";
 import { displayError } from "@/presentation/errorDisplay";
 import {
@@ -574,13 +579,19 @@ export function CreateTodoForm() {
   const reconcile = useReconcile();
   const createTodo = useServerFn(createTodoFn);
   const [title, setTitle] = useState("");
+  const attempt = useRef<{ id: string; title: string } | null>(null);
 
   const [state, formAction, isPending] = useActionState<FormState, FormData>(
     async (_prev, formData) => {
       const value = String(formData.get("title") ?? "").trim();
       if (value.length === 0) return { error: null };
+      if (attempt.current?.title !== value) {
+        attempt.current = { id: newId(), title: value };
+      }
+      const { id } = attempt.current;
       try {
-        await createTodo({ data: { title: value } });
+        await createTodo({ data: { id, title: value } });
+        attempt.current = null;
         await reconcile();
         setTitle("");
         return { error: null };
@@ -626,6 +637,8 @@ export function CreateTodoForm() {
   );
 }
 ```
+
+The client mints the id (`newId()`, `apps/web/app/presentation/newId.ts` — the same generator the DI containers wire) and **keeps it across a failed attempt**. A failure the client observes may be a success server-side with only the response lost, so resubmitting the same title resends the same id and `createTodo` answers it as a replay instead of adding a second todo. Minting a fresh id per submit would make the server's idempotency unreachable. The id is dropped on success, when the title changes, and on `TODO_ID_CONFLICT` (that id can never succeed). In the real form the optimistic row carries this same id, so the row keeps its `key` when `reconcile()` brings the server's record and is not remounted.
 
 ### Inline actions use `useTransition` + `useOptimistic`
 

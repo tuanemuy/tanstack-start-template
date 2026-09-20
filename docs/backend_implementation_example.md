@@ -2,7 +2,7 @@
 
 The Todo domain implementation is the canonical example. When adding a new domain, just follow the same structure.
 
-> For principles and abstract concepts, see `CLAUDE.md`. This document is a collection of copy-and-adapt patterns for "how to actually write the code".
+> For principles and abstract concepts, see `AGENTS.md`. This document is a collection of copy-and-adapt patterns for "how to actually write the code".
 
 ## File Layout
 
@@ -87,7 +87,7 @@ Key points:
 - the factory is the only creation path
 - invalid values throw `BusinessRuleError` (the Result type is not used)
 - **do not add `generate()`**. id generation goes through the `IdGenerator` port in the application layer
-- domain treats the id as an "opaque non-empty string". The format (UUIDv7 / ULID / KSUID, etc.) is the responsibility of the `IdGenerator` implementation, and the storage adapter re-validates it with `IdGenerator.validate(id)` at rehydration time. Putting generation and validation behind the same port means that when you swap the generator, the validator switches over in pair automatically, letting you swap the format without touching the VO
+- domain treats the id as an "opaque non-empty string". The format (UUIDv7 / ULID / KSUID, etc.) is the responsibility of the `IdGenerator` implementation, and the storage adapter re-checks it with `IdGenerator.parse(id)` at rehydration time. Putting generation and parsing behind the same port means that when you swap the generator, the format check switches over in pair automatically, letting you swap the format without touching the VO
 
 ### Entity
 
@@ -255,21 +255,28 @@ export async function createFoo({
   input,
 }: ServiceArgs<CreateFooInput>): Promise<CreateFooOutput> {
   const now = container.clock.now();
-  const id = container.idGenerator.next();
 
   const { entity: foo, eventDrafts } = Foo.create(
-    { id, /* ...input fields... */ },
+    { id: input.id, /* ...input fields... */ },
     now,
   );
 
-  await container.unitOfWorkProvider.run(
+  const created = await container.unitOfWorkProvider.run(
     async ({ fooRepository, collectEvents }) => {
+      const found = await fooRepository.findById(foo.id);
+      if (found) {
+        if (!isReplayOf(found.entity, foo)) {
+          throw new ConflictError("FOO_ID_CONFLICT", `...`);
+        }
+        return found.entity;
+      }
       await fooRepository.insert(foo);
       collectEvents(eventDrafts);
+      return foo;
     },
   );
 
-  return { foo: toFooView(foo) };
+  return { foo: toFooView(created) };
 }
 ```
 
@@ -295,7 +302,9 @@ export async function deleteFoo({
 
 Key points:
 
-- resolve `now` / `id` at the top of the usecase. The `EventId` is minted **by the UoW inside `collectEvents`** via `idGenerator`, so the usecase doesn't have to care
+- **create is idempotent on a caller-chosen id.** The caller mints the id and resends the same one when a create fails, because a failure it observes (a lost response) may be a success server-side; a server-minted id would turn that retry into a second aggregate. A replay — same id, same content — writes nothing, collects no event, and returns the existing aggregate. The same id with different content is a `ConflictError`, since answering it with the existing aggregate would silently drop the new one. Two concurrent resends can both miss the lookup; the loser's `insert` fails as `ConflictError("UNIQUE_VIOLATION")` on every adapter and is not caught — the next resend takes the replay path. `packages/core/src/application/todo/createTodo.ts` is the reference
+- a caller-chosen id is typed `GeneratedId` (`CreateFooInput.id`), the brand only `IdGenerator.next` / `parse` produce. `parse` is the check adapters apply on rehydration, so an id the generator would not mint — one that would be stored as a row that can never be read back — cannot reach the usecase, and the usecase has nothing to check at runtime. Each transport parses the raw string at its boundary with the generator its container wires and rejects a mismatch as its own input error (`parseGeneratedId` in `apps/web/app/presentation/validator.ts`). The domain keeps treating the id as opaque
+- resolve `now` at the top of the usecase. The `EventId` is minted **by the UoW inside `collectEvents`** via `idGenerator`, so the usecase doesn't have to care
 - there are 4 VO-construction sites: the entity factory, the lookup-key construction at the top of a mutate/delete usecase (`FooId.create(input.id)`), adapter rehydration, and the event decoder
 - domain functions return identity-less drafts, and you just pass them straight through with `collectEvents(drafts)`. No explicit type arguments needed
 - ride the Outbox pattern with `collectEvents` (flushed in the same tx)
@@ -404,7 +413,7 @@ await processOutboxEvents(container, async (event) => {
 
 ### Delivery contract (pitfalls the consumer implementation must guard against)
 
-As stated in the CLAUDE.md key concepts, the Outbox operates with **at-least-once delivery / no ordering**. Write the consumer on that premise. The "why" of the principle is in CLAUDE.md; here we expand on "what the implementation must guard against".
+As stated in the AGENTS.md key concepts, the Outbox operates with **at-least-once delivery / no ordering**. Write the consumer on that premise. The "why" of the principle is in AGENTS.md; here we expand on "what the implementation must guard against".
 
 - **At-least-once (the same event arrives two or more times)** — the relay worker operates in the order "dispatch succeeds → update the outbox row's `processed_at`". If dispatch goes through but the process dies just before the update, the same event is re-dispatched in the next round. Write the consumer so that **processing the same event N times produces the same result**, either via `event.id`-based dedupe (a processed-id table / unique index) or a natural-key upsert. Code that assumes "trigger a side effect exactly once" (the "fire-and-forget" of external sends, billing, notifications) will duplicate the moment at-most-once breaks.
   - The `IdempotencyStore` port bundled with the template (the `processed_events` table + D1 `INSERT OR IGNORE` to claim) is the minimal implementation of a "processed-id table". `handleQueue` calls `markProcessed(event.id)` before running the handler, and if `alreadyProcessed: true` it skips the handler and acks. Follow the same pattern when writing new consumers.

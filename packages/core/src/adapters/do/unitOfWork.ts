@@ -82,6 +82,12 @@ export class DoUnitOfWorkProvider implements UnitOfWorkProvider {
       this.client.commit(request),
     );
     if (outcome.kind === "conflict") {
+      if (outcome.command === "insert") {
+        throw new ConflictError(
+          "UNIQUE_VIOLATION",
+          `Todo already exists: ${outcome.todoId}`,
+        );
+      }
       const verb = outcome.command === "save" ? "saving" : "deleting";
       throw new ConflictError(
         "OPTIMISTIC_LOCK_FAILURE",

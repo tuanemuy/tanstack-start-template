@@ -1,3 +1,7 @@
+import type {
+  GeneratedId,
+  IdGenerator,
+} from "@repo/core/application/ports/idGenerator";
 import { CodedError, type FieldErrors } from "@repo/core/lib/error";
 import type { ZodType, z } from "zod";
 import {
@@ -35,6 +39,23 @@ export function validateInput<T extends ZodType>(schema: T) {
     );
     throw new AppServerError(error.toSerialized());
   };
+}
+
+/**
+ * Transport-boundary parse of a client-minted aggregate id into the brand a
+ * creating usecase requires. The schema only checks the shape: the format is
+ * owned by the `IdGenerator` the container wires, which exists server-side
+ * only, so the handler calls this once it holds the container.
+ */
+export function parseGeneratedId(
+  idGenerator: IdGenerator,
+  field: string,
+  raw: string,
+): GeneratedId {
+  const id = idGenerator.parse(raw);
+  if (id !== null) return id;
+  const error = new InputValidationError({ [field]: ["Invalid id"] });
+  throw new AppServerError(error.toSerialized());
 }
 
 function zodIssuesToFieldErrors(

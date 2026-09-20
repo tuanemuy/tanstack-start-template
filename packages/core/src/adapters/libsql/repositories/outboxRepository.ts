@@ -107,7 +107,7 @@ export class LibsqlOutboxRepository implements OutboxRepository {
         return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
       });
       return sorted.map((row) => {
-        if (!this.idGenerator.validate(row.id)) {
+        if (this.idGenerator.parse(row.id) === null) {
           throw new SystemError(
             SystemErrorCode.DataIntegrityError,
             `Stored outbox event has malformed id: ${row.id}`,

@@ -9,6 +9,7 @@ import { PendingBatch } from "@repo/core/adapters/d1/pendingBatch";
 import { D1IdempotencyStore } from "@repo/core/adapters/d1/repositories/idempotencyStore";
 import { D1OutboxRepository } from "@repo/core/adapters/d1/repositories/outboxRepository";
 import { outboxEvents, processedEvents } from "@repo/core/adapters/d1/schema";
+import { UuidV7Generator } from "@repo/core/application/ports/idGenerator";
 import {
   type DomainEvent,
   type EventDraft,
@@ -61,10 +62,7 @@ async function seedOutbox(events: readonly DomainEvent[]): Promise<void> {
   const pending = new PendingBatch(db);
   const repo = new D1OutboxRepository(
     db,
-    {
-      next: () => "unused",
-      validate: () => true,
-    },
+    UuidV7Generator,
     { now: () => new Date() },
     pending,
   );

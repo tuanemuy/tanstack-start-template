@@ -9,11 +9,12 @@ import type {
  *
  * Everything crossing the boundary is plain structured-clonable data.
  * In particular, outcomes that the request side must react to —
- * OCC conflicts — travel as values inside `CommitResult`, never as
- * thrown error classes: Workers RPC serializes exceptions into plain
- * `Error`s, so class identity (and any `instanceof`-based handling)
- * does not survive the wire. The request-side adapters rebuild the
- * typed application errors from these values.
+ * OCC conflicts and duplicate inserts — travel as values inside
+ * `CommitResult`, never as thrown error classes: Workers RPC serializes
+ * exceptions into plain `Error`s, so class identity (and any
+ * `instanceof`-based handling) does not survive the wire. The
+ * request-side adapters rebuild the typed application errors from
+ * these values.
  */
 
 /**
@@ -68,7 +69,8 @@ export type CommitResult =
       command: "save" | "delete";
       todoId: string;
       expectedVersion: number;
-    }>;
+    }>
+  | Readonly<{ kind: "conflict"; command: "insert"; todoId: string }>;
 
 /**
  * The DO's RPC surface as the request/consumer side consumes it. The

@@ -6,6 +6,7 @@ import { z } from "zod";
 export const TODO_TITLE_MAX_LENGTH = 140;
 
 export const createTodoSchema = z.object({
+  id: z.string().min(1),
   title: z.string().trim().min(1).max(TODO_TITLE_MAX_LENGTH),
 });
 
